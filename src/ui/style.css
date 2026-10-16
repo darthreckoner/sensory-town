@@ -1290,10 +1290,10 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
   .v3-bus .v3-honk .ico { font-size: 30px; }
 }
 
-/* the build UI on a phone on its side AND on an iPad held upright (the full-width bar used to sit over the stick and the pedals): the bar goes to the top centre,
+/* the build UI on a phone on its side, on a short window (up to 760 px tall, so an iPad mini on its side too) AND on an iPad held upright (the full-width bar used to sit over the stick and the pedals): the bar goes to the top centre,
    two rows of icon buttons between the menu button and the minimap, with the starter / decor / edit panels hanging under it; the pills and the button column
    step aside, the place button sits above JUMP, the hint and info pills sit in the gap between the stick and the pedals. */
-@media (max-height: 520px) and (orientation: landscape), (orientation: portrait) {
+@media (max-height: 760px) and (orientation: landscape), (orientation: portrait) {
 
   .drive-hud:has(.b3.on) .drive-top { display: none; }
   .b3 {
@@ -1303,7 +1303,7 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
     --b3p: 72px;
   }
   .b3-dock {
-    left: calc(var(--safe-l) + 92px); transform: none; top: calc(4px + var(--safe-t)); bottom: auto; width: var(--b3w); max-width: 560px; min-width: 0;
+    left: calc(var(--safe-l) + 92px + (var(--b3w) - min(var(--b3w), 560px)) / 2); transform: none; top: calc(4px + var(--safe-t)); bottom: auto; width: var(--b3w); max-width: 560px; min-width: 0;
     flex-direction: column; gap: 3px;
   }
   .b3-bar { padding: 3px; gap: 3px; border-radius: 16px; border-width: 1px; }
@@ -1683,4 +1683,11 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 @media (min-height: 521px) and (min-width: 700px) and (min-aspect-ratio: 1/1) {
   .ws[data-st="wax"] .rc { top: calc(88px + var(--safe-t)); transform: none; max-height: calc(100% - 340px - var(--safe-t) - var(--safe-b)); overflow-y: auto; scrollbar-width: none; touch-action: pan-y; }
   .ws[data-st="wax"] .rc .item { touch-action: pan-y; }
+}
+/* v3 phone (studio): short desktop / tablet windows (about 520-760 px tall, e.g. 1280x613): the left panel starts below the menu button and scrolls instead of running into it */
+@media (min-height: 521px) and (max-height: 760px) and (min-aspect-ratio: 1/1) {
+  .ws .lc { top: calc(92px + var(--safe-t)); bottom: auto; transform: none; max-height: calc(100% - 108px - var(--safe-t) - var(--safe-b)); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; touch-action: pan-y; }
+  .ws .lc::-webkit-scrollbar { display: none; }
+  .ws .lc .item { touch-action: pan-y; }
+  .ws[data-st="wax"] .lc { max-height: calc(100% - 108px - 80px - var(--safe-t) - var(--safe-b)); }
 }

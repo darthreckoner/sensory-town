@@ -337,13 +337,13 @@ export class WorkshopScene extends GameScene {
   private scratch = new THREE.PerspectiveCamera();
   private safe = { t: 0, r: 0, b: 0, l: 0 };
 
-  /** Phone (and tablet) sizes get the measured framing; big desktop windows keep the station's own view. */
+  /** Every size gets the measured framing: it only pulls back / shifts when the toy would run into a panel. */
   private isPhone(): { land: boolean; phone: boolean } | null {
     const W = window.innerWidth, H = window.innerHeight;
     if (H < 520 && W > H) return { land: true, phone: true };
     if (W < 560 && H > W) return { land: false, phone: true };
-    if (W <= 1400 && H <= 1200) return { land: W > H, phone: false }; // tablets (iPad 1180x820, 820x1180, ...): panels stay at the sides
-    return null;
+    // tablets and desktop windows: panels stay at the sides, the toy (and the wax pot) is kept clear of them and of the bottom bar
+    return { land: W > H, phone: false };
   }
 
   /** The safe-area insets in CSS px (the tokens are env() values: read them through a probe element). */
