@@ -152,6 +152,7 @@ export function initWorldCheck(): void {
       const B = (L as any).BOUNDS as number;
       const bad: Spot[] = [];
       let tested = 0;
+      let faded = 0;
       const [ax0, az0, ax1, az1] = area ?? (L as any).WORLD_AREA ?? [-B + 4, -B + 4, B - 4, B - 4];
       const HFc = await import('../world/heightfield');
       for (let x = ax0; x <= ax1; x += step)
@@ -174,7 +175,11 @@ export function initWorldCheck(): void {
             rc.far = dist - 0.8;
             const meshes = visibleStatic(d.scene, [d.walker.group, d.car.group]);
             const hits = rc.intersectObjects(meshes, false);
-            const near = hits.find((h) => h.distance < Math.max(1.2, dist * 0.35));
+            // v3 world: foliage on the sight line is dithered away by the vegetation shader (applyFoliageFade), so it is counted as "faded", not as an obstruction
+            const win = Math.max(1.2, dist * 0.35);
+            const isFoliage = (h: THREE.Intersection): boolean => ((h.object as any).name || (h.object.parent as any)?.name) === 'vegetation';
+            const near = hits.find((h) => h.distance < win && !isFoliage(h));
+            if (!near && hits.some((h) => h.distance < win)) faded++;
             if (near) bad.push({ x: +x.toFixed(0), z: +z.toFixed(0), d: +near.distance.toFixed(2), note: `${(near.object as any).name || (near.object.parent as any)?.name || 'mesh'} @h${(heading * 57.3).toFixed(0)}` });
           }
       const byMesh: Record<string, number> = {};
@@ -182,7 +187,7 @@ export function initWorldCheck(): void {
         const k = b.note.split(' @')[0];
         byMesh[k] = (byMesh[k] ?? 0) + 1;
       }
-      return { tested, bad: bad.length, byMesh, worst: bad.filter((b) => !b.note.startsWith('vegetation')).slice(0, 40) };
+      return { tested, bad: bad.length, faded, byMesh, worst: bad.filter((b) => !b.note.startsWith('vegetation')).slice(0, 40) };
     },
 
     /** Debug one spot: walker feet vs groundHeight vs the meshes under it. */

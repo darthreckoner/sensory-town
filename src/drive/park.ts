@@ -127,23 +127,29 @@ export function buildPark(): ParkOut {
 
   // ── gazebo (octagon, slate roof) ──
   {
-    const x = 60, z = -76, gy = G(x, z);
+    const x = 60, z = -76;
     const R = 3.4;
-    m.cyl(wood, x, gy, z, R + 0.2, R + 0.2, 0.38, 8);
+    // seated on the LOWEST ground under it, with a plinth whose top is only 10 cm above that: nobody stands inside the floor
+    let gy = G(x, z);
+    for (let k = 0; k < 8; k++) gy = Math.min(gy, G(x + Math.cos((k / 8) * Math.PI * 2) * (R + 0.2), z + Math.sin((k / 8) * Math.PI * 2) * (R + 0.2)));
+    m.cyl(wood, x, gy - 0.7, z, R + 0.2, R + 0.2, 0.8, 8);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
       const px = x + Math.cos(a) * (R - 0.2), pz = z + Math.sin(a) * (R - 0.2);
       m.box(white, px, gy + 1.9, pz, 0.28, 3.0, 0.28);
+      colliders.push({ kind: 'circle', x: px, z: pz, r: 0.3 });
       if (i !== 2 && i !== 6) {
         const a2 = ((i + 1) / 8) * Math.PI * 2 + Math.PI / 8;
         const qx = x + Math.cos(a2) * (R - 0.2), qz = z + Math.sin(a2) * (R - 0.2);
         m.box(white, (px + qx) / 2, gy + 1.0, (pz + qz) / 2, Math.hypot(px - qx, pz - qz), 0.08, 0.08, { yaw: -Math.atan2(qz - pz, qx - px) });
         m.box(white, (px + qx) / 2, gy + 0.6, (pz + qz) / 2, Math.hypot(px - qx, pz - qz), 0.05, 0.05, { yaw: -Math.atan2(qz - pz, qx - px) });
+        for (const t of [0.25, 0.5, 0.75]) colliders.push({ kind: 'circle', x: px + (qx - px) * t, z: pz + (qz - pz) * t, r: 0.2, h: gy + 1.2 }); // the rails
       }
     }
     m.cyl(mat.std('#3a3a44', 0.85), x, gy + 3.4, z, R + 0.9, 0.12, 1.9, 8);
     m.cyl(mat.neon('#ffd98a'), x, gy + 3.25, z, 0.14, 0.14, 0.14, 6);
     m.box(wood, x, gy + 0.55, z, 3.0, 0.1, 0.5); // a bench in the middle
+    colliders.push({ kind: 'box', x, z, hw: 1.55, hd: 0.3, h: gy + 2 }); // (h is tall: a walker standing at bench height must not skip it as "on the roof")
     colliders.push({ kind: 'circle', x, z, r: R + 0.4, only: 'car' });
   }
 

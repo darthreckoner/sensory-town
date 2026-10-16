@@ -152,10 +152,10 @@ export const tuning = {
   // ── v3 locker (W2): the Locker's lobby stage, per-slot cameras, face light, reveal card ──
   locker: {
     /** camera distance / look-at height per Locker slot */
-    slotDist: { outfit: 5.3, backBling: 4.2, glider: 9.4, contrail: 7.2, emote: 5.0, wrap: 7.6, custom: 5.6 } as Record<string, number>,
-    slotLookY: { outfit: 0.97, backBling: 1.18, glider: 2.2, contrail: 1.15, emote: 1.0, wrap: 1.0, custom: 0.98 } as Record<string, number>,
+    slotDist: { outfit: 5.3, backBling: 4.2, glider: 12.5, contrail: 7.2, emote: 5.0, wrap: 7.6, custom: 5.6 } as Record<string, number>,
+    slotLookY: { outfit: 0.97, backBling: 1.18, glider: 2.7, contrail: 1.15, emote: 1.0, wrap: 1.0, custom: 0.98 } as Record<string, number>,
     /** extra camera height per slot (the glider tab looks down on the canopy) */
-    slotElev: { glider: 1.5 } as Record<string, number>,
+    slotElev: { glider: 1.2 } as Record<string, number>,
     /** warm fill so the face is the best-lit thing on screen (+ a soft hair rim from behind) */
     faceLight: { color: '#ffd9bd', intensity: 55, range: 10, angle: 0.32, penumbra: 0.9, x: 1.1, y: 2.7, z: 3.6, rim: 1.4 },
     coolRim: { color: '#9fc4ff', intensity: 40, x: -2.4, y: 2.6, z: -2.2 },

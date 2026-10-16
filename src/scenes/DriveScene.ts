@@ -21,6 +21,7 @@ import { popScale } from '../core/tween';
 import { nextReward } from '../core/unlocks';
 import { CarPhysics, ColliderGrid, NO_INPUT, pushOut, res, type CarInput } from '../drive/physics';
 import { FootPhysics } from '../drive/foot';
+import { setFoliageFocus } from '../drive/vegetation'; // ── v3 world ── foliage fade (leaves near the lens / between lens and head dither out)
 import { DriveControls } from '../drive/controls';
 import { Minimap, NameTags, PromptBubble, TopHud } from '../drive/hud';
 import { JobManager } from '../drive/jobs';
@@ -264,6 +265,7 @@ export class DriveScene extends GameScene {
     // ── HUD ──
     const hud = el('div', 'drive-hud passthrough', this.ui);
     hud.style.setProperty('--drive-map', `${d.minimapSize}px`);
+    hud.style.setProperty('--hud-ctrl', `${d.controlSize}px`);   // v3 hud: the right-hand button column keeps clear of the pedals (style.css `v3 hud`)
     this.tags = new NameTags(hud);
     this.minimap = new Minimap(hud);
     this.top = new TopHud(hud);
@@ -576,6 +578,7 @@ export class DriveScene extends GameScene {
     this.build3.update(dt, t);   // v3 build: ghost, placing, build-in animations
     this.emote3.update();   // v3 emote: notices when the dance is over (moved, jumped, got in a ride)
     this.env.setViewer?.(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+    setFoliageFocus(this.camera.position, this.mx, (this.mode === 'car' ? this.phys.y : this.foot.y) + 1.6, this.mz); // ── v3 world ──
     this.env.update(dt, t);
     tickBuildMaterials(t);
 
@@ -889,6 +892,8 @@ export class DriveScene extends GameScene {
   // Every ride in the world (the six kinds), parked where it was left. `car` / `phys` are the ride you are in — or, on foot, the one you
   // last drove. Walk up to any parked ride for a "Drive" prompt; getting out leaves it where it is; 🚗 brings YOUR ride (the Locker's favourite).
   private rides: WorldRide[] = [];
+  /** camera-only boxes: one per parked ride (the movable circles are for walkers and cars; the lens steers round BOXES). Rebuilt with the colliders. */
+  private rideBoxes: Collider[] = [];
   private driving: WorldRide | null = null;
   private rideTarget: WorldRide | null = null;
 
@@ -952,6 +957,7 @@ export class DriveScene extends GameScene {
   /** Parked rides are solid (circles along their length); the one you are driving is not. */
   private rebuildRideColliders(): void {
     const list: Collider[] = [];
+    const boxes: Collider[] = [];
     for (const w of this.rides) {
       if (this.mode === 'car' && w === this.driving) continue;
       const sp = w.ride.spec;
@@ -959,8 +965,12 @@ export class DriveScene extends GameScene {
       const sh = Math.sin(w.heading), ch = Math.cos(w.heading);
       const gy = w.kind === 'boat' ? WATER_Y : w.y ?? groundHeight(w.x, w.z);
       for (const o of [-0.3, 0, 0.3]) list.push({ kind: 'circle', x: w.x + sh * sp.length * o, z: w.z - ch * sp.length * o, r, h: gy + sp.height });
+      // the camera's box: the ride's footprint turned to its heading (an axis-aligned box that covers it), as tall as the ride
+      const ash = Math.abs(sh), ach = Math.abs(ch);
+      boxes.push({ kind: 'box', x: w.x, z: w.z, hw: (sp.width * ach + sp.length * ash) / 2, hd: (sp.width * ash + sp.length * ach) / 2, h: gy + (w.kind === 'hoverboard' ? tuning.rides.hoverboard.hover : 0) + sp.height });
     }
     this.grid.setDynamic(list);
+    this.rideBoxes = boxes;
   }
 
   /** (Re)build the world's rides for this visit: from the session (where they were left) or from the spawn list. */
@@ -1027,6 +1037,7 @@ export class DriveScene extends GameScene {
     this.dismountRider();
     for (const w of this.rides) w.ride.dispose();
     this.rides = [];
+    this.rideBoxes = [];
     this.driving = null;
     this.rideTarget = null;
     this.blobs.begin();
@@ -1557,8 +1568,9 @@ export class DriveScene extends GameScene {
   /** Last line of defence: keep the lens outside every building box (lagging around corners). */
   private keepOutOfBoxes(): void {
     const cols = this.grid.near(this.camPos.x, this.camPos.z, 6);
-    for (let i = 0; i < cols.length; i++) {
-      const b = cols[i];
+    const nc = cols.length, rb = this.rideBoxes;   // ── v3 rides ── the parked rides' camera boxes ride along after the grid's colliders
+    for (let i = 0; i < nc + rb.length; i++) {
+      const b = i < nc ? cols[i] : rb[i - nc];
       if (b.kind !== 'box' || b.only === 'foot') continue;
       if (b.y0 !== undefined && b.y0 > this.camPos.y + 1.2) continue; // v3: a wall on an upper storey is no concern of a lens down here
       const ox = b.hw + 0.8 - Math.abs(this.camPos.x - b.x), oz = b.hd + 0.8 - Math.abs(this.camPos.z - b.z);
@@ -1581,8 +1593,9 @@ export class DriveScene extends GameScene {
     let best = 1;
     const dx = bx - ax, dz = bz - az;
     const cols = this.grid.near((ax + bx) / 2, (az + bz) / 2, Math.hypot(dx, dz) / 2 + 2);
-    for (let i = 0; i < cols.length; i++) {
-      const b = cols[i];
+    const nc = cols.length, rb = this.rideBoxes;   // ── v3 rides ── plus the parked rides' camera boxes
+    for (let i = 0; i < nc + rb.length; i++) {
+      const b = i < nc ? cols[i] : rb[i - nc];
       if (b.kind !== 'box' || b.only === 'foot') continue;
       if (b.h !== undefined && yLevel > b.h + 0.5) continue;
       if (b.y0 !== undefined && b.y0 > yLevel + 1.2) continue; // v3: a wall on an upper storey does not shorten a ground-level arm

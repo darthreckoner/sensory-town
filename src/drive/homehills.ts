@@ -138,7 +138,7 @@ export function buildHomeHills(): HomeOut {
     m.box(mat.std(ey, 0.5), -51.1, gy + 2.5, 24, 3.2, 0.3, 0.45, { yaw: -0.4 });
     m.box(mat.std(ey, 0.5), -49.5, gy + 2.0, 24, 0.3, 1.8, 0.4);
     m.cyl(mat.std('#6b4d36', 1), -48.5, gy, 29, 2.3, 0.3, 1.6, 9);
-    colliders.push({ kind: 'box', x: -52, z: 24, hw: 2.4, hd: 1.2 }, { kind: 'circle', x: -48.5, z: 29, r: 2.2 });
+    colliders.push({ kind: 'box', x: -52.3, z: 24, hw: 3.3, hd: 1.3 }, { kind: 'circle', x: -48.5, z: 29, r: 2.2 });
     for (let i = 0; i < 3; i++) m.box(mat.std('#c2603f', 0.9), -50 + i * 1.3, gy + 0.55, 31, 1.2, 0.9, 1.0);
     colliders.push({ kind: 'box', x: -48.8, z: 31, hw: 2.1, hd: 0.6 });
     for (const [kx, kz] of [[-58.8, 20.2], [-53.2, 20.2], [-64, 20.6]]) {

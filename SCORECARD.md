@@ -274,3 +274,10 @@ Rubric: locked in docs/V3_PLAN.md before any v3 code. Grades are integers, hones
 - Engine, emote and SFX audio are checked by measurement only, not by ear.
 
 **External checks still pending** (the real verdict): the iPad fps readout and the kids' 15-minute session (docs/KIDS_PLAYTEST.md).
+
+### v3 external check: designer on a real iPhone (deployed v3, ~13:10 CDT)
+- "I drove around the island and never saw dips below 60 fps. It was solid the entire time." This is the first real-device frame-rate evidence. **Performance 7 → 8** (it was capped only for lack of a device reading; the iPad check is still pending).
+- "The HUD overlaps due to small screen and makes it fairly difficult to navigate the game world and menus." This is a **playability failure on phones**, and it confirms the known issue I listed (short-landscape touch overlap) was worse than I graded it.
+  - The `hudLayout` fix already in the tree covers the in-world column.
+  - A full phone pass on the HUD, menus, Locker, lobby and Studio is underway, plus a "turn sideways" card for the island in phone portrait.
+  - **Stability / playability stays at 7 until it's re-verified at phone sizes.**

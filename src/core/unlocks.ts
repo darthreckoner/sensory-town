@@ -54,19 +54,19 @@ const LEGACY: Record<string, { icon: string; label: string; where: string; rarit
  * this list is spread evenly through it, rarest last (and warned about in dev, except wardrobe suits).
  */
 const LADDER: string[] = [
-  'bling.bunny', 'trail.sparkles', 'skin.glitterRacer', 'emote.tada', 'wax.glitter', 'glider.umbrella',
-  'ride.pickup', 'skin.neonSkater', 'car.neon', 'bling.boba', 'trail.hearts', 'slime.holo',
+  'bling.bunny', 'trail.sparkles', 'skin.glitterRacer', 'emote.tada', 'wax.glitter', 'glider.umbrella', 'bling.lollipop',
+  'ride.pickup', 'skin.neonSkater', 'car.neon', 'bling.boba', 'glider.kite', 'trail.hearts', 'slime.holo',
   'skin.snowDay', 'outfit.ledkicks', 'emote.twirl', 'bling.guitar', 'glider.balloons', 'skin.starChef',
   'build.neonsign', 'skin.cometCat', 'ride.boat', 'emote.giggle', 'trail.stars', 'squishy.dragon',
-  'skin.bobaBreeze', 'bling.catpack', 'style.glitterRacer.2', 'glider.butterfly', 'skin.studioSpark', 'wrap.pearl',
+  'skin.bobaBreeze', 'bling.catpack', 'style.glitterRacer.2', 'glider.butterfly', 'bling.donut', 'skin.studioSpark', 'wrap.pearl',
   'wax.chrome', 'skin.jellyJet', 'bling.butterfly', 'emote.heart', 'skin.cherryPop', 'trail.bubbles',
-  'car.trail', 'skin.galaxyGamer', 'bling.jetpack', 'style.neonSkater.2', 'skin.moonlightMixer', 'glider.pizza',
-  'outfit.wings', 'ride.hoverboard', 'skin.roboRascal', 'emote.shuffle', 'face.sticker.rainbow', 'bling.balloon', 'style.cometCat.2',
-  'skin.dinoDash', 'build.pool', 'bling.shell', 'skin.cosmicCheer', 'face.eyes.4', 'glider.cloud', 'car.chrome',
-  'emote.robot', 'style.galaxyGamer.2', 'skin.dragonDrift', 'trail.confetti', 'slime.galaxy', 'bling.angel',
+  'car.trail', 'skin.galaxyGamer', 'bling.jetpack', 'style.neonSkater.2', 'skin.moonlightMixer', 'glider.pizza', 'glider.jellyfish',
+  'outfit.wings', 'ride.hoverboard', 'glider.daisy', 'skin.roboRascal', 'emote.shuffle', 'face.sticker.rainbow', 'bling.balloon', 'style.cometCat.2',
+  'skin.dinoDash', 'build.pool', 'bling.shell', 'bling.unicorn', 'skin.cosmicCheer', 'face.eyes.4', 'glider.cloud', 'car.chrome',
+  'emote.robot', 'style.galaxyGamer.2', 'skin.dragonDrift', 'glider.shootingstar', 'trail.confetti', 'slime.galaxy', 'bling.angel',
   'skin.auroraSkies', 'glider.dragonfly', 'style.cosmicCheer.2', 'ride.icecream', 'face.makeup.4', 'skin.shadowSprite', 'face.sticker.glitter', 'emote.swing',
   'style.dragonDrift.2', 'wrap.glitter', 'skin.solarSparkle', 'style.auroraSkies.2', 'face.eyecolor.pink', 'wax.glow', 'skin.midnightMirage',
-  'bling.rainbowcape', 'emote.sway', 'trail.rainbow', 'outfit.crown', 'skin.prismParade',
+  'bling.rainbowcape', 'bling.dragonwings', 'emote.sway', 'trail.rainbow', 'outfit.crown', 'skin.prismParade',
 ];
 
 const WHERE: Record<string, string> = {

@@ -227,13 +227,66 @@ function applyWind(sh: { uniforms: Record<string, { value: unknown }>; vertexSha
         transformed.z += ww * ${(amount * 0.6).toFixed(3)} * hh;`);
   }
 }
+
+// ── v3 world: foliage camera fade (Fortnite-style dither). Leaves within ~2.8 m of the lens, or inside a ~1.2 m tube between the
+// lens and the player's head, are discarded with an ordered 4x4 dither: no transparency, no sorting, no extra draw calls. ──
+/** Camera and the player's head (world space). DriveScene writes them every frame; far away = no fade (other scenes). */
+export const foliageFocus = { cam: { value: new THREE.Vector3(1e6, 1e6, 1e6) }, head: { value: new THREE.Vector3(1e6, 1e6, 1e6) } };
+export function setFoliageFocus(cam: THREE.Vector3, hx: number, hy: number, hz: number): void {
+  foliageFocus.cam.value.copy(cam);
+  foliageFocus.head.value.set(hx, hy, hz);
+}
+type FadeShader = { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string };
+/** Add the dither fade to an instanced standard material's shaders (call from onBeforeCompile, after any vertex displacement). */
+export function applyFoliageFade(sh: FadeShader): void {
+  sh.uniforms.uFolCam = foliageFocus.cam;
+  sh.uniforms.uFolHead = foliageFocus.head;
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vFolW;')
+    .replace('#include <project_vertex>', `#include <project_vertex>
+      {
+        vec4 fw = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          fw = instanceMatrix * fw;
+        #endif
+        vFolW = (modelMatrix * fw).xyz;
+      }`);
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', `#include <common>
+      varying vec3 vFolW;
+      uniform vec3 uFolCam;
+      uniform vec3 uFolHead;
+      const float FOL_B[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);`)
+    .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+      {
+        float fdc = distance(vFolW, uFolCam);
+        float ff = 1.0 - smoothstep(1.4, 2.8, fdc);
+        vec3 fab = uFolHead - uFolCam;
+        float fL = max(length(fab), 0.001);
+        vec3 fdir = fab / fL;
+        float ftp = dot(vFolW - uFolCam, fdir);
+        if (ftp > 0.0 && ftp < fL + 0.5) {
+          float fdl = length(vFolW - uFolCam - fdir * clamp(ftp, 0.0, fL));
+          ff = max(ff, 1.0 - smoothstep(0.6, 1.25, fdl));
+        }
+        if (ff > 0.0) {
+          int fix = int(mod(gl_FragCoord.x, 4.0)), fiy = int(mod(gl_FragCoord.y, 4.0));
+          if (ff > (FOL_B[fiy * 4 + fix] + 0.5) / 16.0) discard;
+        }
+      }`);
+}
 function windy<T extends THREE.Material>(mt: T, amount: number): T {
-  mt.onBeforeCompile = (sh) => applyWind(sh, amount);
+  mt.onBeforeCompile = (sh) => {
+    applyWind(sh, amount);
+    applyFoliageFade(sh as unknown as FadeShader);
+  };
+  mt.customProgramCacheKey = () => 'veg-windy-fade-' + amount;
   return mt;
 }
 /** Flowers: swaying; only the petals (aTint = 1) take the instance's colour, stems stay green and centres yellow. */
 function flowerMaterial(): THREE.MeshStandardMaterial {
   const mt = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+  mt.customProgramCacheKey = () => 'veg-flower';
   mt.onBeforeCompile = (sh) => {
     applyWind(sh, 0.12);
     sh.vertexShader = sh.vertexShader
@@ -249,8 +302,10 @@ function flowerMaterial(): THREE.MeshStandardMaterial {
 function treeMaterial(): THREE.MeshStandardMaterial {
   const mt = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true });
   const bark = new THREE.Color('#6b4d36');
+  mt.customProgramCacheKey = () => 'veg-tree';
   mt.onBeforeCompile = (sh) => {
     applyWind(sh, 0.035);
+    applyFoliageFade(sh as unknown as FadeShader);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float aLeaf;')
       .replace('#include <color_vertex>', `#include <color_vertex>

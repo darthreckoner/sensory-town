@@ -11,6 +11,7 @@ import { mat } from './kit';
 import { poiSign } from './poiSign';
 import { PAL } from './palette';
 import { InstanceBatch, bakeStatic, mergeStaticGroups, put } from './envUtils';
+import { applyFoliageFade } from './vegetation';
 
 export interface GroveOut extends Piece {
   trees: { x: number; z: number; kind: 'oak' | 'birch'; scale: number }[];
@@ -29,6 +30,7 @@ export function buildGrove(): GroveOut {
   const m = new Mesher();
   const ex = new THREE.Group();
   const inst = new THREE.Group();                    // instanced meshes (bakeStatic leaves those alone, so they live beside the baked result)
+  inst.name = 'vegetation';                          // (soft, camera-faded scenery: the world sweeps treat it like foliage)
   const colliders: Collider[] = [];
   const trees: GroveOut['trees'] = [];
   const G = (x: number, z: number): number => groundHeight(x, z);
@@ -47,16 +49,23 @@ export function buildGrove(): GroveOut {
   })();
   const capGeo = new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.56).scale(5, 2.6, 5);
   const spotGeo = new THREE.SphereGeometry(0.5, 8, 6);
-  const glowMat = (): THREE.MeshStandardMaterial => {
-    const mt = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.45 });
+  // v3: every mushroom part dithers out near the lens / between lens and head, like the trees (see vegetation.applyFoliageFade)
+  const fadey = <T extends THREE.MeshStandardMaterial>(mt: T, key: string, extra?: (sh: { fragmentShader: string }) => void): T => {
+    mt.customProgramCacheKey = () => key;
     mt.onBeforeCompile = (sh) => {
-      sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.5;');
+      extra?.(sh);
+      applyFoliageFade(sh as unknown as Parameters<typeof applyFoliageFade>[0]);
     };
     return mt;
   };
+  const glowMat = (): THREE.MeshStandardMaterial =>
+    fadey(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.45 }), 'grove-glow', (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.5;');
+    });
+  const stemMat = (): THREE.MeshStandardMaterial => fadey(new THREE.MeshStandardMaterial({ color: '#f6ecd6', roughness: 0.8 }), 'grove-stem');
   const caps = new InstanceBatch(capGeo, glowMat(), true, true);
-  const stems = new InstanceBatch(stemGeo, mat.std('#f6ecd6', 0.8), true, true);
-  const spots = new InstanceBatch(spotGeo, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5, emissive: '#ffffff', emissiveIntensity: 0.25 }), false, false);
+  const stems = new InstanceBatch(stemGeo, stemMat(), true, true);
+  const spots = new InstanceBatch(spotGeo, fadey(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5, emissive: '#ffffff', emissiveIntensity: 0.25 }), 'grove-spot'), false, false);
   for (const [x, z, s, col] of GIANT_MUSHROOMS) {
     const g0 = G(x, z), yaw = rng() * 6.28;
     const stemH = 6 * s;
@@ -75,7 +84,7 @@ export function buildGrove(): GroveOut {
     const smallCap = new THREE.SphereGeometry(1, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.5, 0.3, 0.5);
     const smallStem = new THREE.CylinderGeometry(0.1, 0.14, 0.5, 5, 1, true).translate(0, 0.25, 0);
     const sCaps = new InstanceBatch(smallCap, glowMat(), false, false);
-    const sStems = new InstanceBatch(smallStem, mat.std('#f6ecd6', 0.8), false, false);
+    const sStems = new InstanceBatch(smallStem, stemMat(), false, false);
     const cols = ['#ff5e9c', '#9b6bff', '#3ec6e8', '#ffb02e', '#ff5470', '#7bff9a'];
     let n = 0;
     for (let i = 0; i < 2600 && n < 300; i++) {
@@ -145,6 +154,7 @@ export function buildGrove(): GroveOut {
       const x = P.x + Math.cos(a) * (P.r + 1.1), z = P.z + Math.sin(a) * (P.r + 1.1);
       m.cyl(mat.std('#8d93a0', 0.9), x, G(x, z) - 0.3, z, 0.55 + (i % 3) * 0.12, 0.45, 0.5, 7);
       if (i % 2) for (let k = 0; k < 3; k++) m.box(mat.std('#3a9a50', 0.8), x + Math.cos(a) * 0.9 + k * 0.1, G(x, z) + 0.7, z + Math.sin(a) * 0.9, 0.06, 1.5 + k * 0.2, 0.06);
+      if (i % 2) colliders.push(circle(x + Math.cos(a) * 0.9 + 0.1, z + Math.sin(a) * 0.9, 0.3));   // the reed clump
     }
   }
 

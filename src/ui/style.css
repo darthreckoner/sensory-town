@@ -1190,5 +1190,34 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 @media (pointer: fine) { .em3-keys { display: block; } }
 @keyframes em3fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes em3pop { from { opacity: 0; transform: translate(-50%, -50%) scale(0.72); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
-/* a short window: the side buttons (paint, get in, call, build, emote) would run off the bottom, so they wrap into a second column */
-@media (max-height: 640px) { .drive-side { flex-wrap: wrap-reverse; align-content: flex-start; max-height: calc(100vh - 28px - var(--safe-t) - var(--drive-map, 160px) - var(--safe-b)); } }
+
+/* ── v3 hud (W5): the right-hand round buttons never run into the pedals, the SLIDE button or the minimap ────────────────────────────
+   The column starts under the minimap and may only use the band down to the TOP of whatever sits in the bottom-right corner (the JUMP / gas pedal,
+   the boost, the hoverboard HOP). When the band is too short for every button the column wraps into a second (third) column to the LEFT of it, and on
+   short landscape screens the pedals and the minimap shrink a little so the band is big enough. --hud-ctrl mirrors tuning.drive.controlSize (DriveScene
+   sets it); the touch state comes from :has(.drive-controls.show...) with a (pointer: coarse) fallback for browsers without :has(). */
+.drive-hud { --hud-ctrl: 132px; --hud-btn: 64px; --hud-gap: 10px; --hud-low: calc(14px + var(--safe-b)); }
+.drive-side {
+  --hud-top: calc(14px + var(--safe-t) + var(--drive-map, 160px) + 14px);
+  top: var(--hud-top); right: calc(14px + var(--safe-r) + (var(--drive-map, 160px) - var(--hud-btn)) / 2);
+  gap: var(--hud-gap); flex-wrap: wrap-reverse; align-content: flex-start;
+  max-height: calc(100% - var(--hud-top) - var(--hud-low));
+}
+.drive-side .btn.round { width: var(--hud-btn); height: var(--hud-btn); flex: 0 0 auto; }
+@media (pointer: coarse) { .drive-hud { --hud-low: calc(var(--safe-b) + 14px + var(--hud-ctrl) + 12px); } }
+.drive-hud:has(.drive-controls.show.mode-foot) { --hud-low: calc(var(--safe-b) + 14px + var(--hud-ctrl) + 12px); }
+.drive-hud:has(.drive-controls.show.mode-car) { --hud-low: calc(var(--safe-b) + 14px + var(--hud-ctrl) * 1.8 + 16px + 12px); }
+.drive-hud:has(.drive-controls.show.mode-car.hop-on) { --hud-low: calc(var(--safe-b) + 14px + var(--hud-ctrl) * 2.54 + 34px + 12px); }
+/* in a ride the pedals stack up the right edge (the hoverboard: HOP + boost + gas): on a short screen the buttons sit in a row to the left of the minimap instead */
+@media (max-height: 700px) {
+  .drive-hud:has(.drive-controls.show.mode-car.hop-on) .drive-side { top: calc(14px + var(--safe-t)); right: calc(14px + var(--safe-r) + var(--drive-map, 160px) + 12px); flex-direction: row-reverse; flex-wrap: nowrap; max-height: none; }
+}
+@media (max-height: 400px) {
+  .drive-hud:has(.drive-controls.show.mode-car) .drive-side { top: calc(14px + var(--safe-t)); right: calc(14px + var(--safe-r) + var(--drive-map, 160px) + 12px); flex-direction: row-reverse; flex-wrap: nowrap; max-height: none; }
+}
+/* short landscape (a phone on its side): smaller pedals and minimap, 52 px buttons, so the column still fits above the pedals */
+@media (max-height: 520px) {
+  .drive-hud { --hud-ctrl: 88px !important; --hud-btn: 52px; --hud-gap: 8px; --drive-map: 96px !important; }
+  .drive-controls { --drive-ctrl: 88px !important; }
+  .drive-minimap { width: var(--drive-map) !important; height: var(--drive-map) !important; }
+}

@@ -32,6 +32,7 @@ export function buildLookout(): Piece {
     const ox = px + (dx / r) * 4.7, oz = pz + (dz / r) * 4.7;
     const gy = groundHeight(ox, oz);
     m.box(trim, ox, gy + 0.55, oz, 0.12, 1.1, 0.12);
+    colliders.push({ kind: 'circle', x: ox, z: oz, r: 0.2, h: gy + 1.2 });
     m.box(mat.neon('#ffc93c'), ox, gy + 0.95, oz, 0.14, 0.12, 0.14);
     if (prev) {
       const ex2 = ox - prev[0], ez = oz - prev[1];
@@ -40,6 +41,8 @@ export function buildLookout(): Piece {
         const yaw = -Math.atan2(ez, ex2);
         m.box(steel, (ox + prev[0]) / 2, (gy + prev[2]) / 2 + 0.8, (oz + prev[1]) / 2, len, 0.22, 0.06, { yaw });
         m.box(steel, (ox + prev[0]) / 2, (gy + prev[2]) / 2 + 0.45, (oz + prev[1]) / 2, len, 0.12, 0.06, { yaw });
+        const nr = Math.max(1, Math.ceil(len / 0.8));
+        for (let k = 1; k < nr; k++) colliders.push({ kind: 'circle', x: prev[0] + (ex2 * k) / nr, z: prev[1] + (ez * k) / nr, r: 0.18, h: (gy + prev[2]) / 2 + 1.1 }); // the rails
       }
     }
     prev = [ox, oz, gy];

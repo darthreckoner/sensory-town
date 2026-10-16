@@ -155,7 +155,7 @@ export class JobManager {
       t.x = this.spot.x;
       t.z = this.spot.z;
       t.icon = '🙋';
-      t.name = 'Hello';
+      t.name = 'Give a ride';
       t.kind = 'pickup';
       return t;
     }

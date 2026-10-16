@@ -117,8 +117,8 @@ export function blingThumb(id: string): () => ThumbSubject | null {
 export function gliderThumb(id: string): () => ThumbSubject | null {
   return () => {
     const g = makeGlider(id);
-    // frame the canopy (the grip bar and strings hang low)
-    return { object: g, view: [0.5, 0.55, 1], fit: { center: [0, 1.15, 0.1], radius: 1.3 }, dispose: () => disposeGear(g) };
+    // the whole glider (they are ~3 m across now): auto-fit, seen from the front and a little above
+    return { object: g, view: [0.5, 0.6, 1], dispose: () => disposeGear(g) };
   };
 }
 export function rideThumb(kind: VehicleKind, wrap: WrapLook): () => ThumbSubject | null {

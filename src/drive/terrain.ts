@@ -334,7 +334,7 @@ function samples(pts: [number, number][]): Sample[] {
 
 /** Ribbon geometry draped on the ground (+ lift). Offsets are lateral from the centre line. */
 function ribbon(
-  soup: Soup, sm: Sample[], off0: number, off1: number, lift: number, col: string, uvScale = 1 / 8, skip?: (s: Sample) => boolean,
+  soup: Soup, sm: Sample[], off0: number, off1: number, lift: number, col: string, uvScale = 1 / 8, skip?: (s: Sample) => boolean, laneW = 1.5,
 ): void {
   const nrm = { x: 0, y: 1, z: 0 };
   const vert = (s: Sample, off: number): number[] => {
@@ -343,7 +343,7 @@ function ribbon(
   };
   // split wide ribbons across their width too, so a road hugs a cross-slope instead of
   // bridging it with one flat chord (walkers' feet are on the terrain, not the chord)
-  const lanes = Math.max(1, Math.ceil(Math.abs(off1 - off0) / 1.5));
+  const lanes = Math.max(1, Math.ceil(Math.abs(off1 - off0) / laneW));
   for (let i = 0; i < sm.length - 1; i++) {
     const a = sm[i], b = sm[i + 1];
     if (skip && (skip(a) || skip(b))) continue;
@@ -384,10 +384,11 @@ function buildRoadwork(): THREE.Group {
   const asphalt = new Soup(), trail = new Soup(), plank = new Soup(), marks = new Soup(), walks = new Soup();
 
   ROAD_PATHS.forEach((p: RoadPath, pi) => {
-    const sm = samples(resample(p.pts, 3));
+    const steep = !!p.elev;                                    // v3: a climbing road (the Lookout spiral) is sampled finer, so it hugs its embankment
+    const sm = samples(resample(p.pts, steep ? 1.5 : 3));
     const soup = p.kind === 'trail' ? trail : p.kind === 'boardwalk' ? plank : asphalt;
     const col = '#ffffff';
-    ribbon(soup, sm, -p.w / 2, p.w / 2, ROAD_LIFT, col, p.kind === 'boardwalk' ? 1 / 2.5 : 1 / 8);
+    ribbon(soup, sm, -p.w / 2, p.w / 2, ROAD_LIFT, col, p.kind === 'boardwalk' ? 1 / 2.5 : 1 / 8, undefined, steep ? 1.0 : 1.5);
     if (p.kind === 'trail' || p.kind === 'boardwalk' || p.kind === 'drive') return;
     const junction = offRoad(pi);
 

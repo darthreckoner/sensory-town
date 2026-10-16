@@ -126,6 +126,8 @@ export function buildSands(): SandsOut {
         colliders.push(circle(p.x, p.z, 0.4));
       }
       for (let i = N - 3; i <= N; i++) colliders.push(circle(pts[i].x, pts[i].z, 1.1));
+      // the whole tube is a solid for the camera (and for anyone short enough to meet it): underside y0, so walkers pass beneath the high parts
+      for (let i = 0; i <= N; i++) colliders.push({ kind: 'box', x: pts[i].x, z: pts[i].z, hw: 1.5, hd: 1.5, y0: pts[i].y - 1.3, h: pts[i].y + 1.0 });
     });
   }
   // two arched footbridges across the river (the physics deck is in BRIDGES; this draws it)

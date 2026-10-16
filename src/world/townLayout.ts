@@ -173,7 +173,7 @@ export const ROAD_PATHS: RoadPath[] = [
   { id: 'branch', pts: densify([[-100, spineZ(-100)], [-100, -30], [-99, -46]], 5), w: HOME_ROAD_W, kind: 'street', walk: true, lines: 'center' },
   { id: 'yard_rd', pts: densify([[-56, 0], [-56, 16]], 5), w: 6, kind: 'drive', lines: 'none' },
   // ── Lookout Hill ──
-  { id: 'lookout_a', pts: densify([[-99, -46], [-96, -56], [spiralPts[0][0], spiralPts[0][1]]], 5), w: 8, kind: 'road', lines: 'center' },
+  { id: 'lookout_a', pts: densify([[-99, -46], [-102, -49.5], [spiralPts[2][0], spiralPts[2][1]]], 5), w: 8, kind: 'road', lines: 'center' }, // (v3: it now merges onto the spiral heading west; it used to overshoot and double back in a fold)
   { id: 'lookout', pts: spiralPts, w: 8, kind: 'road', lines: 'center', elev: spiralElev },
   // ── Park & Lake ──
   { id: 'park_rd', pts: spline([[50, -62], [51, -75], [49, -88], [52, -100]], 4), w: 8, kind: 'road', lines: 'center' },

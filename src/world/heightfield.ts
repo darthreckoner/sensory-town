@@ -78,7 +78,7 @@ export function shoreDist(x: number, z: number): number {
 /** 0..1: how cliffy the coast is here (beaches around the places that want them). */
 export function cliffiness(x: number, z: number): number {
   let c = smooth(0.5, 0.63, vnoise(x / 120 + 7, z / 120 + 3, 31));
-  const bay = smooth(-90, -60, z) * (1 - smooth(80, 110, z)) * smooth(40, 80, x);
+  const bay = smooth(-90, -60, z) * (1 - smooth(80, 110, z)) * smooth(-20, 30, x);
   const sands = 1 - smooth(100, 130, Math.hypot(x - SANDS.x, z - SANDS.z));
   const meadow = 1 - smooth(100, 130, Math.hypot(x - MEADOW.x, z - MEADOW.z));
   const home = 1 - smooth(70, 100, Math.hypot(x + 150, z - 5)); // the west beach below Home Hills
@@ -196,6 +196,13 @@ function interior(x: number, z: number): number {
   h = Math.max(h, 0.25); // never flooded by accident
   h = sandsH(x, z, h);
 
+  // the lake bridge lands on flat ground at both ends (its deck is anchored at endY = 0.4)
+  for (const bx of [54, 122]) {
+    const bd = Math.hypot(x - bx, z + 100);
+    const bw = 1 - smooth(10, 26, bd);
+    if (bw > 0) h = h * (1 - bw) + 0.4 * bw;
+  }
+
   // Lake
   const lx = (x - LAKE.x) / LAKE.rx, lz = (z - LAKE.z) / LAKE.rz;
   const phi = Math.atan2(lz, lx);
@@ -237,7 +244,7 @@ function rawHeight(x: number, z: number): number {
   const wi = smooth(30, 46, s);
   h = hb * (1 - wi) + (wi > 0 ? interior(x, z) * wi : 0);
   // cliffs: a raised rim that rolls off inland (gone by 90 m in: the lake, the towns and the roads stay as designed)
-  if (c > 0) h += c * (6 + 7 * vnoise(x / 45 + 11, z / 45, 33)) * smooth(0, 8, s) * (1 - smooth(20, 90, s));
+  if (c > 0) h += c * (6 + 7 * vnoise(x / 45 + 11, z / 45, 33)) * smooth(0, 8, s) * (1 - smooth(20, 90, s)) * (1 - flatness(x, z));
   return h;
 }
 

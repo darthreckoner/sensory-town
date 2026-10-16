@@ -376,6 +376,47 @@ const TESTS: Record<string, () => Promise<Result>> = {
     };
   },
 
+  // ── v3 hud ────────────────────────────────────────────────────────────────
+  /** The right-hand round buttons (paint, get in, call, build, emote) stay on screen and never intersect the pedals / SLIDE / HOP / horn, the minimap or the stick, on foot and in a ride, at the CURRENT window size (run it at several sizes). */
+  async hudLayout() {
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    d.mv?.cancel?.();
+    const prevShow: boolean = d.controls.touchShown;
+    d.controls.showTouch(true);   // the touch controls are what the column has to keep clear of
+    const W = window.innerWidth, H = window.innerHeight;
+    const shown = (e: HTMLElement) => e.offsetParent !== null && e.getBoundingClientRect().width > 0;
+    const hit = (a: DOMRect, b: DOMRect) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
+    const tag = (e: Element) => (e.className as string).split(' ').filter((c) => /^(drive|joy|btn)/.test(c) && c !== 'btn' && c !== 'round').slice(0, 2).join('.') || e.tagName;
+    const problems: string[] = [];
+    const notes: string[] = [];
+    const check = (label: string) => {
+      scenes.step(3);
+      const btns = [...document.querySelectorAll<HTMLElement>('.drive-side .btn')].filter(shown);
+      const others = [...document.querySelectorAll<HTMLElement>('.drive-pedal, .drive-horn, .drive-minimap, .drive-joy .joy-base')].filter(shown);
+      btns.forEach((b, i) => {
+        const r = b.getBoundingClientRect();
+        if (r.left < -1 || r.top < -1 || r.right > W + 1 || r.bottom > H + 1) problems.push(`${label}: ${tag(b)} off screen (${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}px)`);
+        if (r.width < 51.5) problems.push(`${label}: ${tag(b)} only ${r.width.toFixed(0)}px wide`);
+        for (const o of others) if (hit(r, o.getBoundingClientRect())) problems.push(`${label}: ${tag(b)} runs into ${tag(o)}`);
+        for (let j = i + 1; j < btns.length; j++) if (hit(r, btns[j].getBoundingClientRect())) problems.push(`${label}: ${tag(b)} overlaps ${tag(btns[j])}`);
+      });
+      const cols = new Set(btns.map((b) => Math.round(b.getBoundingClientRect().left))).size;
+      notes.push(`${label} ${btns.length} btns/${cols} col`);
+    };
+    ensureFoot(d);
+    check('foot');
+    ensureCar(d);
+    check('ride');
+    d.controls.setHop(true);   // the hoverboard's HOP button stacks up the right edge
+    check('hop');
+    d.controls.setHop(d.phys.hover > 0);
+    ensureFoot(d);
+    d.controls.showTouch(prevShow);
+    return { name: 'hudLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join(', ')}${problems.length ? ' | ' + problems.slice(0, 6).join('; ') : ''}` };
+  },
+
   /** Draw calls in town (spawn view) within the iPad budget. */
   async drawCallsTown() {
     await scenes.go('town');

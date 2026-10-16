@@ -139,8 +139,8 @@ export function buildBeach(): BeachOut {
       m.quad(mat.vc(), [ux, gy + 2.95, uz], [ux + Math.cos(a1) * R, gy + 2.35, uz + Math.sin(a1) * R], [ux + Math.cos(a0) * R, gy + 2.35, uz + Math.sin(a0) * R], [ux, gy + 2.95, uz], undefined, col);
     }
     // lounger + towel beside it
-    m.box(mat.std('#f3f2ee', 0.9), ux + 2.2, gy + 0.18, uz + 0.3, 0.8, 0.14, 1.9);
-    m.box(mat.std(c, 0.9), ux + 2.2, gy + 0.27, uz + 0.1, 0.7, 0.04, 1.3);
+    m.box(mat.std('#f3f2ee', 0.9), ux + 2.2, gy - 0.02, uz + 0.3, 0.8, 0.14, 1.9);
+    m.box(mat.std(c, 0.9), ux + 2.2, gy + 0.07, uz + 0.1, 0.7, 0.04, 1.3);
     m.box(mat.std(cols[(i + 2) % cols.length], 0.95), ux - 2.0, gy + 0.03, uz + 0.4, 1.0, 0.05, 1.9);
     colliders.push({ kind: 'circle', x: ux, z: uz, r: 0.35, h: 3 });
   });
@@ -215,7 +215,6 @@ export function buildBeach(): BeachOut {
     const plank = new THREE.MeshStandardMaterial({ color: '#a9794b', roughness: 0.8 });
     // deck: a ramp for the first 4 units, then flat
     const w = pier.w;
-    m.box(plank, pier.ax + 2, G(pier.ax + 2, pier.az) - 0.1, pier.az, 4, 0.2, w); // under-ramp bulk
     m.box(plank, (pier.ax + 4 + pier.bx) / 2, y - 0.12, pier.az, L - 4, 0.24, w);
     m.quad(plank, [pier.ax, y * 0.45 + 0.02, pier.az + w / 2], [pier.ax + 4, y + 0.0, pier.az + w / 2], [pier.ax + 4, y + 0.0, pier.az - w / 2], [pier.ax, y * 0.45 + 0.02, pier.az - w / 2]);
     // plank lines

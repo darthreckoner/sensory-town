@@ -39,7 +39,7 @@ const item = (prefix: string, id: string, name: string, icon: string, rarity: Ra
   id, name, icon, rarity, blurb, reward: locked ? `${prefix}.${id}` : undefined,
 });
 
-// ── Back blings (12) — builders in backBling.ts ──────────────────────────────
+// ── Back blings (16) — builders in backBling.ts ──────────────────────────────
 export const BACK_BLINGS: GearItem[] = [
   item('bling', 'minipack', 'Mini Pack', '🎒', 'common'),
   item('bling', 'skateboard', 'Deck Back', '🛹', 'common'),
@@ -53,9 +53,13 @@ export const BACK_BLINGS: GearItem[] = [
   item('bling', 'shell', 'Shell Pack', '🐚', 'rare', true),
   item('bling', 'angel', 'Halo Wings', '😇', 'epic', true),
   item('bling', 'rainbowcape', 'Rainbow Cape', '🌈', 'legendary', true),
+  item('bling', 'lollipop', 'Swirl Lollipop', '🍭', 'uncommon', true),
+  item('bling', 'donut', 'Donut Float', '🍩', 'rare', true),
+  item('bling', 'unicorn', 'Unicorn Plush', '🦄', 'epic', true),
+  item('bling', 'dragonwings', 'Dragon Wings', '🐲', 'legendary', true),
 ];
 
-// ── Gliders (8) — builders in gliders.ts ─────────────────────────────────────
+// ── Gliders (12) — builders in gliders.ts ─────────────────────────────────────
 export const GLIDERS: GearItem[] = [
   item('glider', 'starter', 'Rainbow Parafoil', '🪂', 'common'),
   item('glider', 'paperplane', 'Paper Plane', '✈️', 'common'),
@@ -65,6 +69,10 @@ export const GLIDERS: GearItem[] = [
   item('glider', 'pizza', 'Pizza Slice', '🍕', 'rare', true),
   item('glider', 'cloud', 'Puff Cloud', '☁️', 'epic', true),
   item('glider', 'dragonfly', 'Dragonfly', '🐉', 'epic', true),
+  item('glider', 'kite', 'Candy Kite', '🪁', 'uncommon', true),
+  item('glider', 'jellyfish', 'Jelly Drift', '🪼', 'rare', true),
+  item('glider', 'daisy', 'Daisy Drift', '🌼', 'rare', true),
+  item('glider', 'shootingstar', 'Shooting Star', '🌠', 'legendary', true),
 ];
 
 // ── Contrails (6) — builders in contrails.ts ─────────────────────────────────

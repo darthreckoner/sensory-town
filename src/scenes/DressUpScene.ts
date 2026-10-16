@@ -12,7 +12,7 @@ import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type OutfitSlot } from '../core/events';
 import { tuning } from '../tuning';
-import { Character, MIN_ACCENT_GAP, OUTFIT_CATALOG, POSE_ORDER, colorGap, contrastColor, type CatalogSlot } from '../art/character';
+import { Character, EMOTES as CHAR_EMOTES, MIN_ACCENT_GAP, OUTFIT_CATALOG, POSE_ORDER, colorGap, contrastColor, type CatalogSlot } from '../art/character';
 import { gradientTexture, studioEnv } from '../art/env';
 import { charmCount, charmTotal, charmsNeeded, nextReward, rewardFor } from '../core/unlocks';
 import { el, button, bindTap, swatches, toast } from '../ui/ui';
@@ -108,6 +108,8 @@ export class DressUpScene extends GameScene {
   private rideObj: THREE.Group | null = null;
   private rideKey = '';
   private wasContrail = false;
+  /** the emote being previewed (so juice can play its tune): started / stopped events go out on the bus */
+  private curEmote: { id: string; loop: boolean } | null = null;
 
   // view state
   private rot = 0;
@@ -276,7 +278,9 @@ export class DressUpScene extends GameScene {
     rc.height = 256;
     const rg = rc.getContext('2d')!;
     const lin = rg.createLinearGradient(0, 256, 0, 0);
-    lin.addColorStop(0, 'rgba(255,255,255,0.9)');
+    // transparent at the hub (so no bright halo sits behind her head), bright a little way out, fading to nothing
+    lin.addColorStop(0, 'rgba(255,255,255,0)');
+    lin.addColorStop(0.2, 'rgba(255,255,255,0.75)');
     lin.addColorStop(1, 'rgba(255,255,255,0)');
     rg.fillStyle = lin;
     rg.fillRect(0, 0, 32, 256);
@@ -290,7 +294,7 @@ export class DressUpScene extends GameScene {
     const rayTex = new THREE.CanvasTexture(rc);
     rayTex.colorSpace = THREE.SRGBColorSpace;
     this.rayMat = new THREE.MeshBasicMaterial({ map: rayTex, color: '#ffffff', transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
-    this.rays.position.set(0, 1.4, -4);
+    this.rays.position.set(0, 0.6, -5);
     for (let i = 0; i < L.rayCount; i++) {
       const piv = new THREE.Group();
       piv.rotation.z = (i / L.rayCount) * TAU + (i % 2) * 0.08;
@@ -383,6 +387,7 @@ export class DressUpScene extends GameScene {
       for (const t of this.timers) clearTimeout(t);
       this.timers = [];
       this.pointers.clear();
+      this.endEmote('swap');
       this.char?.stopEmote();
       this.char?.setGliding(false);
       this.clearContrail();
@@ -584,6 +589,7 @@ export class DressUpScene extends GameScene {
 
   private setSlot(s: LockerSlot): void {
     if (s === this.slot) return;
+    this.endEmote('swap');
     this.char?.stopEmote();
     this.tryOn = null;
     this.slot = s;
@@ -917,7 +923,25 @@ export class DressUpScene extends GameScene {
     const char = this.char;
     if (!char) return;
     char.setGliding(false);
-    if (!char.playEmote(id)) char.pose(undefined, undefined, true);
+    this.endEmote('swap');
+    if (char.playEmote(id)) {
+      const loop = CHAR_EMOTES.find((e) => e.id === id)?.loop ?? false;
+      this.curEmote = { id, loop };
+      bus.emit('emoteStarted', { id, loop, pos: this.charPos() });
+    } else char.pose(undefined, undefined, true);
+  }
+  private charPos(): { x: number; y: number; z: number } {
+    const p = new THREE.Vector3();
+    this.char?.group.getWorldPosition(p);
+    return v3(p);
+  }
+  /** Stop the previewed emote (and tell the bus, so its tune stops too). */
+  private endEmote(reason: 'done' | 'swap'): void {
+    const e = this.curEmote;
+    if (!e) return;
+    this.curEmote = null;
+    this.char?.stopEmote();
+    bus.emit('emoteStopped', { id: e.id, pos: this.charPos(), reason });
   }
   /** 💃: play the next emote on the wheel. */
   private playWheelEmote(): void {
@@ -1650,6 +1674,11 @@ export class DressUpScene extends GameScene {
       }
     }
 
+    if (this.curEmote && char.emoting !== this.curEmote.id) {
+      const e = this.curEmote; // it ended by itself (one-shots) or got interrupted
+      this.curEmote = null;
+      bus.emit('emoteStopped', { id: e.id, pos: this.charPos(), reason: 'done' });
+    }
     char.lookAt(this.camera.position); // her eyes follow the camera
     char.update(dt, t);
 
