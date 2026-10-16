@@ -125,17 +125,25 @@ function build(): Float32Array {
   return g;
 }
 
-/** Smooth base terrain (bilinear over the cached grid). */
+/**
+ * Base terrain, interpolated over EXACTLY the triangles the terrain mesh draws
+ * (drive/terrain.ts buildChunk: vertices every 2 grid cells, split along the
+ * b-d diagonal), so wheels, feet, roads and props sit on the visible ground
+ * even on steep hills. (Bilinear over the finer grid drifted up to 0.8 m.)
+ */
+export const TERRAIN_MESH_STEP = STEP * 2;
 export function terrainHeight(x: number, z: number): number {
   if (!grid) grid = build();
-  let fx = (x + GROUND) / STEP, fz = (z + GROUND) / STEP;
-  fx = fx < 0 ? 0 : fx > N - 1.001 ? N - 1.001 : fx;
-  fz = fz < 0 ? 0 : fz > N - 1.001 ? N - 1.001 : fz;
+  const L = TERRAIN_MESH_STEP, M = (N - 1) / 2 - 1.001;
+  let fx = (x + GROUND) / L, fz = (z + GROUND) / L;
+  fx = fx < 0 ? 0 : fx > M ? M : fx;
+  fz = fz < 0 ? 0 : fz > M ? M : fz;
   const ix = Math.floor(fx), iz = Math.floor(fz);
   const u = fx - ix, v = fz - iz;
-  const i = iz * N + ix;
-  const a = grid[i], b = grid[i + 1], c = grid[i + N], d = grid[i + N + 1];
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  const i = iz * 2 * N + ix * 2;
+  const a = grid[i], b = grid[i + 2], d = grid[i + 2 * N], e = grid[i + 2 * N + 2];
+  // triangles (a,d,b) and (b,d,e)
+  return u + v <= 1 ? a + (b - a) * u + (d - a) * v : e + (d - e) * (1 - u) + (b - e) * (1 - v);
 }
 
 // ── overlay surfaces ────────────────────────────────────────────────────────
@@ -143,6 +151,12 @@ interface Overlay {
   x0: number; z0: number; x1: number; z1: number;
   foot: boolean;
   h(x: number, z: number): number; // NaN = no surface here
+  /** what a WALKER stands on, when that differs from the car's surface (stunts: the rendered cells) */
+  hFoot?(x: number, z: number): number;
+  /** a skate stunt (roads and plazas are paved under these, never draped over them) */
+  stunt?: boolean;
+  /** a bridge or pier deck: something a swimmer can pass UNDER (see groundHeight's noDecks) */
+  deck?: boolean;
 }
 const OVERLAYS: Overlay[] = [];
 
@@ -200,7 +214,32 @@ function stuntOverlay(s: Stunt): Overlay {
     },
   };
 }
-for (const s of STUNTS) OVERLAYS.push(stuntOverlay(s));
+/**
+ * The skate mesh (drive/skate.ts) renders each stunt as flat-topped 0.75 m cells
+ * sampled from the analytic surface, with vertical skirts between them. Cars ride
+ * the smooth curve; a walker stands on exactly what is drawn, so their feet never
+ * sink into a cell edge or a skirt. Keep STUNT_CELL / the 0.04 inset in sync with skate.ts.
+ */
+export const STUNT_CELL = 0.75;
+function stuntCells(o: Overlay): (x: number, z: number) => number {
+  const S = STUNT_CELL, e = 0.04;
+  const H = (x: number, z: number): number => groundHeight(x, z); // what skate.ts samples (overlapping stunts combined)
+  return (x, z) => {
+    const xa = Math.floor(x / S) * S, za = Math.floor(z / S) * S;
+    if (!(H(xa + S / 2, za + S / 2) >= 0.04)) return NaN; // the mesh skips this cell
+    const xb = xa + S, zb = za + S;
+    const ha = H(xa + e, za + e), hb = H(xb - e, za + e), hc = H(xb - e, zb - e), hd = H(xa + e, zb - e);
+    const u = (x - xa) / S, v = (z - za) / S;
+    // same diagonal as Mesher.quad(p0=(xa,za), p1=(xa,zb), p2=(xb,zb), p3=(xb,za))
+    return v >= u ? ha + (hd - ha) * v + (hc - hd) * u : ha + (hb - ha) * u + (hc - hb) * v;
+  };
+}
+for (const s of STUNTS) {
+  const o = stuntOverlay(s);
+  o.stunt = true;
+  o.hFoot = stuntCells(o);
+  OVERLAYS.push(o);
+}
 
 for (const b of BRIDGES) {
   const dx = b.bx - b.ax, dz = b.bz - b.az;
@@ -209,6 +248,7 @@ for (const b of BRIDGES) {
   OVERLAYS.push({
     x0: Math.min(b.ax, b.bx) - b.w, z0: Math.min(b.az, b.bz) - b.w, x1: Math.max(b.ax, b.bx) + b.w, z1: Math.max(b.az, b.bz) + b.w,
     foot: false,
+    deck: true,
     h(x, z) {
       const u = (x - b.ax) * fx + (z - b.az) * fz;
       const v = -(x - b.ax) * fz + (z - b.az) * fx;
@@ -225,6 +265,7 @@ for (const p of PIERS) {
   OVERLAYS.push({
     x0: Math.min(p.ax, p.bx) - p.w, z0: Math.min(p.az, p.bz) - p.w, x1: Math.max(p.ax, p.bx) + p.w, z1: Math.max(p.az, p.bz) + p.w,
     foot: false,
+    deck: true,
     h(x, z) {
       const u = (x - p.ax) * fx + (z - p.az) * fz;
       const v = -(x - p.ax) * fz + (z - p.az) * fx;
@@ -260,12 +301,36 @@ for (const d of DECKS) {
 }
 
 /** Surface under a point. `foot` also counts stairs and roof terraces. */
-export function groundHeight(x: number, z: number, foot = false): number {
+export function groundHeight(x: number, z: number, foot = false, noDecks = false): number {
   let h = terrainHeight(x, z);
   for (let i = 0; i < OVERLAYS.length; i++) {
     const o = OVERLAYS[i];
     if (x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) continue;
     if (o.foot && !foot) continue;
+    if (noDecks && o.deck) continue; // the seabed / bank under a bridge or pier
+    const oh = foot && o.hFoot ? o.hFoot(x, z) : o.h(x, z);
+    if (oh > h) h = oh;
+  }
+  return h;
+}
+
+/** On a railed walkway (stairs, roof terrace)? Walkers don't stroll off those. */
+export function railedAt(x: number, z: number): boolean {
+  for (let i = 0; i < OVERLAYS.length; i++) {
+    const o = OVERLAYS[i];
+    if (!o.foot || x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) continue;
+    if (o.h(x, z) === o.h(x, z)) return true; // not NaN
+  }
+  return false;
+}
+
+/** Surface for paving (roads, sidewalks, plazas): terrain, bridges and piers, but never draped over a stunt. */
+export function paveHeight(x: number, z: number): number {
+  let h = terrainHeight(x, z);
+  for (let i = 0; i < OVERLAYS.length; i++) {
+    const o = OVERLAYS[i];
+    if (o.foot || o.stunt) continue;
+    if (x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) continue;
     const oh = o.h(x, z);
     if (oh > h) h = oh;
   }
@@ -283,7 +348,13 @@ export function groundNormal(x: number, z: number, out: { x: number; y: number; 
   out.z = -dz / l;
 }
 
-/** Open water (sea / lake): too deep for a car or a walker. */
+/** The water's surface: the flat level plus the same gentle waves the water mesh animates (drive/terrain.ts). */
+export function waveY(x: number, z: number, t: number): number {
+  const a = Math.sin(x * 0.11 + t * 1.1), b = Math.sin(z * 0.13 - t * 0.8), c = Math.sin((x + z) * 0.2 + t * 1.7);
+  return WATER_Y + 0.06 * (a + b + 0.5 * c);
+}
+
+/** Open water (sea / lake): too deep for a car (walkers wade it, and swim where it is deeper than tuning.drive.swimOn). */
 export function isWater(x: number, z: number): boolean {
   return groundHeight(x, z, true) < WATER_Y - 0.12;
 }

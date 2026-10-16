@@ -10,7 +10,7 @@ import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type OutfitSlot } from '../core/events';
 import { tuning } from '../tuning';
-import { Character, OUTFIT_CATALOG, POSE_ORDER, type CatalogSlot } from '../art/character';
+import { Character, MIN_ACCENT_GAP, OUTFIT_CATALOG, POSE_ORDER, colorGap, contrastColor, type CatalogSlot } from '../art/character';
 import { studioLights } from '../art/env';
 import { toyMat, mesh, roundedBox } from '../art/materials';
 import { isUnlocked, lockedToast, rewardFor } from '../core/unlocks';
@@ -72,6 +72,7 @@ export class DressUpScene extends GameScene {
   // ui state
   private cat: Category = 'hair';
   private panel!: HTMLDivElement;
+  private setSwatch: ((c: string) => void) | null = null; // highlights a color in the current swatch row
   private tabSet: ((id: string) => void) | null = null;
   private undoBtn: HTMLButtonElement | null = null;
   private flashEl: HTMLDivElement | null = null;
@@ -507,7 +508,7 @@ export class DressUpScene extends GameScene {
     });
     const colorsBox = el('div', 'dr-colors', p);
     const hint = el('div', 'label dr-hint', p, 'Pick one to add color');
-    swatches(colorsBox, tuning.art.palette, outfit[slot].color, (c) => this.pickColor(slot, c));
+    this.setSwatch = swatches(colorsBox, tuning.art.palette, outfit[slot].color, (c) => this.pickColor(slot, c));
     const syncHint = () => {
       const none = slot === 'accessory' && store.profile.outfit.accessory.style === 0;
       colorsBox.style.display = none ? 'none' : '';
@@ -625,13 +626,40 @@ export class DressUpScene extends GameScene {
   // ── Changing the outfit ──────────────────────────────────────────────────
   private pickStyle(slot: CatalogSlot, style: number): void {
     this.change(slot, (o) => {
+      const wasNone = slot === 'accessory' && o.accessory.style === 0;
       o[slot].style = style;
+      // a new accessory starts in a color that pops against the hair (it never blends in);
+      // the kid can recolor it separately with the swatches below
+      if (slot === 'accessory' && style > 0 && (wasNone || colorGap(o.accessory.color, o.hair.color) < MIN_ACCENT_GAP)) {
+        o.accessory.color = contrastColor(o.hair.color, tuning.art.palette, style);
+      }
     });
+    if (slot === 'accessory') this.setSwatch?.(store.profile.outfit.accessory.color);
   }
   private pickColor(slot: CatalogSlot, color: string): void {
+    let note = '';
+    let accChanged = false;
     this.change(slot, (o) => {
       o[slot].color = color;
+      if (slot === 'accessory') {
+        // hair accessories can't match the hair — swap to a contrast color and say so
+        const eff = Character.accessoryColor(o);
+        if (eff !== color) {
+          o.accessory.color = eff;
+          note = 'Too close to your hair, so we picked a contrast color';
+        }
+      } else if (slot === 'hair' && o.accessory.style > 0) {
+        // changing the hair keeps the accessory visible against it
+        const eff = Character.accessoryColor(o);
+        if (eff !== o.accessory.color) {
+          o.accessory.color = eff;
+          accChanged = true;
+        }
+      }
     });
+    if (slot === 'accessory') this.setSwatch?.(store.profile.outfit.accessory.color);
+    if (note) toast(note);
+    if (accChanged) this.pop('accessory');
   }
   private pickSkin(color: string): void {
     this.change('skin', (o) => {
@@ -736,6 +764,8 @@ export class DressUpScene extends GameScene {
       next[s].style = style;
       next[s].color = pickColor();
     }
+    // the accessory always pops against the new hair
+    if (next.accessory.style > 0) next.accessory.color = contrastColor(next.hair.color, pal, next.accessory.style);
     if (next.top.color === next.bottom.color) next.bottom.color = pal[(pal.indexOf(next.top.color) + 7) % pal.length];
     this.transitionTo(next, 'twirl');
   }

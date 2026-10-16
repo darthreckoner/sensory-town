@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import {
   BOUNDS, GROUND, PAVED, PLOTS, ROAD_PATHS, ROAD_WIDTH, SIDEWALK, WATER_Y, nearestRoad, onRoad, type RoadPath,
 } from '../world/townLayout';
-import { HF, coastX, groundHeight, groundNormal, terrainHeight, vnoise } from '../world/heightfield';
+import { HF, coastX, groundNormal, paveHeight, terrainHeight, vnoise, waveY } from '../world/heightfield';
 import { PAL } from './palette';
 import { clamp, smoothstep } from './envUtils';
 
@@ -237,14 +237,23 @@ function ribbon(
   const nrm = { x: 0, y: 1, z: 0 };
   const vert = (s: Sample, off: number): number[] => {
     const x = s.x - s.tz * off, z = s.z + s.tx * off;
-    return [x, groundHeight(x, z) + lift, z];
+    return [x, paveHeight(x, z) + lift, z];
   };
+  // split wide ribbons across their width too, so a road hugs a cross-slope instead of
+  // bridging it with one flat chord (walkers' feet are on the terrain, not the chord)
+  const lanes = Math.max(1, Math.ceil(Math.abs(off1 - off0) / 1.5));
   for (let i = 0; i < sm.length - 1; i++) {
     const a = sm[i], b = sm[i + 1];
     if (skip && (skip(a) || skip(b))) continue;
-    const p0 = vert(a, off0), p1 = vert(a, off1), p2 = vert(b, off1), p3 = vert(b, off0);
     groundNormal((a.x + b.x) / 2, (a.z + b.z) / 2, nrm);
-    soup.quad(p0, p1, p2, p3, col, [nrm.x, nrm.y, nrm.z], [[a.s * uvScale, 0], [b.s * uvScale, 0], [b.s * uvScale, 1], [a.s * uvScale, 1]]);
+    for (let k = 0; k < lanes; k++) {
+      const v0 = k / lanes, v1 = (k + 1) / lanes;
+      const o0 = off0 + (off1 - off0) * v0, o1 = off0 + (off1 - off0) * v1;
+      const p0 = vert(a, o0), p1 = vert(a, o1), p2 = vert(b, o1), p3 = vert(b, o0);
+      // same texture mapping as the single-quad ribbon: u runs a.s→b.s across the width, v 0→1 along
+      const u0 = (a.s + (b.s - a.s) * v0) * uvScale, u1 = (a.s + (b.s - a.s) * v1) * uvScale;
+      soup.quad(p0, p1, p2, p3, col, [nrm.x, nrm.y, nrm.z], [[u0, 0], [u1, 0], [u1, 1], [u0, 1]]);
+    }
   }
 }
 
@@ -303,7 +312,7 @@ function buildRoadwork(): THREE.Group {
         const inner = side * (p.w / 2), outer = side * (p.w / 2 + SIDEWALK);
         const V = (s: Sample, off: number, lift: number): number[] => {
           const x = s.x - s.tz * off, z = s.z + s.tx * off;
-          return [x, groundHeight(x, z) + lift, z];
+          return [x, paveHeight(x, z) + lift, z];
         };
         for (let i = 0; i < sm.length - 1; i++) {
           const a = sm[i], b = sm[i + 1];
@@ -335,7 +344,7 @@ function buildRoadwork(): THREE.Group {
         const off = (k - (stripes - 1) / 2) * (ROAD_WIDTH / stripes) * 0.98;
         const sx = cx + (dz !== 0 ? off : 0), sz = cz + (dx !== 0 ? off : 0);
         const hw = dx !== 0 ? 1.4 : 0.42, hd = dz !== 0 ? 1.4 : 0.42;
-        const y = groundHeight(sx, sz) + ROAD_LIFT + 0.015;
+        const y = paveHeight(sx, sz) + ROAD_LIFT + 0.015;
         marks.quad([sx - hw, y, sz - hd], [sx - hw, y, sz + hd], [sx + hw, y, sz + hd], [sx + hw, y, sz - hd], PAL.white, [0, 1, 0]);
       }
     }
@@ -359,7 +368,7 @@ function buildRoadwork(): THREE.Group {
       for (let i = 0; i < n; i++) {
         const xa = r.x - r.w / 2 + (r.w * i) / n, xb = r.x - r.w / 2 + (r.w * (i + 1)) / n;
         const za = r.z - r.d / 2 + (r.d * j) / m, zb = r.z - r.d / 2 + (r.d * (j + 1)) / m;
-        const P = (x: number, z: number): number[] => [x, groundHeight(x, z) + 0.035, z];
+        const P = (x: number, z: number): number[] => [x, paveHeight(x, z) + 0.035, z];
         paved.quad(P(xa, za), P(xa, zb), P(xb, zb), P(xb, za), col, [0, 1, 0]);
       }
   }
@@ -441,8 +450,7 @@ function buildWater(): WaterBody {
     update(t: number) {
       for (let i = 0; i < count; i++) {
         const x = pos[i * 3], z = pos[i * 3 + 2];
-        const a = Math.sin(x * 0.11 + t * 1.1), b = Math.sin(z * 0.13 - t * 0.8), c = Math.sin((x + z) * 0.2 + t * 1.7);
-        pos[i * 3 + 1] = WATER_Y + 0.06 * (a + b + 0.5 * c);
+        pos[i * 3 + 1] = waveY(x, z, t); // the same surface a swimmer floats on
         const dx = 0.06 * (0.11 * Math.cos(x * 0.11 + t * 1.1) + 0.1 * Math.cos((x + z) * 0.2 + t * 1.7));
         const dz = 0.06 * (0.13 * Math.cos(z * 0.13 - t * 0.8) + 0.1 * Math.cos((x + z) * 0.2 + t * 1.7));
         const l = Math.hypot(dx, 1, dz);

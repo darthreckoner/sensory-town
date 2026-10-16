@@ -20,7 +20,7 @@ import { dims } from '../build/kit';
 import { pieceDef, PIECE_CATALOG, DECO_CATALOG, CATS, decoDef, localCells, type PieceDef, type DecoDef } from '../build/catalog';
 import { bakePiece, bakePosts, creationBaseY, genGift, genPiece, pieceBaseY, pieceRotY } from '../build/pieces';
 import { genDeco } from '../build/outdoor';
-import { footprintCells, isBodyWall, levelOf, makeCtx, edgeCells, type HouseCtx } from '../build/rules';
+import { footprintCells, isBodyWall, levelOf, makeCtx, edgeCells, rotOffset, type HouseCtx } from '../build/rules';
 
 export { disposeBaked, tickBuildMaterials, PIECE_CATALOG, DECO_CATALOG, CATS, pieceDef, decoDef, localCells };
 export type { HouseCtx, PieceDef, DecoDef };
@@ -137,8 +137,10 @@ export function buildHouseMesh(house: House): THREE.Group {
   return g;
 }
 
-/** Bounding box (in cells) of the building itself: walls, floors, indoor furniture, stairs. */
-function buildingBox(h: House): { x0: number; z0: number; x1: number; z1: number } | null {
+interface CellBox { x0: number; z0: number; x1: number; z1: number }
+
+/** Bounding box (in cells) of the building itself: its walls and floors. (Furniture and stairs get their own colliders.) */
+function buildingBox(h: House): CellBox | null {
   let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
   const add = (x: number, z: number) => {
     x0 = Math.min(x0, x);
@@ -151,11 +153,76 @@ function buildingBox(h: House): { x0: number; z0: number; x1: number; z1: number
     if (!d || d.outdoor) continue;
     if (d.kind === 'edge') {
       if (isBodyWall(p.type)) for (const [x, z] of edgeCells(p.x, p.z, p.rot, d.w)) add(x, z);
-    } else if (d.kind === 'floor' || d.kind === 'stairs' || d.kind === 'furn') {
-      for (const [x, z] of footprintCells(d, p.x, p.z, p.rot)) add(x, z);
+    } else if (d.kind === 'floor') {
+      add(p.x, p.z);
     }
   }
   return x0 <= x1 ? { x0, z0, x1, z1 } : null;
+}
+
+/**
+ * Solid things the walker / car must not pass through that the building box does not cover: stairs, a
+ * carport's posts, trees, hedges, the barbecue, furniture left on the lawn... (a piece that sits
+ * entirely inside the building box is already part of it). Fences are left walkable on purpose.
+ */
+function solidColliders(h: House, ox: number, oz: number, box: CellBox | null): Collider[] {
+  const { S } = dims();
+  const out: Collider[] = [];
+  const inside = (x: number, z: number) => !!box && x >= box.x0 && x < box.x1 && z >= box.z0 && z < box.z1;
+  for (const p of h.pieces) {
+    const d = pieceDef(p.type);
+    if (!d || (d.kind !== 'furn' && d.kind !== 'stairs') || levelOf(p) !== 0) continue;
+    const cells = footprintCells(d, p.x, p.z, p.rot);
+    if (cells.every(([x, z]) => inside(x, z))) continue;
+    // anchor cell centre, and a helper from the piece's own frame (local x right, z back) to the world
+    const cx = ox + (p.x + 0.5) * S, cz = oz + (p.z + 0.5) * S;
+    const at = (lx: number, lz: number): [number, number] => {
+      const [dx, dz] = rotOffset(lx, lz, p.rot);
+      return [cx + dx * S, cz + dz * S];
+    };
+    const swap = p.rot % 2 === 1;
+    const box2 = (lx: number, lz: number, hw: number, hd: number) => {
+      const [x, z] = at(lx, lz);
+      out.push({ kind: 'box', x, z, hw: (swap ? hd : hw) * S, hd: (swap ? hw : hd) * S });
+    };
+    const ring = (lx: number, lz: number, r: number) => {
+      const [x, z] = at(lx, lz);
+      out.push({ kind: 'circle', x, z, r: r * S });
+    };
+    switch (p.type) {
+      case 'pool': break;                                              // open water: left alone
+      case 'stairs': box2(0, 1.5, 0.48, 1.98); break;
+      case 'carport':
+        // the four posts only: a car can still be driven (and walked) in underneath; a car parked there is
+        // already solid for walkers in the Drive scene
+        for (const [lx, lz] of [[-0.4, -0.4], [2.4, -0.4], [-0.4, 2.4], [2.4, 2.4]]) ring(lx, lz, 0.12);
+        break;
+      case 'yardTree': ring(0, 0, 0.45); break;
+      case 'hedge': box2(0, 0, 0.5, 0.4); break;
+      case 'mailbox': ring(0, 0.14, 0.22); break;
+      case 'bbq': box2(0, 0.04, 0.48, 0.3); break;
+      case 'gardenBed': box2(0.5, 0, 1.0, 0.4); break;
+      case 'patioSet':
+      case 'trampoline':
+      case 'hotTub': ring(0.5, 0.5, 0.95); break;
+      case 'swing':
+        box2(-0.42, 0.5, 0.12, 0.98);
+        box2(2.42, 0.5, 0.12, 0.98);
+        break;
+      default: {
+        // anything else standing outside the walls: its footprint, trimmed a little
+        let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+        for (const [x, z] of cells) {
+          x0 = Math.min(x0, x);
+          z0 = Math.min(z0, z);
+          x1 = Math.max(x1, x + 1);
+          z1 = Math.max(z1, z + 1);
+        }
+        out.push({ kind: 'box', x: ox + ((x0 + x1) / 2) * S, z: oz + ((z0 + z1) / 2) * S, hw: ((x1 - x0) / 2 - 0.06) * S, hd: ((z1 - z0) / 2 - 0.06) * S });
+      }
+    }
+  }
+  return out;
 }
 
 // ── Decorations ─────────────────────────────────────────────────────────────
@@ -202,6 +269,7 @@ export function buildTownContent(town: Town, opts: TownContentOpts = {}): { grou
       if (!plot || opts.skipPlots?.includes(h.plot)) continue;
       bakeHouseInto(baker, h, plot.origin.x, plot.origin.z, extras);
       const box = buildingBox(h);
+      colliders.push(...solidColliders(h, plot.origin.x, plot.origin.z, box));
       if (box) {
         const wx0 = plot.origin.x + box.x0 * S, wx1 = plot.origin.x + box.x1 * S;
         const wz0 = plot.origin.z + box.z0 * S, wz1 = plot.origin.z + box.z1 * S;

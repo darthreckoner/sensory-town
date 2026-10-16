@@ -210,7 +210,25 @@ export const tuning = {
     footGravity: 24,
     footRadius: 0.42,
     stepUp: 0.62,              // tallest step a walker climbs
-    waterWade: -0.22,          // walkers stop at the shoreline
+    footLedge: 1.0,            // off railed stairs / roof terrace, a walker won't WALK off a drop taller than this
+    waterWade: -0.22,          // a car-door spawn / dropped-off car must be on ground at least this high (dry)
+    // water: wade the shallows, swim the deep (the surface is WATER_Y plus the waves)
+    wadeSpeed: 0.6,            // walk-speed multiplier at the deepest wading (it eases in from the shore)
+    swimOn: 0.9,               // water this deep over the floor (units): you swim ...
+    swimOff: 0.7,              // ... until it gets shallower than this (hysteresis: no flicker at the edge)
+    swimChest: 1.15,           // while swimming the feet hang this far below the surface (the water line sits at the chest)
+    swimSpeed: 3.0,
+    swimRun: 4.4,              // swimming with the stick fully pushed / Shift
+    swimAccel: 4,              // how quickly a stroke gets you moving (1/s)
+    swimGlide: 1.4,            // how quickly you coast to a stop when you stop swimming (1/s)
+    swimKick: 6.0,             // Jump in the water: a dolphin hop (upward speed)
+    swimKickEvery: 0.6,        // seconds between kicks
+    swimReach: 0.8,            // a swimmer climbs out onto a deck / bank whose edge is within this of the top of their head
+    swimStroke: 0.55,          // seconds between stroke splashes at a swimmer's normal speed
+    stuckSeconds: 4,           // last-resort rescue: pushing the stick in the water but going nowhere this long
+    // call the car
+    callCooldown: 2,           // seconds
+    callDistance: 5,           // how far in front of the walker the car appears
     getInRadius: 3.6,          // how close to the car you must be to hop back in
     getOutMaxSpeed: 5,
     footCamDistance: 5.4,

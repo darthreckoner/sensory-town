@@ -149,7 +149,7 @@ export function buildBeach(): BeachOut {
       for (let x = pier.ax + 5; x <= pier.bx - 0.5; x += 2.5) m.box(wood, x, y + 0.55, pier.az + sz * (w / 2 - 0.08), 0.1, 1.1, 0.1);
       m.box(wood, (pier.ax + 5 + pier.bx) / 2, y + 1.1, pier.az + sz * (w / 2 - 0.08), pier.bx - pier.ax - 5, 0.08, 0.08);
       m.box(wood, (pier.ax + 5 + pier.bx) / 2, y + 0.65, pier.az + sz * (w / 2 - 0.08), pier.bx - pier.ax - 5, 0.05, 0.05);
-      colliders.push({ kind: 'box', x: (pier.ax + 5 + pier.bx) / 2, z: pier.az + sz * (w / 2 + 0.05), hw: (pier.bx - pier.ax - 5) / 2, hd: 0.12, h: y + 1.2 });
+      colliders.push({ kind: 'box', x: (pier.ax + 5 + pier.bx) / 2, z: pier.az + sz * (w / 2 + 0.05), hw: (pier.bx - pier.ax - 5) / 2, hd: 0.12, h: y + 1.2, y0: y - 0.1 });
     }
     for (let x = pier.ax + 10; x < pier.bx - 6; x += 10)
       for (const sz of [-1, 1]) {

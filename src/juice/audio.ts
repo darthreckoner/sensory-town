@@ -345,6 +345,26 @@ class AudioEngine {
     this.tone(o, 'sine', 90 * p, 60 * p, t, 0.002, 0.05, 0.4);
   }
 
+  // Water: a deep plunk, a splashy wash that falls away, a spray of fizz and a few droplet ticks
+  private s_splash(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.95 * v, pan, 0.35);
+    this.tone(o, 'sine', 430 * p, 85 * p, t, 0.003, 0.24, 0.9);
+    this.tone(o, 'sine', 980 * p, 320 * p, t + 0.01, 0.002, 0.09, 0.35);
+    this.noiseBurst(o, t, 0.004, 0.34, 0.75, 'bandpass', 2800 * p, 650 * p, 0.9);
+    this.noiseBurst(o, t + 0.02, 0.01, 0.2, 0.35, 'highpass', 4600 * p, 3000 * p, 0.8);
+    for (let i = 0; i < 4; i++) this.tone(o, 'sine', (1300 + Math.random() * 1700) * p, (600 + Math.random() * 500) * p, t + 0.12 + i * 0.05 + Math.random() * 0.04, 0.001, 0.035, 0.2);
+  }
+  private s_wade(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.5 * v, pan, 0.2);
+    this.noiseBurst(o, t, 0.003, 0.13, 0.6, 'bandpass', 1900 * p, 800 * p, 1.2);
+    this.tone(o, 'sine', 390 * p, 150 * p, t, 0.002, 0.07, 0.45);
+  }
+  private s_stroke(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.45 * v, pan, 0.25);
+    this.noiseBurst(o, t, 0.04, 0.24, 0.5, 'bandpass', 700 * p, 2400 * p, 1.1);
+    this.tone(o, 'sine', 310 * p, 150 * p, t + 0.05, 0.005, 0.1, 0.3);
+  }
+
   // Car
   private s_horn(t: number, p: number, v: number, pan: number) {
     // real-ish two-tone car horn
@@ -753,6 +773,8 @@ export type SoundName =
   | 'chime' | 'switch' | 'sparkle' | 'swish' | 'horn' | 'bump' | 'hello' | 'happy' | 'confetti'
   | 'frost' | 'harden' | 'save'
   // v2
-  | 'collect' | 'levelup' | 'step' | 'boost' | 'skid';
+  | 'collect' | 'levelup' | 'step' | 'boost' | 'skid'
+  // v2 r3: water
+  | 'splash' | 'wade' | 'stroke';
 
 export const audio = new AudioEngine();

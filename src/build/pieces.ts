@@ -11,7 +11,7 @@ import { tuning } from '../tuning';
 import { Baker, Brush, M, boxG, lighten, darken, mix, prismG, type Baked, type Fin } from './bake';
 import { dims, K } from './kit';
 import { pieceDef } from './catalog';
-import { cellKey, edgeKey, isBodyWall, levelOf, topLevelAt, type HouseCtx } from './rules';
+import { cellKey, edgeKey, isBodyWall, levelOf, makeCtx, roofBaseY, type HouseCtx } from './rules';
 import { FURNITURE_GEN } from './furniture';
 import { OUTDOOR_GEN } from './outdoor';
 
@@ -35,8 +35,69 @@ export function pieceRotY(p: { type: PieceType; rot: number }): number {
 /** Height (world y) of the plane a piece is drawn on. */
 export function pieceBaseY(p: PlacedPiece, ctx: HouseCtx): number {
   const { H } = dims();
-  if (pieceDef(p.type)?.kind === 'roof') return (topLevelAt(ctx, p.x, p.z) + 1) * H;
+  if (pieceDef(p.type)?.kind === 'roof') return roofBaseY(ctx, p.x, p.z);
   return levelOf(p) * H;
+}
+
+export interface RoofIssue { type: PieceType; at: [number, number]; issue: string }
+
+/**
+ * Do the roofs of a house rest on what is under them? A roof slab may span between walls but never
+ * hangs in the air (more than ~0.1 above the walls / floor / ground it rests on) and never sits inside
+ * a wall or floor slab. Checked on the real heights (`pieceBaseY`), so it holds for hand-placed roofs too.
+ * Used by the dev world check (`__worldcheck.houses()`).
+ */
+export function roofIssues(pieces: readonly PlacedPiece[]): RoofIssue[] {
+  const ctx = makeCtx(pieces);
+  const { H, FL } = dims();
+  const roofs = pieces.filter((p) => pieceDef(p.type)?.kind === 'roof');
+  const yAt = new Map<string, number>();
+  const at = new Map<string, PlacedPiece>();
+  for (const r of roofs) {
+    yAt.set(cellKey(r.x, r.z), pieceBaseY(r, ctx));
+    at.set(cellKey(r.x, r.z), r);
+  }
+  const nb = (k: string): string[] => {
+    const [x, z] = k.split(',').map(Number);
+    return [`${x + 1},${z}`, `${x - 1},${z}`, `${x},${z + 1}`, `${x},${z - 1}`];
+  };
+  const near = (set: Set<string>, k: string) => set.has(k) || nb(k).some((n) => set.has(n));
+  const direct = (k: string, y: number): boolean => {
+    const eq = (v: number) => Math.abs(v - y) <= 0.1;
+    if (eq(2 * H) && near(ctx.touched[1], k)) return true;      // on the upstairs walls
+    if (eq(H) && near(ctx.touched[0], k)) return true;          // on the ground-floor walls
+    if (eq(H + FL) && ctx.floors.has(`1|${k}`)) return true;    // on an upstairs floor
+    if (eq(FL) && ctx.floors.has(`0|${k}`)) return true;        // on a ground floor
+    return eq(0);                                               // on the ground
+  };
+  const out: RoofIssue[] = [];
+  const seen = new Set<string>();
+  for (const k0 of yAt.keys()) {
+    if (seen.has(k0)) continue;
+    // roof cells that touch at the same height hold each other up
+    const cluster = [k0];
+    seen.add(k0);
+    for (let i = 0; i < cluster.length; i++) {
+      for (const n of nb(cluster[i])) {
+        if (!seen.has(n) && yAt.has(n) && Math.abs(yAt.get(n)! - yAt.get(k0)!) <= 0.05) {
+          seen.add(n);
+          cluster.push(n);
+        }
+      }
+    }
+    if (!cluster.some((k) => direct(k, yAt.get(k)!))) {
+      for (const k of cluster) {
+        const r = at.get(k)!;
+        out.push({ type: r.type, at: [r.x, r.z], issue: `roof floats in the air at y=${yAt.get(k)!.toFixed(2)} (no wall or floor under it)` });
+      }
+    }
+  }
+  for (const [k, y] of yAt) {
+    const r = at.get(k)!;
+    if (ctx.touched[1].has(k) && y < 2 * H - 0.1) out.push({ type: r.type, at: [r.x, r.z], issue: `roof sits inside the upstairs wall (y=${y.toFixed(2)})` });
+    else if (ctx.floors.has(`1|${k}`) && y < H + FL - 0.1 && y > H - 0.1) out.push({ type: r.type, at: [r.x, r.z], issue: `roof sits inside the upstairs floor (y=${y.toFixed(2)})` });
+  }
+  return out;
 }
 
 // ── Entry points ────────────────────────────────────────────────────────────
@@ -300,21 +361,45 @@ function putPrism(br: Brush, profile: [number, number][], t0: number, t1: number
 
 const AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
 
-/** Straight stair run climbing toward local +z (1 wide, 4 long) from the floor to the next level. */
+/**
+ * Straight stair run climbing toward local +z (1 wide, 4 long) from the floor to the next level:
+ * 13 separate treads with risers, a light board along each side and a simple handrail.
+ * (Nothing here is black or solid: it has to read as stairs from every angle.)
+ */
 function genStairs(br: Brush, p: PlacedPiece): void {
   const { H, FL } = dims();
-  const n = 13, run = 4 / n, rise = H / n;
+  const n = 13, len = 4, run = len / n, rise = H / n;
+  const hw = 0.43;                                    // tread half-width
   const tread = floorFin(p, 'oak');
+  const riser = lighten(p.color, 0.72);
+  const board = K.white;
+  const treadTop = (i: number) => FL + (i + 1) * rise;
   for (let i = 0; i < n; i++) {
     const za = -0.5 + i * run, zb = za + run;
-    const top = FL + (i + 1) * rise;
-    br.blk(-0.43, top - 0.05, za - 0.01, 0.43, top, zb + (i === n - 1 ? 0 : 0.03), p.color, tread);      // tread (slight nosing)
-    br.blk(-0.43, top - rise, za, 0.43, top - 0.05, za + 0.02, K.white);                                     // riser
+    const top = treadTop(i);
+    br.blk(-hw, top - 0.06, za - 0.035, hw, top, zb, p.color, tread);                 // tread with a nosing
+    br.blk(-hw, top - rise, za, hw, top - 0.06, za + 0.025, riser);                   // riser
   }
-  // black stringers (side triangles)
-  const prof: [number, number][] = [[-0.5, FL], [3.5, FL], [3.5, FL + H]];
-  putPrism(br, prof, -0.5, -0.43, AZ, AX, K.black, 'paint');
-  putPrism(br, prof, 0.43, 0.5, AZ, AX, K.black, 'paint');
+  // side boards (stringers) under the nosing line, one each side, flush with the cell edge
+  const ang = Math.atan2(H, len);
+  const zMid = (-0.45 + 3.45) / 2;
+  const L = Math.hypot(len - 0.1, (H * (len - 0.1)) / len);
+  const yMid = FL + (zMid + 0.5) * (H / len) + 0.03;
+  for (const sx of [-1, 1]) {
+    br.b.add(boxG(0.07, 0.2, L), M(sx * (hw + 0.035), yMid, zMid, 1, 1, 1, 0, -ang, 0), board, 'paint');
+  }
+  // handrail: a post every 4 treads and a rail along the top
+  const post = [0, 4, 8, 12];
+  for (const sx of [-1, 1]) {
+    const x = sx * (hw + 0.035);
+    const pts: [number, number, number][] = [];
+    for (const i of post) {
+      const z = -0.5 + i * run + run / 2;
+      br.rod(x, treadTop(i) + 0.45, z, 0.022, 0.9, board, 'paint', 8);
+      pts.push([x, treadTop(i) + 0.9, z]);
+    }
+    br.rodBetween(pts[0], pts[pts.length - 1], 0.03, K.woodLight, 'paint', 8);
+  }
 }
 
 // ── Roofs ───────────────────────────────────────────────────────────────────
@@ -328,12 +413,38 @@ function genRoofFlat(br: Brush, p: PlacedPiece, ctx: HouseCtx): void {
   const xmin = -0.5 - (W ? 0 : ov), xmax = 0.5 + (E ? 0 : ov);
   const zmin = -0.5 - (N ? 0 : ov), zmax = 0.5 + (Sd ? 0 : ov);
   br.blk(xmin, 0, zmin, xmax, th, zmax, p.color);
-  // soft parapet lip on the outside edges
-  const lip = lighten(p.color, 0.18), lh = th + 0.07, lw = 0.07;
+  // light parapet lip (~0.15 high) on the outside edges: contrasts with the slab whatever colour it is painted
+  const lip = lighten(p.color, 0.55), lh = th + 0.15, lw = 0.09;
   if (!N) br.blk(xmin, th, zmin, xmax, lh, zmin + lw, lip);
   if (!Sd) br.blk(xmin, th, zmax - lw, xmax, lh, zmax, lip);
   if (!W) br.blk(xmin, th, zmin, xmin + lw, lh, zmax, lip);
   if (!E) br.blk(xmax - lw, th, zmin, xmax, lh, zmax, lip);
+  // a few cheap bits of roof gear so it reads as a roof, not a box lid (same 'paint' bucket as the slab)
+  const r = roofHash(p.x, p.z) % 30;
+  const gear = lighten(p.color, 0.4);
+  if (r === 0) {            // vent box with a cap and a stack
+    br.rbox(-0.12, th + 0.12, -0.1, 0.4, 0.24, 0.32, gear, 0.02);
+    br.rbox(-0.12, th + 0.26, -0.1, 0.46, 0.05, 0.38, lighten(p.color, 0.62), 0.015);
+    br.cyl(0.26, th + 0.22, 0.16, 0.05, 0.05, 0.44, K.steel, 'paint', 8);
+  } else if (r === 9) {     // skylight
+    br.blk(-0.32, th, -0.28, 0.32, th + 0.07, 0.28, lighten(p.color, 0.62));
+    br.blk(-0.25, th + 0.07, -0.21, 0.25, th + 0.095, 0.21, K.glass);
+    br.blk(-0.012, th + 0.07, -0.21, 0.012, th + 0.11, 0.21, lighten(p.color, 0.62));
+  } else if (r === 19) {    // solar panels on small stands
+    for (const dz of [-0.21, 0.21]) {
+      br.box(0, th + 0.14, dz, 0.76, 0.035, 0.36, '#2f4f86', 'paint', 0, -0.32, 0);
+      br.box(0, th + 0.158, dz, 0.76, 0.012, 0.012, K.white, 'paint', 0, -0.32, 0);
+      br.box(-0.2, th + 0.158, dz, 0.012, 0.012, 0.34, K.white, 'paint', 0, -0.32, 0);
+      br.box(0.2, th + 0.158, dz, 0.012, 0.012, 0.34, K.white, 'paint', 0, -0.32, 0);
+      br.blk(-0.34, th, dz - 0.03, -0.28, th + 0.09, dz + 0.03, K.steel);
+      br.blk(0.28, th, dz - 0.03, 0.34, th + 0.09, dz + 0.03, K.steel);
+    }
+  }
+}
+
+/** Deterministic little hash of a roof cell (spreads the roof gear around). */
+function roofHash(x: number, z: number): number {
+  return (Math.imul(x + 101, 73856093) ^ Math.imul(z + 57, 19349663)) >>> 0;
 }
 
 /**
@@ -411,10 +522,22 @@ function genRoofSlant(br: Brush, p: PlacedPiece, ctx: HouseCtx): void {
   const t0 = -0.5 - (hasPrev ? 0 : ov), t1 = 0.5 + (hasNext ? 0 : ov), tc = (t0 + t1) / 2, len = t1 - t0;
   const prof: [number, number][] = [[u0 - uc, 0], [u1 - uc, 0], [u1 - uc, hAt(u1)], [u0 - uc, hAt(u0)]];
   const uAx = new THREE.Vector3(dir[0], 0, dir[1]), tAx = new THREE.Vector3(side[0], 0, side[1]);
-  putPrism(br, prof, t0, t1, uAx, tAx, p.color, 'metal');
-  const trim = lighten(p.color, 0.12);
+  putPrism(br, prof, t0, t1, uAx, tAx, p.color, 'paint');   // matte: a mirror-metal slab reflects the sky and turns navy-black from above
+  const trim = lighten(p.color, 0.5);                                    // light edge board: reads against any slab colour
   const map = new THREE.Matrix4().makeBasis(uAx, new THREE.Vector3(0, 1, 0), tAx);
-  const put = (geo: THREE.BufferGeometry, local: THREE.Matrix4) => br.b.add(geo, new THREE.Matrix4().multiplyMatrices(map, local), trim, 'paint');
-  if (i === 0) put(boxG(0.04, 0.18, len), M(u0 - uc - 0.01, hAt(u0) - 0.08, tc));
-  if (j === 0) put(boxG(0.04, hAt(u1) + 0.06, len), M(u1 - uc + 0.01, (hAt(u1) + 0.06) / 2 - 0.03, tc));
+  const put = (geo: THREE.BufferGeometry, local: THREE.Matrix4, color = trim, fin: Fin = 'paint') => br.b.add(geo, new THREE.Matrix4().multiplyMatrices(map, local), color, fin);
+  if (i === 0) put(boxG(0.05, 0.2, len), M(u0 - uc - 0.01, hAt(u0) - 0.08, tc));
+  if (j === 0) put(boxG(0.05, hAt(u1) + 0.06, len), M(u1 - uc + 0.01, (hAt(u1) + 0.06) / 2 - 0.03, tc));
+  // standing-seam ribs down the slope (same paint bucket as the slab) so it reads as roofing from above
+  const a = Math.atan(slope), um = (u0 + u1) / 2;
+  const ribLen = (u1 - u0) / Math.cos(a);
+  const ribC = lighten(p.color, 0.3);
+  for (const tt of [-0.33, 0, 0.33]) put(boxG(ribLen, 0.04, 0.045), M(um - uc, hAt(um) + 0.015, tt, 1, 1, 1, 0, 0, a), ribC, 'paint');
+  // now and then a skylight or a solar panel lying on the slope (not on the eave cells)
+  const r = roofHash(p.x, p.z) % 9;
+  if (i > 0 && j > 0 && (r === 2 || r === 6)) {
+    const col = r === 2 ? K.glass : '#2f4f86';
+    put(boxG(0.62, 0.05, 0.58), M(um - uc, hAt(um) + 0.05, tc, 1, 1, 1, 0, 0, a), lighten(p.color, 0.6), 'paint');
+    put(boxG(0.54, 0.055, 0.5), M(um - uc, hAt(um) + 0.058, tc, 1, 1, 1, 0, 0, a), col, 'paint');
+  }
 }

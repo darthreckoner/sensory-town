@@ -7,18 +7,22 @@
 // Colors live in vertex colors, so the materials are global and shared.
 import * as THREE from 'three';
 import type { Finish } from './materials';
-import { contrast, lum, tint, type Role } from './characterKit';
+import { contrast, lum, tint, warmSkin, type Role } from './characterKit';
 
 // ── categories ──────────────────────────────────────────────────────────────
-export type Cat = 'skin' | 'fabric' | 'plaid' | 'gloss' | 'metal' | 'eyes' | 'led' | 'wing' | 'glow' | 'lens';
-export const ALL_CATS: Cat[] = ['skin', 'fabric', 'plaid', 'gloss', 'metal', 'eyes', 'led', 'wing', 'glow', 'lens'];
+export type Cat = 'skin' | 'fabric' | 'plaid' | 'gloss' | 'acc' | 'metal' | 'eyes' | 'led' | 'wing' | 'glow' | 'lens';
+export const ALL_CATS: Cat[] = ['skin', 'fabric', 'plaid', 'gloss', 'acc', 'metal', 'eyes', 'led', 'wing', 'glow', 'lens'];
 /** Categories that cast shadows (kept to 4 so a character is cheap in the shadow pass). */
-export const SHADOW_CATS = new Set<Cat>(['skin', 'fabric', 'plaid', 'gloss']);
+export const SHADOW_CATS = new Set<Cat>(['skin', 'fabric', 'plaid', 'gloss']); // accessories are small: no shadow pass
 /** Categories that should not receive shadows (tiny or see-through). */
 export const NO_RECEIVE = new Set<Cat>(['eyes', 'lens', 'led']);
 
-/** Which merged mesh a piece lands in. */
-export function catOf(role: Role, finish: Finish): Cat {
+/**
+ * Which merged mesh a piece lands in. Hair and shoes use 'gloss'; accessories (`acc` = true)
+ * never do — glossy accessory parts get their own 'acc' mesh, satin ones ride on the satin
+ * 'skin' mesh, metal on 'metal' — so a clip, bow or crown never shares the hair's material.
+ */
+export function catOf(role: Role, finish: Finish, acc = false): Cat {
   switch (role) {
     case 'skin': return 'skin';
     case 'led': return 'led';
@@ -27,9 +31,12 @@ export function catOf(role: Role, finish: Finish): Cat {
     case 'diamond': return 'glow';
     case 'gold': return 'metal';
     case 'plaid': return 'plaid';
+    case 'hair': return 'gloss'; // actual hair (e.g. the twist under a claw clip)
+    case 'glass': return acc ? 'acc' : 'gloss';
     default:
       if (finish === 'metal') return 'metal';
       if (finish === 'fabric' || finish === 'matte') return 'fabric';
+      if (acc) return finish === 'satin' ? 'skin' : 'acc';
       return 'gloss';
   }
 }
@@ -48,7 +55,7 @@ export function roleColor(role: Role, color: string, ctx: ColorCtx): THREE.Color
     case 'white': return _c.set('#f4f2ee').clone();
     case 'cream': return _c.set('#efe6d2').clone();
     case 'gold': return _c.set('#ffc93c').clone();
-    case 'skin': return _c.set(ctx.skin).clone();
+    case 'skin': return _c.set(warmSkin(ctx.skin)).clone();
     case 'hair': return _c.set(ctx.hair).clone();
     case 'ink': return _c.set('#1d1b26').clone();
     case 'print': return _c.set(contrast(color)).clone();
@@ -69,6 +76,7 @@ export interface Mats {
   fabric: THREE.Material;
   plaid: THREE.Material;
   gloss: THREE.Material;
+  acc: THREE.Material;
   metal: THREE.Material;
   eyes: THREE.Material;
   wing: THREE.Material;
@@ -109,7 +117,9 @@ export function getMats(): Mats {
     fabric: new THREE.MeshPhysicalMaterial({ ...fabric }),
     plaid: new THREE.MeshPhysicalMaterial({ ...fabric, map: plaidTexture() }),
     gloss: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, clearcoat: 0.28, clearcoatRoughness: 0.32, specularIntensity: 0.7 }),
-    metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.85 }),
+    // accessories: glossy lacquer so a clip / headphones / bag catches the light and pops
+    acc: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.12, specularIntensity: 1 }),
+    metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.22, metalness: 0.9 }),
     eyes: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.05 }),
     wing: new THREE.MeshPhysicalMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.5, specularIntensity: 0.5, emissive: new THREE.Color('#9fb4ff'), emissiveIntensity: 0.2 }),
     glow: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.04, metalness: 0.15, clearcoat: 1, emissive: new THREE.Color('#79e6ff'), emissiveIntensity: 0.5, flatShading: true }),
@@ -124,7 +134,7 @@ export interface Baked {
   pos: Float32Array;
   nrm: Float32Array;
   uv: Float32Array;
-  col: Float32Array | null; // colors baked into the geometry (eyes)
+  col: Float32Array | null; // colors baked into the geometry (eyes, head blush) — multiplied by the chunk color
   index: Uint32Array;
   n: number;
 }
@@ -229,14 +239,13 @@ export function assembleGeometry(chunks: Chunk[]): THREE.BufferGeometry | null {
     pos.set(b.pos, vo * 3);
     nrm.set(b.nrm, vo * 3);
     uv.set(b.uv, vo * 2);
-    if (b.col) col.set(b.col, vo * 3);
     for (let i = 0; i < b.n; i++) {
       const k = vo + i;
-      if (!b.col) {
-        col[k * 3] = c.r;
-        col[k * 3 + 1] = c.g;
-        col[k * 3 + 2] = c.b;
-      }
+      // baked vertex colors (eyes, the blushing head) are multiplied by the chunk color
+      // (white for the eyes, the skin tone for the head)
+      col[k * 3] = (b.col ? b.col[i * 3] : 1) * c.r;
+      col[k * 3 + 1] = (b.col ? b.col[i * 3 + 1] : 1) * c.g;
+      col[k * 3 + 2] = (b.col ? b.col[i * 3 + 2] : 1) * c.b;
       skinIndex[k * 4] = c.bone;
       skinWeight[k * 4] = 1;
     }

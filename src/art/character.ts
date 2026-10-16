@@ -17,12 +17,13 @@ import type { Outfit } from '../core/model';
 import type { OutfitSlot } from '../core/events';
 import type { Finish } from './materials';
 import { tuning } from '../tuning';
-import { B, TAU, TY, TORSO_TABLE, cached, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, tint, torsoSpace, type Piece } from './characterKit';
+import { B, MIN_ACCENT_GAP, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, tint, torsoSpace, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
 import { clampStyle, getAccessory, getBottom, getShoes, getTop, OUTFIT_CATALOG, type CatalogSlot } from './characterParts';
 
 export { OUTFIT_CATALOG };
+export { colorGap, contrastColor, MIN_ACCENT_GAP };
 export type { CatalogSlot };
 export type { CatalogItem } from './characterParts';
 export type PoseKind = 'hips' | 'peace' | 'cross' | 'strut' | 'jump' | 'twirl';
@@ -251,6 +252,19 @@ export class Character {
     this.rebuildAll();
   }
 
+  /**
+   * The color an outfit's accessory is drawn in. Accessories that sit on the hair (clip, hats,
+   * headphones, crown) must not blend into it: if the saved color is too close to the hair
+   * color it is swapped for a palette color that contrasts (so old saves, NPCs and random
+   * outfits never show a black cap on black hair). Anything else is drawn as saved.
+   */
+  static accessoryColor(o: Outfit): string {
+    const acc = o.accessory.style > 0 ? getAccessory(o.accessory.style, o.top.style) : null;
+    const onHair = !!acc && acc.head.length > 0 && !acc.fixed;
+    if (!onHair || colorGap(o.accessory.color, o.hair.color) >= MIN_ACCENT_GAP) return o.accessory.color;
+    return contrastColor(o.hair.color, tuning.art.palette, o.accessory.style);
+  }
+
   /** Copy an outfit and wrap out-of-range styles into the catalog (old saves). */
   private static sanitize(o: Outfit): Outfit {
     const c = structuredClone(o);
@@ -328,6 +342,14 @@ export class Character {
    */
   setMove(speed01: number, grounded: boolean): void {
     this.gait.setMove(speed01, grounded);
+  }
+  /**
+   * Swimming (call every frame while in water): 0 = not swimming, 1 = fully swimming.
+   * The caller sinks the group so the water line sits at the chest; this only poses.
+   * TODO(character agent): front-crawl / treading-water poses blended by `amount`, stroke speed from setMove.
+   */
+  setSwim(amount: number): void {
+    void amount;
   }
   /** Start a jump: ~0.08 s squat, then takeoff + airborne poses (the caller moves the group). */
   jump(): void {
@@ -701,7 +723,8 @@ export class Character {
   /** Pieces → chunks: each piece's role picks its vertex color and its material category. */
   private put(slot: SlotKey, bone: THREE.Object3D, ps: Piece[], color: string, finish: Finish, extra?: THREE.Matrix4, extraKey?: string): void {
     const ctx = this.ctx();
-    for (const p of ps) this.chunk(slot, bone, p.geo, catOf(p.role, p.finish ?? finish), roleColor(p.role, color, ctx), extra, extraKey);
+    // accessories never share the hair's material: catOf routes them to acc / satin / metal / fabric
+    for (const p of ps) this.chunk(slot, bone, p.geo, catOf(p.role, p.finish ?? finish, slot === 'accessory'), roleColor(p.role, color, ctx), extra, extraKey);
   }
 
   private buildRig(): void {
@@ -839,7 +862,8 @@ export class Character {
     if (parts.vol && !this.wearsHat) add(parts.vol, hc);
     if (parts.front && !this.wearsHat) add(parts.front, hc);
     if (parts.dark) add(parts.dark, new THREE.Color(tint(o.hair.color, -0.4)));
-    if (parts.accent) add(parts.accent, new THREE.Color(tint(o.hair.color, 0.45)));
+    // hair ties / scrunchies: their own glossy 'acc' material in a color that contrasts with the hair
+    if (parts.accent && !(this.wearsHat && parts.vol)) this.chunk('hair', this.hairMount, parts.accent, 'acc', new THREE.Color(contrastColor(o.hair.color, tuning.art.palette, 0)));
     const t = parts.tails[0];
     if (t) {
       add(t.geo, hc, this.tail);
@@ -859,7 +883,7 @@ export class Character {
     this.holdsCup = false;
     const acc = getAccessory(o.accessory.style, o.top.style);
     if (!acc) return;
-    const color = o.accessory.color;
+    const color = Character.accessoryColor(o);
     const hair = getHair(o.hair.style);
     const hr = acc.hat || acc.fixed ? 1.1 : hair.hairR;
     const topY = acc.hat ? getHair(0).topY : hair.topY;

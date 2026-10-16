@@ -63,14 +63,16 @@ export function buildHomeHills(): HomeOut {
     }
     // the whole gate is raised well above the chase camera (it flies about 6-7 units up), so you drive under it, never through it
     m.box(trim, gx, gy + 10.4, gz, 0.6, 0.8, 16.4);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: bigSignTexture('HOME HILLS', '#ffffff', PAL.lime, 1024, 256, 'BUILD YOUR PLACE'), toneMapped: false, side: THREE.DoubleSide }));
-    sign.position.set(gx + 0.38, gy + 12.6, gz);
+    // two lit faces on a slim frame: the lots behind the gate see a real sign, not a black slab
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: bigSignTexture('HOME HILLS', '#ffffff', PAL.lime, 1024, 256, 'BUILD YOUR PLACE'), toneMapped: false }));
+    sign.position.set(gx + 0.39, gy + 12.6, gz);
     sign.rotation.y = Math.PI / 2;
     ex.add(sign);
-    const back = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ color: '#12101c', side: THREE.DoubleSide }));
-    back.position.set(gx + 0.31, gy + 12.6, gz);
-    back.rotation.y = Math.PI / 2;
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: bigSignTexture('DOWNTOWN', '#ffffff', PAL.cyan, 1024, 256, 'SKATE PARK · MALL · BEACH'), toneMapped: false }));
+    back.position.set(gx + 0.23, gy + 12.6, gz);
+    back.rotation.y = -Math.PI / 2;
     ex.add(back);
+    m.box(trim, gx + 0.31, gy + 12.6, gz, 0.14, 3.7, 14.2);
   }
   // dead-end barricade at the far end of the spine
   {

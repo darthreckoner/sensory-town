@@ -684,12 +684,12 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
       acc.onSurface = { theta: 180, phi: 38, roll: 0, off: 0.012 };
       acc.head = pieces(`acc|${st}`, (pb) => {
         // a claw clip gathering a twist of hair at the back
-        pb.at('hair').e([0, 0.012, 0.0], [0.046, 0.07, 0.034]);
-        const main = pb.at('main', 'gloss');
-        main.add(capsule(0.01, 0.07), { p: [0, 0.0, 0.026], r: [0, 0, Math.PI / 2] });
-        for (const s of [-1, 1]) for (let i = 0; i < 4; i++) {
-          const x = (i - 1.5) * 0.019;
-          main.seg([x, s * 0.004, 0.03], [x * 1.1, s * 0.05, 0.04 - Math.abs(i - 1.5) * 0.004], 0.0065);
+        pb.at('hair').e([0, 0.016, 0.0], [0.05, 0.08, 0.04]);
+        const main = pb.at('main', 'metal'); // metallic clip so it pops against the hair
+        main.add(capsule(0.014, 0.1), { p: [0, 0.0, 0.03], r: [0, 0, Math.PI / 2] });
+        for (const s of [-1, 1]) for (let i = 0; i < 5; i++) {
+          const x = (i - 2) * 0.026;
+          main.seg([x, s * 0.006, 0.035], [x * 1.12, s * 0.07, 0.047 - Math.abs(i - 2) * 0.006], 0.009);
         }
       });
       break;
@@ -788,8 +788,9 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
       break;
     case ACC.scrunchie:
       acc.wristL = pieces(`acc|${st}`, (pb) => {
-        pb.at('main', 'fabric').add(torus(0.036, 0.0145), { p: [0, -0.01, 0], r: [Math.PI / 2, 0, 0] });
-        pb.at('trim', 'fabric').add(torus(0.036, 0.0075), { p: [0, -0.01, 0], r: [Math.PI / 2, 0, 0], s: [1.04, 1.04, 1.5] });
+        // satin scrunchie
+        pb.at('main', 'satin').add(torus(0.036, 0.0145), { p: [0, -0.01, 0], r: [Math.PI / 2, 0, 0] });
+        pb.at('trim', 'satin').add(torus(0.036, 0.0075), { p: [0, -0.01, 0], r: [Math.PI / 2, 0, 0], s: [1.04, 1.04, 1.5] });
       });
       break;
     case ACC.wings:
@@ -828,7 +829,7 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
     case ACC.crown:
       acc.topLift = 0.075;
       acc.head = pieces(`acc|${st}`, (pb) => {
-        const gold = pb.at('gold');
+        const gold = pb.at('main', 'metal'); // the band + points take the accessory color (default: a contrast to the hair)
         const base = 0.12;
         gold.add(torus(0.1, 0.012), { p: [0, base, 0], r: [Math.PI / 2, 0, 0] });
         gold.add(new THREE.CylinderGeometry(0.098, 0.104, 0.04, 20, 1, true), { p: [0, base + 0.02, 0] });

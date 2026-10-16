@@ -1,7 +1,7 @@
 // Shared data model for saves. Bump SAVE_VERSION and add a step to
 // migrate() in save.ts whenever the shape of SaveData changes.
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export type Hex = string; // '#rrggbb'
 
@@ -17,6 +17,28 @@ export interface Outfit {
   bottom: OutfitPart;
   shoes: OutfitPart;
   accessory: OutfitPart; // style 0 = none
+}
+
+// ── v3 Locker (Fortnite-STYLE cosmetics — every design original) ────────────
+/** Rides: what you can drive / board. `ride` in the Locker is what "call car" brings. */
+export type VehicleKind = 'sports' | 'pickup' | 'golfcart' | 'hoverboard' | 'icecream' | 'boat';
+export interface Locker {
+  /** skin preset id from the skin catalog, or 'custom' = Profile.outfit as styled piece by piece */
+  skin: string;
+  /** style variant of the skin (colourway / material) */
+  skinStyle: number;
+  backBling: string | null;
+  glider: string;
+  /** emote wheel: up to 6 emote ids */
+  emotes: string[];
+  contrail: string | null;
+  /** favourite ride — what the 🚗 call button brings */
+  ride: VehicleKind;
+  /** per-ride paint: colour + finish ('gloss' | 'chrome' | 'matte' | 'glitter' …) */
+  wraps: Partial<Record<VehicleKind, { color: Hex; finish?: string }>>;
+}
+export function defaultLocker(): Locker {
+  return { skin: 'custom', skinStyle: 0, backBling: null, glider: 'starter', emotes: ['wave', 'dance1'], contrail: null, ride: 'sports', wraps: {} };
 }
 
 // ── Workshop creations ──────────────────────────────────────────────────────
@@ -51,6 +73,8 @@ export interface Profile {
   charms: string[];
   /** saved outfits ("Looks" in the Style studio), up to 4; slot i = looks[i] */
   looks?: Outfit[];
+  /** v3: Fortnite-style locker (always present after migrate) */
+  locker?: Locker;
   createdAt: number;
 }
 
@@ -104,9 +128,43 @@ export interface Decoration {
   ownerId: string;
 }
 
+// ── v3 free building (anywhere in the world, Fortnite-style pieces) ─────────
+export type BuildKind = 'wall' | 'floor' | 'ramp' | 'roof';
+export type BuildMat = 'wood' | 'brick' | 'metal';
+export interface BuildPiece {
+  id: string;
+  kind: BuildKind;
+  mat: BuildMat;
+  /** world grid cell: ix/iz in build tiles, iy in storeys (sizes live in tuning.build3) */
+  ix: number;
+  iy: number;
+  iz: number;
+  /** walls: which cell edge (0 N, 1 E, 2 S, 3 W); ramps: uphill direction; floors/roofs: rotation */
+  dir: 0 | 1 | 2 | 3;
+  /** wall edit: 3x3 bitmask of removed panels (bit r*3+c) — windows, doors, arches */
+  edit?: number;
+  tint?: Hex;
+  ownerId: string;
+}
+/** A decor prop placed freely in the world (on the ground, a built floor, a table…). */
+export interface WorldDecor {
+  id: string;
+  /** a furniture/decor id from the build catalog (src/build/catalog.ts) */
+  type: string;
+  x: number;
+  y: number;
+  z: number;
+  rot: number;
+  color?: Hex;
+  ownerId: string;
+}
+
 export interface Town {
   houses: House[];
   decorations: Decoration[];
+  /** v3 free builds + decor (always present after migrate) */
+  builds?: BuildPiece[];
+  decor?: WorldDecor[];
 }
 
 export interface Settings {
@@ -165,6 +223,7 @@ export function makeProfile(name: string, index: number): Profile {
     carColor: STARTER_CARS[index % STARTER_CARS.length],
     creations: [],
     charms: [],
+    locker: defaultLocker(),
     createdAt: Date.now(),
   };
 }
@@ -179,7 +238,7 @@ export function emptySave(names: string[]): SaveData {
     version: SAVE_VERSION,
     profiles,
     activeProfileId: null,
-    town: { houses: [], decorations: [] },
+    town: { houses: [], decorations: [], builds: [], decor: [] },
     settings: defaultSettings(),
   };
 }

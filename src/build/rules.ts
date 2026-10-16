@@ -93,15 +93,18 @@ export interface HouseCtx {
   creations: Map<string, PlacedPiece>;  // `${level}|x,z`
   decos: Map<string, PlacedPiece>;      // `${level}|x,z,rot` wall decor
   stairVoid: Set<string>;               // 'x,z' cells opened up above ground-floor stairs
-  upper: Set<string>;                   // 'x,z' cells that have something on level 1 (roofs sit above those)
+  upper: Set<string>;                   // 'x,z' cells that have something on level 1 (candidates for a lifted roof)
+  touched: [Set<string>, Set<string>];  // 'x,z' cells a body wall of that level stands in / beside (what roofs can rest on)
+  roofCache?: { s1: Set<string>; s0: Set<string> };
 }
 
 export function makeCtx(pieces: readonly PlacedPiece[]): HouseCtx {
   const ctx: HouseCtx = {
     pieces,
     walls: new Map(), roofs: new Map(), furn: new Map(), rugs: new Map(), floors: new Map(),
-    creations: new Map(), decos: new Map(), stairVoid: new Set(), upper: new Set(),
+    creations: new Map(), decos: new Map(), stairVoid: new Set(), upper: new Set(), touched: [new Set(), new Set()],
   };
+  const edges: PlacedPiece[] = [];
   for (const p of pieces) {
     const def = pieceDef(p.type);
     if (!def) continue;
@@ -109,13 +112,7 @@ export function makeCtx(pieces: readonly PlacedPiece[]): HouseCtx {
     switch (def.kind) {
       case 'edge': {
         for (const [cx, cz] of edgeCells(p.x, p.z, p.rot, def.w)) ctx.walls.set(`${lv}|${edgeKey({ x: cx, z: cz, rot: p.rot })}`, p);
-        if (lv === 1) {
-          for (const [cx, cz] of edgeCells(p.x, p.z, p.rot, def.w)) {
-            ctx.upper.add(cellKey(cx, cz));
-            const [dx, dz] = rotOffset(0, -1, p.rot);   // the cell across the edge (front side)
-            ctx.upper.add(cellKey(cx + dx, cz + dz));
-          }
-        }
+        edges.push(p);
         break;
       }
       case 'roof': ctx.roofs.set(cellKey(p.x, p.z), p); break;
@@ -141,12 +138,82 @@ export function makeCtx(pieces: readonly PlacedPiece[]): HouseCtx {
       case 'creation': ctx.creations.set(`${lv}|${cellKey(p.x, p.z)}`, p); break;
     }
   }
+  // Walls decide what roofs can rest on (needs every floor known first). Only walls with a body count:
+  // rails and fences carry no roof. Upstairs, a wall belongs to the side that has the floor (both sides
+  // for a partition or a floorless wall), so a roof never lifts over the empty cell outside a wall.
+  for (const p of edges) {
+    if (!isBodyWall(p.type)) continue;
+    const lv = levelOf(p);
+    const [dx, dz] = rotOffset(0, -1, p.rot);   // the cell across the edge (front side)
+    for (const [cx, cz] of edgeCells(p.x, p.z, p.rot, pieceDef(p.type)!.w)) {
+      const a = cellKey(cx, cz), b = cellKey(cx + dx, cz + dz);
+      if (lv === 0) {
+        ctx.touched[0].add(a);
+        ctx.touched[0].add(b);
+        continue;
+      }
+      const fa = ctx.floors.has(`1|${a}`), fb = ctx.floors.has(`1|${b}`);
+      const inside = fa || fb ? [...(fa ? [a] : []), ...(fb ? [b] : [])] : [a, b];
+      for (const k of inside) {
+        ctx.touched[1].add(k);
+        ctx.upper.add(k);
+      }
+    }
+  }
   return ctx;
 }
 
-/** Which storey a roof over this cell sits on (0 = caps the ground floor, 1 = caps the upstairs). */
+// ── Roofs rest on what is really under them ─────────────────────────────────
+const nbrs = (k: string): string[] => {
+  const [x, z] = k.split(',').map(Number);
+  return [`${x + 1},${z}`, `${x - 1},${z}`, `${x},${z + 1}`, `${x},${z - 1}`];
+};
+
+/**
+ * Which roof cells sit on the upstairs walls (s1) / on the ground-floor walls (s0).
+ * A roof cell is supported when a body wall of that storey stands in or beside its cell, or when it
+ * touches (4-neighbour) a supported roof cell of the same height - a roof spans between walls, but a
+ * slab with no wall anywhere near it never hangs in the air. Everything else rests on its floor / the ground.
+ */
+function roofSupport(ctx: HouseCtx): { s1: Set<string>; s0: Set<string> } {
+  if (ctx.roofCache) return ctx.roofCache;
+  const cells = [...ctx.roofs.keys()];
+  const near = (set: Set<string>, k: string) => set.has(k) || nbrs(k).some((n) => set.has(n));
+  const grow = (seeds: string[], allow: (k: string) => boolean): Set<string> => {
+    const out = new Set<string>(seeds);
+    const queue = [...seeds];
+    while (queue.length) {
+      const k = queue.pop()!;
+      for (const n of nbrs(k)) if (!out.has(n) && allow(n)) {
+        out.add(n);
+        queue.push(n);
+      }
+    }
+    return out;
+  };
+  const s1 = grow(cells.filter((k) => ctx.upper.has(k) && near(ctx.touched[1], k)), (k) => ctx.roofs.has(k) && ctx.upper.has(k));
+  const s0 = grow(cells.filter((k) => !s1.has(k) && near(ctx.touched[0], k)), (k) => ctx.roofs.has(k) && !s1.has(k));
+  return (ctx.roofCache = { s1, s0 });
+}
+
+/** Which storey a roof over this cell caps (0 = the ground floor, 1 = the upstairs). */
 export function topLevelAt(ctx: HouseCtx, x: number, z: number): Level {
-  return ctx.upper.has(cellKey(x, z)) ? 1 : 0;
+  return roofSupport(ctx).s1.has(cellKey(x, z)) ? 1 : 0;
+}
+
+/**
+ * Height of the plane a roof over this cell rests on: the top of the upstairs walls, the top of the
+ * ground-floor walls, or (when no wall holds it up) whatever floor / ground is really there.
+ */
+export function roofBaseY(ctx: HouseCtx, x: number, z: number): number {
+  const H = tuning.build.wallHeight, FL = tuning.build.floorHeight;
+  const k = cellKey(x, z);
+  const sup = roofSupport(ctx);
+  if (sup.s1.has(k)) return 2 * H;
+  const upFloor = ctx.floors.has(`1|${k}`);
+  if (sup.s0.has(k)) return upFloor ? H + FL : H;
+  if (upFloor) return H + FL;
+  return ctx.floors.has(`0|${k}`) ? FL : 0;
 }
 
 // ── Placement validity ──────────────────────────────────────────────────────
@@ -193,12 +260,7 @@ export function canPlaceCtx(ctx: HouseCtx, def: PieceDef, c: Cand): boolean {
         return true;
       });
     case 'stairs':
-      return footprintCells(def, c.x, c.z, c.rot).every(([x, z]) => {
-        if (!inPlot(x, z)) return false;
-        if (ctx.furn.has(`0|${cellKey(x, z)}`)) return false;
-        // the opening above must be clear
-        return !ctx.floors.has(`1|${cellKey(x, z)}`) && !ctx.furn.has(`1|${cellKey(x, z)}`);
-      });
+      return stairsProblem(ctx, def, c) === null;
     case 'wallDeco': {
       if (!inPlot(c.x, c.z)) return false;
       const w = ctx.walls.get(`${lv}|${edgeKey(c)}`);
@@ -217,6 +279,23 @@ export function canPlaceCtx(ctx: HouseCtx, def: PieceDef, c: Cand): boolean {
       return true;
     }
   }
+}
+
+/**
+ * Why stairs cannot go here (a short friendly sentence), or null when they can. Stairs have to lead
+ * somewhere: the cell the top step opens onto needs an upstairs floor. That also keeps them inside or
+ * right beside the house (an exterior stair against an outside wall is fine when it reaches a 2F cell).
+ */
+export function stairsProblem(ctx: HouseCtx, def: PieceDef, c: Cand): string | null {
+  if (c.level !== 0) return 'Stairs start on the ground floor';
+  const cells = footprintCells(def, c.x, c.z, c.rot);
+  if (!cells.every(([x, z]) => inPlot(x, z))) return 'Stairs need a bit more room there';
+  if (cells.some(([x, z]) => ctx.furn.has(`0|${cellKey(x, z)}`))) return 'Something is already there';
+  // the opening above must be clear
+  if (cells.some(([x, z]) => ctx.floors.has(`1|${cellKey(x, z)}`) || ctx.furn.has(`1|${cellKey(x, z)}`))) return 'Clear the upstairs floor above the stairs first';
+  const [lx, lz] = rotOffset(0, def.d, c.rot);   // the cell beyond the top step
+  if (!ctx.floors.has(`1|${cellKey(c.x + lx, c.z + lz)}`)) return 'Stairs need an upstairs floor to lead to - build a 2F floor first';
+  return null;
 }
 
 // ── Pointer snapping ────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 // IndexedDB persistence with a versioned schema + migration hook.
-import { SAVE_VERSION, type SaveData, emptySave, defaultSettings, STARTER_OUTFITS, V1_STARTER_OUTFITS, V1_STARTER_CARS } from './model';
+import { SAVE_VERSION, type SaveData, emptySave, defaultSettings, defaultLocker, STARTER_OUTFITS, V1_STARTER_OUTFITS, V1_STARTER_CARS } from './model';
 import { tuning } from '../tuning';
 
 const DB_NAME = 'sensory-town';
@@ -76,6 +76,9 @@ export function migrate(raw: any): SaveData {
   data.town ??= { houses: [], decorations: [] };
   data.town.houses ??= [];
   data.town.decorations ??= [];
+  // v2 → v3: free builds + world decor
+  data.town.builds ??= [];
+  data.town.decor ??= [];
   data.settings = { ...defaultSettings(), ...(data.settings ?? {}) };
   const wasV1 = (data.version ?? 1) < 2;
   data.profiles.forEach((p, i) => {
@@ -83,6 +86,11 @@ export function migrate(raw: any): SaveData {
     // v1 → v2: charms + car style
     p.charms ??= [];
     p.carStyle ??= {};
+    // v2 → v3: the locker (their v2 car colour becomes the sports car's wrap)
+    if (!p.locker) {
+      p.locker = defaultLocker();
+      p.locker.wraps.sports = { color: p.carColor, finish: p.carStyle?.finish };
+    }
     if (wasV1) {
       // a kid who never touched their v1 starter look gets the v2 (tween) starter look + car
       const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

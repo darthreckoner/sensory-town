@@ -56,9 +56,9 @@ export const PIECE_CATALOG: PieceDef[] = [
   d('wallGarage', 'Garage', '🚘', 'build', 'edge', 3, 1, WHITE, { finish: 'paint', finishSet: 'wall' }),
   d('wallRail', 'Railing', '🛡️', 'build', 'edge', 1, 1, BLACK, { paint: true }),
   d('stairs', 'Stairs', '🪜', 'build', 'stairs', 1, 4, '#cf9b62', { finish: 'oak', finishSet: 'floor' }),
-  d('roofGable', 'Roof', '🏠', 'build', 'roof', 1, 1, CHAR, { paint: true }),
-  d('roofFlat', 'Flat roof', '⬛', 'build', 'roof', 1, 1, '#5a6070', { paint: true }),
-  d('roofSlant', 'Slant roof', '📐', 'build', 'roof', 1, 1, BLACK, { paint: true }),
+  d('roofGable', 'Roof', '🏠', 'build', 'roof', 1, 1, '#c2603f', { paint: true }),
+  d('roofFlat', 'Flat roof', '⬛', 'build', 'roof', 1, 1, '#6b6f7d', { paint: true }),
+  d('roofSlant', 'Slant roof', '📐', 'build', 'roof', 1, 1, '#6b6f7d', { paint: true }),
 
   // ── Living ──
   d('sofa', 'Sofa', '🛋️', 'living', 'furn', 2, 1, '#8d8b96'),
@@ -121,7 +121,7 @@ export const PIECE_CATALOG: PieceDef[] = [
   d('patioSet', 'Patio set', '⛱️', 'outdoor', 'furn', 2, 2, '#ff8a3d', { outdoor: true }),
   d('swing', 'Swing set', '🎠', 'outdoor', 'furn', 3, 2, '#c2603f', { outdoor: true }),
   d('mailbox', 'Mailbox', '📮', 'outdoor', 'furn', 1, 1, BLACK, { outdoor: true }),
-  d('carport', 'Carport', '🚗', 'outdoor', 'furn', 3, 3, CHAR, { outdoor: true }),
+  d('carport', 'Carport', '🚗', 'outdoor', 'furn', 3, 3, '#6b6f7d', { outdoor: true }),
   d('pool', 'Pool', '🏊', 'outdoor', 'furn', 4, 3, '#00b3e6', { outdoor: true, reward: 'build.pool' }),
   d('hotTub', 'Hot tub', '♨️', 'outdoor', 'furn', 2, 2, '#b07a4f', { outdoor: true, reward: 'build.pool' }),
 ];

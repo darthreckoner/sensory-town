@@ -127,7 +127,7 @@ export function buildSkate(): Piece {
     colliders.push({ kind: 'box', x: rx, z: rz, hw: cx * 4.5 + sz * 0.3, hd: sz * 4.5 + cx * 0.3, h: 1 });
   }
   const hoop = new THREE.Mesh(new THREE.TorusGeometry(7.5, 0.35, 8, 40), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: PAL.cyan, emissiveIntensity: 0.6, roughness: 0.3 }));
-  hoop.position.set(8, 8.2, 128.5);
+  hoop.position.set(8, 7.35, 128.5); // bottom of the ring sunk into the bank: walk or drive over it, never through a knee-high tube
   hoop.rotation.y = 0.35;
   ex.add(hoop);
   const hoop2 = new THREE.Mesh(new THREE.TorusGeometry(7.5, 0.16, 8, 40), mat.neon(PAL.pink));

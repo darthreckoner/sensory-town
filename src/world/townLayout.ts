@@ -468,8 +468,10 @@ export const STAIRS: Stairs[] = [
 ];
 export interface Deck { id: string; x: number; z: number; w: number; d: number; y: number }
 export const DECKS: Deck[] = [
-  { id: 'mall_roof', x: 21, z: 17.6, w: 26, d: 20, y: 10.5 },
-  { id: 'mall_landing', x: 11, z: 29.4, w: 6, d: 2.8, y: 10.5 },
+  // stops at the glass railing (shops.ts mall(): rail inset 0.3 from the 26 x 20 roof)
+  { id: 'mall_roof', x: 21, z: 17.6, w: 25.4, d: 19.4, y: 10.5 },
+  // top-of-stairs landing behind the mall, overlapping the roof through the railing gap (x 8.5..14.2)
+  { id: 'mall_landing', x: 11.35, z: 28.9, w: 5.7, d: 3.8, y: 10.5 },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

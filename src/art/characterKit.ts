@@ -11,7 +11,7 @@ export const D2R = Math.PI / 180;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Proportions — teen, about 1.75 tall, head ≈ 1/6.5 of the height (feet at y = 0)
+// Proportions — a stylized "toy teen": about 1.8 tall, head ≈ 1/5 of the height (feet at y = 0)
 // ═════════════════════════════════════════════════════════════════════════════
 export const B = {
   hipY: 0.9, // hip joints
@@ -28,7 +28,7 @@ export const B = {
   HX: 0.092, // head half-width
   HY: 0.125, // half-height
   HZ: 0.105, // half-depth
-  headScale: 1.1, // the whole head group (face, hair, hats) is scaled about its center
+  headScale: 1.4, // the whole head group (face, hair, hats) is scaled about its chin-side anchor (the chin stays put)
   seatY: 0.82, // pelvis bottom when seated
 };
 /** Torso is flatter front-to-back than side-to-side. */
@@ -56,6 +56,8 @@ export const sphLo = () => cached('sphLo', () => new THREE.SphereGeometry(1, 9, 
 export const sphXs = () => cached('sphXs', () => new THREE.SphereGeometry(1, 6, 4));
 export const capsule = (r: number, len: number) =>
   cached(`cap|${f3(r)}|${f3(len)}`, () => new THREE.CapsuleGeometry(r, Math.max(0.0005, len), 2, 8));
+export const capsuleHi = (r: number, len: number) =>
+  cached(`capH|${f3(r)}|${f3(len)}`, () => new THREE.CapsuleGeometry(r, Math.max(0.0005, len), 4, 12));
 export const torus = (R: number, r: number, arc = TAU) =>
   cached(`tor|${f3(R)}|${f3(r)}|${f3(arc)}`, () => new THREE.TorusGeometry(R, r, r < 0.012 ? 4 : 6, arc < TAU ? 10 : R < 0.08 ? 14 : 20, arc));
 /** Rounded cone along +y from 0 to 1 (base radius 0.5). */
@@ -98,6 +100,8 @@ export interface Xf {
   r?: V3t;
   q?: THREE.Quaternion;
   c?: string;
+  /** keep the geometry's own vertex colors (multiplied by `c`) instead of one flat color */
+  vc?: boolean;
 }
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -116,7 +120,8 @@ export class GB {
   }
   add(g: THREE.BufferGeometry, x: Xf = {}, owned = false): this {
     const c = owned ? g : g.clone();
-    for (const k of Object.keys(c.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') c.deleteAttribute(k);
+    const keepColor = !!x.vc && !!c.attributes.color;
+    for (const k of Object.keys(c.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv' && !(keepColor && k === 'color')) c.deleteAttribute(k);
     if (x.q) _q.copy(x.q);
     else if (x.r) _q.setFromEuler(_e.set(x.r[0], x.r[1], x.r[2]));
     else _q.identity();
@@ -128,13 +133,18 @@ export class GB {
     if (this.colored) {
       const col = new THREE.Color(x.c ?? '#ffffff');
       const n = c.attributes.position.count;
-      const arr = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) {
-        arr[i * 3] = col.r;
-        arr[i * 3 + 1] = col.g;
-        arr[i * 3 + 2] = col.b;
+      if (keepColor) {
+        const ca = c.attributes.color;
+        for (let i = 0; i < n; i++) ca.setXYZ(i, ca.getX(i) * col.r, ca.getY(i) * col.g, ca.getZ(i) * col.b);
+      } else {
+        const arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          arr[i * 3] = col.r;
+          arr[i * 3 + 1] = col.g;
+          arr[i * 3 + 2] = col.b;
+        }
+        c.setAttribute('color', new THREE.BufferAttribute(arr, 3));
       }
-      c.setAttribute('color', new THREE.BufferAttribute(arr, 3));
     }
     this.parts.push(c);
     return this;
@@ -144,15 +154,15 @@ export class GB {
     const m = typeof s === 'number' ? s : Math.max(s[0], s[1], s[2]);
     return this.add(m < 0.014 ? sphXs() : m < 0.034 || this.lo ? sphLo() : sph(), { p, s, r, c });
   }
-  /** Capsule between two points. */
-  seg(a: V3t, b: V3t, rad: number, c?: string): this {
+  /** Capsule between two points (`hi` = smoother capsule for big, close-up parts like fingers). */
+  seg(a: V3t, b: V3t, rad: number, c?: string, hi = false): this {
     const A = new THREE.Vector3(...a);
     const Bv = new THREE.Vector3(...b);
     const d = Bv.clone().sub(A);
     const len = d.length();
     const q = new THREE.Quaternion().setFromUnitVectors(Y_AXIS, d.normalize());
     const m = A.add(Bv).multiplyScalar(0.5);
-    return this.add(capsule(rad, len - 2 * rad), { p: [m.x, m.y, m.z], q, c });
+    return this.add((hi ? capsuleHi : capsule)(rad, len - 2 * rad), { p: [m.x, m.y, m.z], q, c });
   }
   /** Horizontal ring (axis y) at height y. */
   ring(y: number, R: number, tube: number, c?: string): this {
@@ -238,11 +248,49 @@ export function lum(hex: string): number {
 export function contrast(hex: string): string {
   return lum(hex) > 0.45 ? '#1d1b26' : '#ffffff';
 }
-/** Lip color: a rosy mix with the skin tone. */
-export function lipColor(skin: string): string {
+const _hsl = { h: 0, s: 0, l: 0 };
+function hsl(hex: string): { h: number; s: number; l: number } {
+  new THREE.Color(hex).getHSL(_hsl); // sRGB-space hue / saturation / lightness
+  return { h: _hsl.h, s: _hsl.s, l: _hsl.l };
+}
+/**
+ * How different two colors read side by side: mostly the lightness gap, plus the hue gap
+ * when both are colorful. ~0 = the same family, > 0.5 = clearly different.
+ */
+export function colorGap(a: string, b: string): number {
+  const x = hsl(a), y = hsl(b);
+  let dh = Math.abs(x.h - y.h);
+  dh = Math.min(dh, 1 - dh);
+  return 2.2 * Math.abs(x.l - y.l) + 2.4 * dh * Math.min(x.s, y.s) + 0.4 * Math.abs(x.s - y.s);
+}
+/** Accessories closer than this to the hair color blend into it. */
+export const MIN_ACCENT_GAP = 0.5;
+/**
+ * Pick an accent from `palette` that stands out against `base` (the hair): rank by
+ * lightness / hue gap with a bonus for saturated colors, then take the `seed`-th best of
+ * the top three so different accessories get different colors.
+ */
+export function contrastColor(base: string, palette: readonly string[], seed = 0): string {
+  const scored = palette
+    .map((c) => {
+      const h = hsl(c);
+      return { c, score: colorGap(base, c) + (h.l > 0.15 && h.l < 0.92 ? 0.6 * h.s : 0) };
+    })
+    .sort((p, q) => q.score - p.score);
+  const top = scored.slice(0, 3);
+  return top[((seed % top.length) + top.length) % top.length].c;
+}
+
+/** Smile-line color: a warm dark brown that still reads on every skin tone. */
+export function mouthColor(skin: string): string {
   const c = new THREE.Color(skin);
-  const d = lum(skin);
-  c.lerp(new THREE.Color(d > 0.4 ? '#c4586c' : '#8e3a4a'), 0.5);
+  c.lerp(new THREE.Color('#2a0f0e'), 0.74);
+  return `#${c.getHexString()}`;
+}
+/** Skin tone as drawn: nudged warmer (a touch more orange) so the face never goes grey or pale. */
+export function warmSkin(skin: string): string {
+  const c = new THREE.Color(skin);
+  c.lerp(new THREE.Color('#ff9a62'), 0.08);
   return `#${c.getHexString()}`;
 }
 
@@ -304,17 +352,41 @@ export const torsoSpace = (g: THREE.BufferGeometry): void => {
 // ═════════════════════════════════════════════════════════════════════════════
 // Head: an ellipsoid with a tapered jaw, plus face placement helpers
 // ═════════════════════════════════════════════════════════════════════════════
-const jawX = (y: number) => 1 - 0.34 * Math.pow(Math.max(0, -y), 1.5);
-const jawZ = (y: number) => 1 - 0.2 * Math.pow(Math.max(0, -y), 1.3);
+// rounder jaw than the realistic v2 head: a gentle taper, full cheeks
+const jawX = (y: number) => 1 - 0.2 * Math.pow(Math.max(0, -y), 1.5);
+const jawZ = (y: number) => 1 - 0.14 * Math.pow(Math.max(0, -y), 1.3);
+
+/** Cheek blush centers (theta°, phi°) and falloff radius (degrees on the head sphere). */
+const BLUSH = { theta: 40, phi: -17, r: 25 };
+/** Per-channel multiplier of the skin color at full blush (applied through the vertex color). */
+const BLUSH_MUL: V3t = [1.0, 0.8, 0.84];
 
 export function headGeo(): THREE.BufferGeometry {
   return cached('head', () => {
-    const g = new THREE.SphereGeometry(1, 26, 18);
+    const g = new THREE.SphereGeometry(1, 36, 26);
     const p = g.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    const centers = [-1, 1].map((sd) => {
+      const t = BLUSH.theta * sd * D2R, f = BLUSH.phi * D2R;
+      return new THREE.Vector3(Math.sin(t) * Math.cos(f), Math.sin(f), Math.cos(t) * Math.cos(f));
+    });
+    const v = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      // blush weight from the angle to each cheek center on the unit sphere (before deforming)
+      v.set(x, y, z);
+      let w = 0;
+      for (const c of centers) {
+        const ang = Math.acos(Math.min(1, Math.max(-1, v.dot(c)))) / D2R;
+        const k = Math.max(0, 1 - ang / BLUSH.r);
+        w = Math.max(w, k * k * (3 - 2 * k));
+      }
+      col[i * 3] = 1 + (BLUSH_MUL[0] - 1) * w;
+      col[i * 3 + 1] = 1 + (BLUSH_MUL[1] - 1) * w;
+      col[i * 3 + 2] = 1 + (BLUSH_MUL[2] - 1) * w;
       p.setXYZ(i, x * B.HX * jawX(y), y * B.HY, z * B.HZ * jawZ(y) + (y < -0.3 ? 0.004 * -y : 0));
     }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3)); // blush: multiplies the skin color
     g.computeVertexNormals();
     g.computeBoundingSphere();
     return g;
@@ -344,73 +416,215 @@ export function frameQ(n: THREE.Vector3, roll = 0): THREE.Quaternion {
 export const arr3 = (v: THREE.Vector3): V3t => [v.x, v.y, v.z];
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Face parts (shared geometry; the Character makes the meshes + materials)
+// Face parts (shared geometry; the Character makes the meshes + materials).
+// Stylized "toy" face: big glossy eyes whose iris fills the opening (no white above or
+// below), thick short brows, a tiny nose bump, a small curved smile line that opens into a
+// D-shaped grin when happy. No lips, no nostrils, no lower lashes.
 // ═════════════════════════════════════════════════════════════════════════════
+/** Eye: placement on the head (theta°, phi°) and the dome's half axes (head space, meters). */
+export const EYE = {
+  theta: 24.5, phi: -1, ax: 0.0285, ay: 0.027, az: 0.0088, sink: 0.0044,
+  gazeX: 0.0022, gazeY: 0.0012, // max iris slide inside the eye (meters)
+};
+export const BROW_AT = { theta: 24, phi: 18.5 };
+export const MOUTH_AT = { phi: -31 };
+export const NOSE_PHI = -13;
+/** Smile line: half-width of the flat middle and the length of each upturned arm. */
+export const SMILE = { mid: 0.0045, arm: 0.0082 };
+
 export interface FaceKit {
-  eye: THREE.BufferGeometry; // vertex-colored, built for the +x eye (mirror with scale.x = -1)
+  eye: THREE.BufferGeometry; // sclera dome + soft upper lash line, built for the +x eye (mirror with scale.x = -1)
+  iris: [THREE.BufferGeometry, THREE.BufferGeometry]; // iris + pupil + catchlights for the [+x, -x] eye (own bone: gaze)
   brow: THREE.BufferGeometry; // built for the +x brow
   nose: THREE.BufferGeometry;
   ear: THREE.BufferGeometry;
-  lips: THREE.BufferGeometry;
-  lipLow: THREE.BufferGeometry;
-  corner: THREE.BufferGeometry;
-  mouthIn: THREE.BufferGeometry;
-  mouthLine: THREE.BufferGeometry;
+  smileMid: THREE.BufferGeometry;
+  smileArm: [THREE.BufferGeometry, THREE.BufferGeometry]; // [+x, -x]: pivot at the inner end
+  grin: THREE.BufferGeometry; // dark D-shaped mouth interior
+  teeth: THREE.BufferGeometry;
+  tongue: THREE.BufferGeometry;
 }
+export const FACE_COL = { sclera: '#fbf7f3', scleraEdge: '#cdbfc4', lash: '#1b1520', irisOuter: '#2b1a14', irisInner: '#8e5c38', pupil: '#0b090f', teeth: '#fbf6ee', tongue: '#e8737f', grin: '#4a1a22' };
+
+/** z of the eye dome at (x, y) in eye space. */
+const eyeDome = (x: number, y: number): number => EYE.az * Math.sqrt(Math.max(0, 1 - (x / EYE.ax) ** 2 - (y / EYE.ay) ** 2));
+
+/**
+ * Elliptical disc of radii (rx, ry) centered at (cx, cy) in eye space, draped over the eye
+ * dome (+ lift) so it hugs the white instead of floating. `shade(r)` gives a per-ring color.
+ */
+function drapedDisc(rx: number, ry: number, cx: number, cy: number, lift: number, rings: number, seg: number, shade?: (r: number) => THREE.Color): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const put = (x: number, y: number, r: number) => {
+    pos.push(x, y, eyeDome(x, y) + lift);
+    uv.push(0, 0);
+    const c = shade ? shade(r) : new THREE.Color(1, 1, 1);
+    col.push(c.r, c.g, c.b);
+  };
+  put(cx, cy, 0);
+  for (let r = 1; r <= rings; r++) for (let k = 0; k < seg; k++) {
+    const a = (k / seg) * TAU, rr = r / rings;
+    put(cx + rx * rr * Math.cos(a), cy + ry * rr * Math.sin(a), rr);
+  }
+  for (let k = 0; k < seg; k++) idx.push(0, 1 + k, 1 + ((k + 1) % seg));
+  for (let r = 1; r < rings; r++) for (let k = 0; k < seg; k++) {
+    const a = 1 + (r - 1) * seg + k, b = 1 + (r - 1) * seg + ((k + 1) % seg), c = a + seg, d = b + seg;
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Flat band between two curves over x ∈ [x0, x1] (facing +z), for the open mouth. */
+function band(x0: number, x1: number, top: (x: number) => number, bot: (x: number) => number, cols = 14): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= cols; i++) {
+    const x = x0 + ((x1 - x0) * i) / cols;
+    pos.push(x, top(x), 0, x, bot(x), 0);
+    nrm.push(0, 0, 1, 0, 0, 1);
+    uv.push(0, 0, 0, 0);
+  }
+  for (let i = 0; i < cols; i++) {
+    const t0 = i * 2, b0 = i * 2 + 1, t1 = i * 2 + 2, b1 = i * 2 + 3;
+    idx.push(t0, b0, b1, t0, b1, t1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+// open-mouth "D": its top edge follows the upturned smile, the bottom is a deeper curve
+const GRIN = { w: 0.0122, rise: 0.0046, depth: 0.0118 };
+const grinTop = (x: number) => GRIN.rise * (x / GRIN.w) ** 2;
+const grinBot = (x: number) => grinTop(x) - GRIN.depth * Math.pow(Math.max(0, 1 - (x / GRIN.w) ** 2), 0.75);
+
 let faceKit: FaceKit | null = null;
 export function getFaceKit(): FaceKit {
   if (faceKit) return faceKit;
-  // eye: sclera + iris + pupil + highlight + upper lash line with a little wing
+  // ── eye: soft-shaded white dome + a thick upper lash line (no wing, no lower lash) ──
   const eye = new GB(true, true);
-  eye.add(sph(), { s: [0.0188, 0.0128, 0.0095], c: '#f1eeeb' });
-  eye.add(new THREE.CircleGeometry(0.0102, 12), { p: [0, 0.0012, 0.0094], c: '#4d3023' });
-  eye.add(new THREE.CircleGeometry(0.0066, 12), { p: [0, 0.0008, 0.00945], c: '#8d5a36' });
-  eye.add(new THREE.CircleGeometry(0.0046, 10), { p: [0, 0.0012, 0.0095], c: '#0d0b12' });
-  eye.add(new THREE.CircleGeometry(0.0023, 8), { p: [-0.0032, 0.0058, 0.0097], c: '#ffffff' });
-  eye.add(new THREE.CircleGeometry(0.0012, 6), { p: [0.0035, -0.002, 0.0097], c: '#ffffff' });
-  const lash = new THREE.TorusGeometry(0.0182, 0.0024, 3, 12, Math.PI * 0.92);
-  lash.rotateZ(Math.PI / 2 - Math.PI * 0.46);
-  lash.scale(1, 0.74, 1);
-  eye.add(lash, { p: [0, -0.0005, 0.0062], c: '#1a1820' }, true);
-  eye.add(capsule(0.0022, 0.006), { p: [0.0198, 0.0082, 0.0078], r: [0, 0, -0.9], c: '#1a1820' });
+  const white = new THREE.Color(FACE_COL.sclera), edge = new THREE.Color(FACE_COL.scleraEdge);
+  eye.add(drapedDisc(EYE.ax, EYE.ay, 0, 0, 0, 6, 22, (r) => white.clone().lerp(edge, Math.pow(r, 3))), { vc: true }, true);
+  const rho = 0.945;
+  const arc = Math.PI * 0.84;
+  const lash = new THREE.TorusGeometry(rho * EYE.ax, 0.0033, 5, 18, arc);
+  lash.rotateZ(Math.PI / 2 - arc / 2);
+  lash.scale(1, EYE.ay / EYE.ax, 1);
+  const lashZ = EYE.az * Math.sqrt(1 - rho * rho);
+  eye.add(lash, { p: [0, 0, lashZ], c: FACE_COL.lash }, true);
+  for (const e of [Math.PI / 2 - arc / 2, Math.PI / 2 + arc / 2]) {
+    eye.e([rho * EYE.ax * Math.cos(e), rho * EYE.ay * Math.sin(e), lashZ], 0.0033, undefined, FACE_COL.lash);
+  }
+  // ── iris: two concentric discs (dark top = lid shadow), big pupil, two catchlights ──
+  const irisFor = (sg: number): THREE.BufferGeometry => {
+    const b = new GB(true, true);
+    const ry = EYE.ay * 0.955, rx = EYE.ax * 0.8;
+    b.add(drapedDisc(rx, ry, 0, 0, 0.0007, 3, 20), { c: FACE_COL.irisOuter, vc: true }, true);
+    b.add(drapedDisc(rx * 0.86, ry * 0.8, 0, -0.0034, 0.0013, 3, 20), { c: FACE_COL.irisInner, vc: true }, true);
+    b.add(drapedDisc(rx * 0.5, ry * 0.5, 0, -0.0008, 0.0019, 2, 16), { c: FACE_COL.pupil, vc: true }, true);
+    b.add(drapedDisc(0.0034, 0.0034, -0.0086 * sg, 0.0102, 0.0025, 1, 10), { c: '#ffffff', vc: true }, true);
+    b.add(drapedDisc(0.0016, 0.0016, 0.0079 * sg, -0.0108, 0.0025, 1, 8), { c: '#ffffff', vc: true }, true);
+    return b.build();
+  };
   const brow = new GB(false, true);
-  brow.seg([-0.021, -0.0028, 0], [0.0, 0.0035, 0], 0.0036);
-  brow.seg([0.0, 0.0035, 0], [0.021, -0.001, 0], 0.0034);
+  brow.seg([-0.0155, -0.0016, 0], [0.0, 0.0034, 0], 0.0052);
+  brow.seg([0.0, 0.0034, 0], [0.0165, 0.0004, 0], 0.005);
+  // tiny soft nose bump (no nostrils)
   const nose = new GB(false, true);
-  nose.e([0, 0, 0], [0.0085, 0.0135, 0.0105], [0.25, 0, 0]);
-  nose.e([-0.0062, -0.0095, -0.0018], 0.0048);
-  nose.e([0.0062, -0.0095, -0.0018], 0.0048);
-  const lips = new GB(false, true);
-  lips.e([0, 0.0032, 0], [0.0155, 0.0046, 0.0055]);
-  const lipLow = new GB(false, true);
-  lipLow.e([0, -0.0036, 0.0006], [0.0138, 0.0062, 0.0062]);
-  const corner = new GB(false, true);
-  corner.e([0, 0, 0], [0.0046, 0.0036, 0.0042]);
-  const mouthIn = new GB(false, true);
-  mouthIn.e([0, 0, 0], [0.0135, 0.0075, 0.004]);
-  const mouthLine = new GB(false, true);
-  mouthLine.e([0, 0, 0], [0.0165, 0.0013, 0.0045]);
+  nose.e([0, 0, 0], [0.0058, 0.0062, 0.0052]);
+  const midG = new GB(false, true).seg([-SMILE.mid, 0, 0], [SMILE.mid, 0, 0], 0.002);
+  const armR = new GB(false, true).seg([0, 0, 0], [SMILE.arm, 0, 0], 0.002);
+  const armL = new GB(false, true).seg([0, 0, 0], [-SMILE.arm, 0, 0], 0.002);
+  const teethH = 0.0038;
   faceKit = {
     eye: eye.build(),
+    iris: [irisFor(1), irisFor(-1)],
     brow: brow.build(),
     nose: nose.build(),
     ear: new GB(false, true).e([0, 0, 0], [0.0105, 0.028, 0.019]).build(),
-    lips: lips.build(),
-    lipLow: lipLow.build(),
-    corner: corner.build(),
-    mouthIn: mouthIn.build(),
-    mouthLine: mouthLine.build(),
+    smileMid: midG.build(),
+    smileArm: [armR.build(), armL.build()],
+    grin: band(-GRIN.w, GRIN.w, grinTop, grinBot),
+    teeth: band(-GRIN.w * 0.97, GRIN.w * 0.97, grinTop, (x) => grinTop(x) - teethH * Math.pow(Math.max(0, 1 - (x / GRIN.w) ** 2), 0.5)),
+    tongue: band(-GRIN.w * 0.6, GRIN.w * 0.6, (x) => grinBot(x) + 0.0058 * Math.max(0, 1 - (x / (GRIN.w * 0.6)) ** 2), (x) => grinBot(x) - 0.0002),
   };
   return faceKit;
 }
 
-/** Hand: palm + finger block + thumb. Hangs from the wrist (origin at the wrist joint). */
-export function handGeo(side: number): THREE.BufferGeometry {
-  return cached(`hand|${side}`, () => {
+// ═════════════════════════════════════════════════════════════════════════════
+// Hands: chunky cartoon hands — a soft rounded palm, three capsule fingers + a thumb
+// (Nintendo / Pixar convention), a relaxed curl (~25° at the knuckle, ~15° more at the
+// middle joint). Hang from the wrist (origin = wrist joint); the palm faces the body.
+// Two variants share one skin bucket: 'relax' and 'peace' (a real V sign), swapped by
+// scaling bones, so a pose never claims a gesture the hand doesn't show.
+// ═════════════════════════════════════════════════════════════════════════════
+export const HAND_S = 1.25; // ~1.3x the old mitten
+const HAND_CURL = { knuckle: 25 * D2R, mid: 15 * D2R };
+
+export type HandKind = 'relax' | 'peace';
+export function handGeo(side: number, kind: HandKind = 'relax'): THREE.BufferGeometry {
+  return cached(`hand|${side}|${kind}`, () => {
     const b = new GB(false, true);
-    b.e([0, -0.04, 0], [0.031, 0.04, 0.0145]); // palm
-    b.add(capsule(0.0145, 0.03), { p: [0, -0.098, 0.002], r: [0.18, 0, 0], s: [1.04, 1, 0.62] }); // fingers
-    b.add(capsule(0.0093, 0.026), { p: [-side * 0.03, -0.055, 0.012], r: [0.2, 0, -side * 0.5] }); // thumb
+    const m = -side; // medial: the palm faces +m on x
+    const S = HAND_S;
+    const P = (x: number, y: number, z: number): V3t => [m * x * S, y * S, z * S];
+    const unit = (x: number, y: number, z: number): V3t => {
+      const v = new THREE.Vector3(x, y, z).normalize();
+      return [v.x, v.y, v.z];
+    };
+    const ptAdd = (p: V3t, d: V3t, len: number): V3t => [p[0] + d[0] * len * S, p[1] + d[1] * len * S, p[2] + d[2] * len * S];
+    const dir = (curl: number, tilt: number): V3t => unit(m * Math.sin(curl), -Math.cos(curl), Math.sin(tilt));
+    // palm + a soft wrist cap (tucks under the sleeve cuff)
+    b.e(P(0, -0.044, 0), [0.0235 * S, 0.038 * S, 0.034 * S]);
+    b.e(P(0, -0.014, 0), [0.024 * S, 0.02 * S, 0.026 * S]);
+    const finger = (z: number, l1: number, l2: number, r: number, c1: number, c2: number, tilt: number) => {
+      const a = P(0.004, -0.07, z);
+      const j = ptAdd(a, dir(c1, tilt), l1);
+      const t = ptAdd(j, dir(c1 + c2, tilt * 0.6), l2);
+      b.seg(a, j, r * S, undefined, true);
+      b.seg(j, t, r * 0.92 * S, undefined, true);
+    };
+    const k1 = HAND_CURL.knuckle, k2 = HAND_CURL.mid;
+    if (kind === 'relax') {
+      finger(0.0215, 0.027, 0.022, 0.0112, k1, k2, 0.1);
+      finger(0.0, 0.03, 0.024, 0.0116, k1 * 1.1, k2 * 1.1, 0);
+      finger(-0.0215, 0.025, 0.02, 0.0108, k1 * 1.25, k2 * 1.25, -0.1);
+      // thumb: forward and a little down, resting along the palm
+      const t0 = P(0.004, -0.03, 0.028);
+      const t1 = ptAdd(t0, unit(m * 0.3, -0.55, 0.78), 0.03);
+      const t2 = ptAdd(t1, unit(m * 0.5, -0.65, 0.58), 0.022);
+      b.seg(t0, t1, 0.0125 * S, undefined, true);
+      b.seg(t1, t2, 0.0112 * S, undefined, true);
+    } else {
+      // peace sign: index + middle straight in a V, the third finger folded into the palm,
+      // the thumb tucked across it
+      finger(0.0215, 0.031, 0.026, 0.0112, 0.04, 0.02, 0.24);
+      finger(0.0, 0.034, 0.028, 0.0116, 0.04, 0.02, -0.17);
+      const a = P(0.004, -0.07, -0.0215);
+      const j = ptAdd(a, dir(1.25, -0.05), 0.024);
+      const t = ptAdd(j, dir(2.55, -0.05), 0.02);
+      b.seg(a, j, 0.0108 * S, undefined, true);
+      b.seg(j, t, 0.01 * S, undefined, true);
+      const t0 = P(0.004, -0.03, 0.028);
+      const t1 = P(0.034, -0.054, 0.008);
+      const t2 = P(0.036, -0.066, -0.012);
+      b.seg(t0, t1, 0.0125 * S, undefined, true);
+      b.seg(t1, t2, 0.0112 * S, undefined, true);
+    }
     return b.build();
   });
 }

@@ -248,6 +248,17 @@ export function mall(m: Mesher, ex: THREE.Group, cx: number, cz: number, w: numb
       const top = (st.h * (i + 1)) / n;
       m.box(concrete, startX - (i + 0.5) * (st.len / n), top / 2, st.z, st.len / n, top, st.w);
     }
+    // the top landing (DECKS 'mall_landing'): a slab on posts, railed on the open sides
+    {
+      const lx0 = 8.5, lx1 = startX - st.len + 0.4, lz0 = cz + d / 2, lz1 = 30.8;
+      const ly = st.h + 0.1;
+      m.box(concrete, (lx0 + lx1) / 2, ly - 0.15, (lz0 + lz1) / 2, lx1 - lx0, 0.3, lz1 - lz0);
+      for (const [px, pz] of [[lx0 + 0.25, lz1 - 0.25], [lx1 - 0.25, lz1 - 0.25], [lx0 + 0.25, lz0 + 0.3]] as [number, number][])
+        m.box(concrete, px, (ly - 0.3) / 2, pz, 0.35, ly - 0.3, 0.35);
+      m.box(rail, (lx0 + lx1) / 2, ly + 1.0, lz1, lx1 - lx0, 0.08, 0.08);
+      m.box(rail, lx0, ly + 1.0, (lz0 + lz1) / 2, 0.08, 0.08, lz1 - lz0);
+      for (const [px, pz] of [[lx0, lz1], [lx1, lz1], [lx0, lz0]] as [number, number][]) m.box(rail, px, ly + 0.5, pz, 0.07, 1.0, 0.07);
+    }
     // handrails on both sides + posts
     for (const sd of [-1, 1]) {
       const zz = st.z + sd * (st.w / 2 + 0.05);

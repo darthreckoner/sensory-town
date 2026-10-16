@@ -443,6 +443,13 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 }
 .drive-side .btn.round { width: 64px; height: 64px; }
 .drive-mode.near { outline: 3px solid var(--lime, #b6ff3b); outline-offset: 3px; animation: drivehome 1.4s ease-in-out infinite; }
+/* on foot: bring the car to me (🚗 Call) */
+.drive-call { position: relative; }
+.drive-call .ico { font-size: 28px; transform: translateY(-5px); }
+.drive-call::after {
+  content: 'CALL'; position: absolute; left: 0; right: 0; bottom: 7px; text-align: center; pointer-events: none;
+  font-size: 10px; font-weight: 900; letter-spacing: 1.2px; color: var(--text-dim, rgba(255, 255, 255, 0.68));
+}
 /* controls */
 .drive-controls { --horn: max(72px, calc(var(--drive-ctrl, 132px) * 0.6)); }
 .drive-controls .interactive { display: none; }

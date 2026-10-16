@@ -108,7 +108,7 @@ export function buildPark(): ParkOut {
         const px = (xa + xb) / 2, py = (ya + yb) / 2;
         m.box(concrete, px, py + 0.5, br.az + s * (hw + 0.2), xb - xa + 0.02, 1.0, 0.4);
         m.box(mat.neon(PAL.cyan), px, py + 1.05, br.az + s * (hw + 0.2), xb - xa, 0.06, 0.1);
-        colliders.push({ kind: 'box', x: px, z: br.az + s * (hw + 0.2), hw: (xb - xa) / 2 + 0.02, hd: 0.25 });
+        colliders.push({ kind: 'box', x: px, z: br.az + s * (hw + 0.2), hw: (xb - xa) / 2 + 0.02, hd: 0.25, h: py + 1.0, y0: py - 0.1 });
       }
       void lift;
     }

@@ -23,7 +23,7 @@ import { Baker, Brush, bakedToGroup, ghostify, disposeBaked } from '../build/bak
 import { dims } from '../build/kit';
 import { pieceRotY } from '../build/pieces';
 import {
-  canPlace, edgeKey, isBodyWall, isRoofType, levelOf, makeCtx, snapPiece, type Cand, type HouseCtx, type Level, type Rot,
+  canPlace, edgeCells, edgeKey, footprintCells, stairsProblem, isBodyWall, isRoofType, levelOf, makeCtx, snapPiece, type Cand, type HouseCtx, type Level, type Rot,
 } from '../build/rules';
 import type { PieceCat, PieceDef } from '../build/catalog';
 import { finishesFor } from '../build/finishes';
@@ -56,6 +56,7 @@ interface Target {
   replace?: PlacedPiece;             // a wall this window/door would swap in for
   color?: Hex;                       // colour the piece will get (a replacement keeps the wall's colour)
   finish?: string;
+  why?: string;                      // short friendly reason a drop was refused (stairs that lead nowhere...)
   deco?: { x: number; z: number; rot: number }; // town mode
 }
 
@@ -491,14 +492,59 @@ export class BuildScene extends GameScene {
     return Math.atan2(f.nx, f.nz) + 0.5;
   }
 
-  /** Camera pose for editing the current plot (looks a little south of it so it clears the palette). */
-  private houseView(yaw: number): { target: THREE.Vector3; dist: number } {
-    const c = PLOTS[this.plotIdx].center;
+  /**
+   * Built extent (cells) of a storey: floors, walls, stairs and furniture on that level (roofs and
+   * wall decor don't count). An empty upstairs falls back to the ground floor's footprint below it.
+   * Null when nothing is built.
+   */
+  private storeyBounds(level: Level): { x0: number; z0: number; x1: number; z1: number } | null {
+    const pieces = this.house?.pieces ?? [];
+    const scan = (lv: Level) => {
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      const add = (x: number, z: number) => {
+        x0 = Math.min(x0, x);
+        z0 = Math.min(z0, z);
+        x1 = Math.max(x1, x + 1);
+        z1 = Math.max(z1, z + 1);
+      };
+      for (const p of pieces) {
+        const d = pieceDef(p.type);
+        if (!d || levelOf(p) !== lv || (lv === 0 && d.outdoor)) continue;
+        if (d.kind === 'floor') add(p.x, p.z);
+        else if (d.kind === 'edge') for (const [x, z] of edgeCells(p.x, p.z, p.rot, d.w)) add(x, z);
+        else if (d.kind === 'furn' || d.kind === 'stairs') for (const [x, z] of footprintCells(d, p.x, p.z, p.rot)) add(x, z);
+      }
+      return x0 <= x1 ? { x0, z0, x1, z1 } : null;
+    };
+    return scan(level) ?? (level === 1 ? scan(0) : null);
+  }
+
+  /**
+   * Camera pose for editing the current plot (looks a little south of it so it clears the palette).
+   * Downstairs frames the whole lot; upstairs frames what is built on that storey (else the house
+   * footprint below), raised by one storey - and never sits farther back than the downstairs view.
+   */
+  private houseView(yaw: number, level: Level = this.level): { target: THREE.Vector3; dist: number } {
+    const plot = PLOTS[this.plotIdx];
     const half = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const need = (PLOTS[this.plotIdx].size * 0.62) / (half * this.camera.aspect);
-    const dist = THREE.MathUtils.clamp(Math.max(tuning.build.houseDistance, need), tuning.build.houseMinDistance, tuning.build.houseMaxDistance);
-    const { H } = dims();
-    return { target: new THREE.Vector3(c.x + Math.sin(yaw) * 2.2, this.level * H * 0.6, c.z + Math.cos(yaw) * 2.2), dist };
+    const need = (plot.size * 0.62) / (half * this.camera.aspect);
+    const plotDist = THREE.MathUtils.clamp(Math.max(tuning.build.houseDistance, need), tuning.build.houseMinDistance, tuning.build.houseMaxDistance);
+    const { H, S } = dims();
+    let cx = plot.center.x, cz = plot.center.z, dist = plotDist;
+    const b = level === 1 ? this.storeyBounds(1) : null;
+    if (b) {
+      cx = plot.origin.x + ((b.x0 + b.x1) / 2) * S;
+      cz = plot.origin.z + ((b.z0 + b.z1) / 2) * S;
+      // fit the storey's footprint (turned any way) plus its height and a little air, on the short screen side
+      const diag = Math.hypot(b.x1 - b.x0, b.z1 - b.z0) * S;
+      const pitch = this.orbit.goalPitch;
+      const vExtent = diag * Math.sin(pitch) + (H + 0.5) * Math.cos(pitch) + 2.4 + 2 * Math.min(2.2, plotDist * 0.09) * Math.sin(pitch);
+      const hExtent = diag + 2.4;
+      const fit = Math.max(vExtent / (2 * half), hExtent / (2 * half * this.camera.aspect)) * 1.05;
+      dist = THREE.MathUtils.clamp(fit, Math.max(tuning.build.houseMinDistance, 10), plotDist);
+    }
+    const lead = Math.min(2.2, dist * 0.09);
+    return { target: new THREE.Vector3(cx + Math.sin(yaw) * lead, level * H, cz + Math.cos(yaw) * lead), dist };
   }
 
   private setLimitsFor(mode: Mode): void {
@@ -738,9 +784,8 @@ export class BuildScene extends GameScene {
     this.setTool(null);
     this.edit.setLevel(l);
     this.setRoofs(this.cat === 'build' && l === 0);
-    const { H } = dims();
-    const t = this.orbit.goalTarget;
-    this.orbit.flyTo(new THREE.Vector3(t.x, l * H * 0.6, t.z), this.orbit.goalDist);
+    const hv = this.houseView(this.orbit.goalYaw, l);
+    this.orbit.flyTo(hv.target, hv.dist);
     this.fillPalette();
     this.refreshHud();
     bus.emit('uiTap', { kind: 'tab' });
@@ -1203,8 +1248,9 @@ export class BuildScene extends GameScene {
       }
       const color = replace?.color ?? spec.color;
       const finish = replace ? replace.finish : spec.finish;
+      const why = !ok && sn.inside && def.kind === 'stairs' ? stairsProblem(ctx, def, cand) ?? undefined : undefined;
       return {
-        ok, cand, replace, color, finish,
+        ok, cand, replace, color, finish, why,
         key: `${cand.type}|${cand.x}|${cand.z}|${cand.rot}|${cand.level}|${replace?.id ?? ''}`,
         pos: this.edit.worldPos(this.fake(spec, cand, color, finish), 0.3),
       };
@@ -1579,7 +1625,10 @@ export class BuildScene extends GameScene {
   private commit(tool: Tool, t: Target, inStroke: boolean, quietBlock = false): boolean {
     if (tool.kind === 'room') return false;
     if (!t.ok) {
-      if (!quietBlock) bus.emit('placementBlocked', { pos: t.pos });
+      if (!quietBlock) {
+        bus.emit('placementBlocked', { pos: t.pos });
+        if (t.why) toast(t.why);
+      }
       return false;
     }
     if (tool.kind === 'move' && t.cand) {

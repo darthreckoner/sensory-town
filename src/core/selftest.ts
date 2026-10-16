@@ -25,6 +25,13 @@ function ensureCar(d: any): void {
   scenes.step(4);
 }
 
+/** Test setup: make sure the town scene is on foot (hop out of the parked car). */
+function ensureFoot(d: any): void {
+  if (d.mode === 'foot') return;
+  d.toggleMode();
+  scenes.step(4);
+}
+
 function tapAt(x: number, y: number, id = 900): string {
   const el = document.elementFromPoint(x, y) as HTMLElement | null;
   const o = { pointerId: id, bubbles: true, clientX: x, clientY: y, pointerType: 'touch', isPrimary: true };
@@ -190,6 +197,57 @@ const TESTS: Record<string, () => Promise<Result>> = {
     }
     window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', code: 'KeyW', bubbles: true }));
     return { name: 'gateway', pass: blocked <= 2, detail: `camera blocked by a big mesh in ${blocked}/${frames} frames` };
+  },
+
+  /** Round 3: jump in the sea, swim (water line at the chest), swim back and walk out — nobody is ever stuck in the water. */
+  async swimOut() {
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    ensureFoot(d);
+    d.leaving = true; // a teleport must not walk through a door; checkTriggers is held
+    d.leaveT = -1e9;
+    d.foot.reset(121, -40, -Math.PI / 2); // the north beach, well past the shelf: deep water
+    d.camYaw = -Math.PI / 2;
+    d.placeCamera?.(0, true);
+    scenes.step(40);
+    const swimming = d.foot.swimming;
+    const feet = d.walker.group.position.y;
+    const camOk = d.camera.position.y > -0.35 + 0.5;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', bubbles: true }));
+    await sleep(9000);
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', code: 'KeyW', bubbles: true }));
+    const out = !d.foot.swimming && d.foot.wet < 0.15;
+    const x = d.foot.x;
+    d.leaveT = 0;
+    d.leaving = false;
+    for (const t of d.triggers ?? []) t.armed = false;
+    return { name: 'swimOut', pass: swimming && camOk && out && feet < -0.9, detail: `swimming=${swimming} feetY=${feet.toFixed(2)} cameraAboveWater=${camOk} → after 9 s walking west: out=${out} at x=${x.toFixed(1)}` };
+  },
+
+  /** Round 3: the 🚗 Car button / C brings the car to a free spot in front of the walker (not into the sea). */
+  async callCar() {
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    ensureFoot(d);
+    d.foot.reset(60, 2.6, Math.PI / 2); // out on the east road, far from where the car was left
+    d.lastCall = -1e9;
+    d.placeCamera?.(0, true);
+    scenes.step(10);
+    const before = { x: d.phys.x, z: d.phys.z };
+    let vanish = 0, appear = 0;
+    const offA = bus.on('carVanish' as any, () => vanish++);
+    const offB = bus.on('carAppear' as any, () => appear++);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'c', code: 'KeyC', bubbles: true }));
+    await sleep(1800);
+    offA();
+    offB();
+    const moved = Math.hypot(d.phys.x - before.x, d.phys.z - before.z);
+    const dist = Math.hypot(d.phys.x - d.foot.x, d.phys.z - d.foot.z);
+    const dry = d.phys.y > -0.3;
+    return { name: 'callCar', pass: moved > 5 && dist >= 3.5 && dist <= 7.5 && dry && vanish === 1 && appear === 1 && d.dropY === 0, detail: `car moved ${moved.toFixed(0)} u, now ${dist.toFixed(1)} u from the walker, vanish=${vanish} appear=${appear}, settled=${d.dropY === 0}` };
   },
 
   /** Draw calls in town (spawn view) within the iPad budget. */

@@ -29,6 +29,11 @@ export interface GameEvents {
   carSkid: { pos: V3; strength: number };
   /** v2: on-foot footfall in town (run = jogging). */
   footstep: { pos: V3; run: boolean };
+  /** v2 r3: water. enter = dropped / swam into deep water (strength ~ impact), kick = a dolphin hop, stroke = a swimming stroke, wade = a step through the shallows. pos is on the surface. */
+  waterSplash: { pos: V3; strength: number; kind: 'enter' | 'kick' | 'stroke' | 'wade' };
+  /** v2 r3: the 🚗 Car button — the parked car pops away from its old spot and drops in beside the walker. */
+  carVanish: { pos: V3 };
+  carAppear: { pos: V3 };
   /** Picked an option in a station (shape, add-in, etc.). */
   optionPicked: { pos?: V3 };
 

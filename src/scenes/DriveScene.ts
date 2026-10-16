@@ -13,8 +13,8 @@ import { Car, DEFAULT_STYLE, type CarMotion } from '../art/car';
 import { Character } from '../art/character';
 import { buildTownEnvironment, type TownEnv } from '../world/townEnv';
 import { buildTownContent, disposeBaked, tickBuildMaterials } from '../world/houseMesh';
-import { BUILD_YARD, PLOTS, SPAWN, WORKSHOP, plotFront } from '../world/townLayout';
-import { groundHeight } from '../world/heightfield';
+import { BUILD_YARD, PLOTS, SPAWN, WATER_Y, WORKSHOP, plotFront } from '../world/townLayout';
+import { groundHeight, railedAt, waveY } from '../world/heightfield';
 import { button, el, toast } from '../ui/ui';
 import { popScale } from '../core/tween';
 import { nextReward } from '../core/unlocks';
@@ -26,7 +26,7 @@ import { JobManager } from '../drive/jobs';
 import { Charms } from '../drive/charms';
 import { DoorLayer, buildPlotLayer, type PlotLayer } from '../drive/doors';
 import { makePad, type Pad } from '../drive/pads';
-import { Particles, SkidMarks, SpeedLines } from '../drive/effects';
+import { Particles, Ripples, SkidMarks, SpeedLines } from '../drive/effects';
 import { openPaintSheet } from '../drive/paint';
 import { SUN_DIR } from '../drive/sky';
 import { PAL } from '../drive/palette';
@@ -82,6 +82,7 @@ export class DriveScene extends GameScene {
   private fx!: Particles;
   private lines!: SpeedLines;
   private carMarker!: THREE.Sprite;
+  private ripples!: Ripples;
   private sun!: THREE.DirectionalLight;
   private readonly lightX = new THREE.Vector3();
   private readonly lightY = new THREE.Vector3();
@@ -111,6 +112,7 @@ export class DriveScene extends GameScene {
   private promptTr: Trigger | null = null;
   private tags!: NameTags;
   private modeBtn!: HTMLButtonElement;
+  private callBtn!: HTMLButtonElement;
   private winW = 1;
   private winH = 1;
   private mapAcc = 0;
@@ -139,6 +141,16 @@ export class DriveScene extends GameScene {
   private boostLevel = 0;
   private pitch = 0;
   private roll = 0;
+  // water + calling the car
+  private simT = 0;
+  private wasWet = false;
+  private wasSwim = false;
+  private strokeAcc = 0;
+  private lastCall = -1e9;
+  /** a car that was just called next to a FOR SALE mat must not offer (or auto-claim) it until it has moved */
+  private promptHold = false;
+  private dropY = 0;
+  private dropV = 0;
   private readonly motion: CarMotion = { speed: 0, speed01: 0, steer: 0, accel: 0, lateral: 0, braking: false, boost: 0, airborne: false, slip: 0 };
   private readonly carUpdate = { speed01: 0, throttle: 0 };
   private readonly carCircle = { kind: 'circle' as const, x: 0, z: 0, r: 1.05 };
@@ -168,7 +180,14 @@ export class DriveScene extends GameScene {
     this.scene.add(this.car.group);
     this.walker = new Character(prof.outfit);
     this.walker.onStep = () => {
-      bus.emit('footstep', { pos: { x: this.foot.x, y: this.foot.y, z: this.foot.z }, run: this.foot.move01 > 0.7 });
+      const f = this.foot;
+      if (f.swimming) return; // strokes are timed in waterFx
+      if (f.wet > 0.08) {
+        // a step through the shallows: a splash and a ripple at the legs
+        const sy = waveY(f.x, f.z, this.simT);
+        this.ripples.add(f.x, sy + 0.05, f.z, 0.9, 0.8);
+        bus.emit('waterSplash', { pos: { x: f.x, y: sy, z: f.z }, strength: clamp(0.3 + f.move01, 0.3, 1), kind: 'wade' });
+      } else bus.emit('footstep', { pos: { x: f.x, y: f.y, z: f.z }, run: f.move01 > 0.7 });
     };
     this.scene.add(this.walker.group);
     this.jobs = new JobManager(this.scene, this.car);
@@ -183,6 +202,8 @@ export class DriveScene extends GameScene {
     for (const p of this.pads) this.scene.add(p.group);
     this.skid = new SkidMarks();
     this.scene.add(this.skid.mesh);
+    this.ripples = new Ripples();
+    this.scene.add(this.ripples.mesh);
     this.fx = new Particles();
     this.scene.add(this.fx.group);
     this.lines = new SpeedLines();
@@ -202,7 +223,10 @@ export class DriveScene extends GameScene {
     const side = el('div', 'drive-side passthrough', hud);
     button(side, { icon: '🎨', cls: 'round' }, () => this.openPaint());
     this.modeBtn = button(side, { icon: '🚶', cls: 'round drive-mode' }, () => this.toggleMode());
-    this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode(), onConfirm: () => this.confirmPrompt() });
+    // on foot: bring the car to me
+    this.callBtn = button(side, { icon: '🚗', cls: 'round drive-call' }, () => this.callCar());
+    this.callBtn.title = 'Bring my car (C)';
+    this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode(), onConfirm: () => this.confirmPrompt(), onCallCar: () => this.callCar() });
   }
 
   enter(params?: { from?: 'workshop' | 'build' | 'dressup' | string }): void {
@@ -275,6 +299,13 @@ export class DriveScene extends GameScene {
     this.walker.setOutfit(prof.outfit);
     this.phys.reset(carPose.x, carPose.z, carPose.heading);
     this.foot.reset(footPose.x, footPose.z, footPose.heading);
+    this.foot.time = this.simT;
+    this.ripples.clear();
+    this.wasWet = this.foot.wet > 0.1;
+    this.wasSwim = this.foot.swimming;
+    this.strokeAcc = 0;
+    this.dropY = this.dropV = 0;
+    this.promptHold = false;
     this.leaving = false;
     this.leaveT = 0;
     this.boostMeter = 1;
@@ -361,6 +392,7 @@ export class DriveScene extends GameScene {
     this.tags.clear();
     this.skid.clear();
     this.fx.clear();
+    this.ripples.clear();
     this.plotLayer?.group.removeFromParent();
     this.plotLayer = null;
     if (this.content) {
@@ -384,7 +416,7 @@ export class DriveScene extends GameScene {
 
   debugInfo(): Record<string, string | number> {
     return {
-      mode: this.mode,
+      mode: this.mode === 'foot' ? (this.foot.swimming ? 'swim' : this.foot.wet > 0.1 ? 'wade' : 'foot') : this.mode,
       speed: this.phys.fwdSpeed.toFixed(1),
       pos: `${this.mx.toFixed(0)},${this.mz.toFixed(0)}`,
       y: (this.mode === 'car' ? this.phys.y : this.foot.y).toFixed(1),
@@ -406,6 +438,7 @@ export class DriveScene extends GameScene {
 
   // ─────────────────────────────────────────────────────────────────────────
   update(dt: number, t: number): void {
+    this.simT = t;
     if (this.mode === 'car') this.updateCar(dt, t);
     else this.updateFoot(dt, t);
     this.updateMover();
@@ -422,6 +455,7 @@ export class DriveScene extends GameScene {
     this.doorLayer.update(t, this.mx, this.mz);
     for (const p of this.pads) p.update(t, this.mx, this.mz, !car);
     this.fx.update(dt, this.camera.quaternion);
+    this.ripples.update(dt);
     this.lines.update(dt, car ? this.boostLevel : 0);
     this.checkTriggers(dt);
     this.updateSun();
@@ -520,7 +554,7 @@ export class DriveScene extends GameScene {
     }
     this.pitch += (pitchT - this.pitch) * k;
     this.roll += (rollT - this.roll) * k;
-    this.car.setPose(p.x, p.y, p.z, p.heading, this.pitch, this.roll);
+    this.car.setPose(p.x, p.y + this.dropY, p.z, p.heading, this.pitch, this.roll);
   }
 
   /** Skid marks, tyre smoke, boost flames, sparkle trail. */
@@ -571,6 +605,7 @@ export class DriveScene extends GameScene {
   // ── walking ───────────────────────────────────────────────────────────────
   private updateFoot(dt: number, t: number): void {
     const f = this.foot;
+    f.time = t;
 
     // look around: drag, and gently swing behind you when you walk off to the side
     this.controls.takeLook(this.lookTmp);
@@ -586,24 +621,71 @@ export class DriveScene extends GameScene {
 
     const steps = Math.max(1, Math.ceil(dt / (1 / 90)));
     const h = dt / steps;
-    let jumped = false, landed = 0;
+    let jumped = false, landed = 0, kicked = false, splash = 0, rescued = false;
     const run = inp.run;
     for (let i = 0; i < steps; i++) {
       f.step(h, inp.dx, inp.dz, inp.mag, run, inp.jump, this.grid);
       this.pushFromCar();
       jumped = jumped || f.jumped;
       landed = Math.max(landed, f.landed);
+      kicked = kicked || f.kicked;
+      splash = Math.max(splash, f.splash);
+      rescued = rescued || f.rescued;
     }
     const w = this.walker;
     w.group.position.set(f.x, f.y, f.z);
     w.group.rotation.y = Math.PI - f.heading;
-    w.setMove(f.move01, f.grounded);
+    w.setSwim(f.swim01);
+    w.setMove(f.swimming ? f.stroke01 : f.move01, f.grounded || f.swimming);
     if (jumped) w.jump();
-    if (landed > 5) bus.emit('footstep', { pos: { x: f.x, y: f.y, z: f.z }, run: true });
+    if (landed > 5 && f.wet < 0.1) bus.emit('footstep', { pos: { x: f.x, y: f.y, z: f.z }, run: true });
+    this.waterFx(dt, t, splash, kicked);
+    if (rescued) toast('Whoosh! Back on the shore 🏖️');
     w.update(dt, t);
 
-    // the parked car just sits there
+    // the parked car just sits there (or bounces, if it was just called)
+    this.stepCarDrop(dt);
     this.car.update(dt, t, this.motion);
+  }
+
+  /** Splashes, ripples and strokes for a walker in the water (the sounds and droplets are juice's, via waterSplash). */
+  private waterFx(dt: number, t: number, splash: number, kicked: boolean): void {
+    const f = this.foot, d = tuning.drive;
+    const sy = waveY(f.x, f.z, t);
+    const at = { x: f.x, y: sy, z: f.z };
+    if (splash > 0) {
+      const s = clamp(splash / 9, 0.3, 1.6);
+      bus.emit('waterSplash', { pos: at, strength: s, kind: 'enter' });
+      this.ripples.add(f.x, sy + 0.05, f.z, 1.7 + s, 1.1);
+      this.ripples.add(f.x, sy + 0.05, f.z, 1.0 + s * 0.6, 0.8);
+    } else if (f.swimming && !this.wasSwim) {
+      // waded out of the shallows into the deep: a little plunge
+      bus.emit('waterSplash', { pos: at, strength: 0.5, kind: 'enter' });
+      this.ripples.add(f.x, sy + 0.05, f.z, 1.8, 1.0);
+    }
+    if (kicked) {
+      bus.emit('waterSplash', { pos: at, strength: 0.8, kind: 'kick' });
+      this.ripples.add(f.x, sy + 0.05, f.z, 1.5, 0.9);
+    }
+    const wetNow = f.wet > 0.1;
+    if (wetNow && !this.wasWet && !f.swimming && splash === 0) {
+      // the first step into the water
+      bus.emit('waterSplash', { pos: at, strength: 0.7, kind: 'wade' });
+      this.ripples.add(f.x, sy + 0.05, f.z, 1.1, 0.8);
+    }
+    this.wasWet = wetNow;
+    this.wasSwim = f.swimming;
+    // strokes while swimming
+    if (f.swimming && f.speed > 0.7 && f.grounded) {
+      this.strokeAcc += dt * clamp(f.speed / d.swimSpeed, 0.5, 1.6);
+      if (this.strokeAcc >= d.swimStroke) {
+        this.strokeAcc = 0;
+        const hx = Math.sin(f.heading), hz = -Math.cos(f.heading);
+        const px = f.x + hx * 0.5, pz = f.z + hz * 0.5;
+        bus.emit('waterSplash', { pos: { x: px, y: sy, z: pz }, strength: 0.5, kind: 'stroke' });
+        this.ripples.add(px, sy + 0.05, pz, 1.2, 0.9);
+      }
+    } else this.strokeAcc = Math.min(this.strokeAcc, d.swimStroke * 0.6);
   }
 
   /** The parked car is solid for walkers. */
@@ -688,6 +770,97 @@ export class DriveScene extends GameScene {
     bus.emit('optionPicked', { pos: { x: p.x, y: p.y + 1.4, z: p.z } });
   }
 
+  // ── 🚗 bring the car to me ─────────────────────────────────────────────────
+  /** Is (x, z) a good place to park the car facing hd? Dry, level, not on stairs / decks, nothing in the way, not on a mat or pad. */
+  private carSpotOk(x: number, z: number, hd: number): boolean {
+    const d = tuning.drive;
+    const fx = Math.sin(hd), fz = -Math.cos(hd), rx = Math.cos(hd), rz = Math.sin(hd);
+    const y0 = groundHeight(x, z);
+    if (Math.abs(y0 - this.foot.y) > 3.5) return false; // a different level (a bridge over this street...)
+    for (const [a, b] of [[0, 0], [1.9, 0], [-1.9, 0], [0, 1.0], [0, -1.0], [1.9, 1.0], [1.9, -1.0], [-1.9, 1.0], [-1.9, -1.0]]) {
+      const px = x + fx * a + rx * b, pz = z + fz * a + rz * b;
+      const g = groundHeight(px, pz);
+      if (g < WATER_Y + 0.25) return false; // water, or the wet edge of the shore
+      if (Math.abs(g - y0) > 0.55) return false; // a kerb, ramp or step under the car
+      if (groundHeight(px, pz, true) - g > 0.25 || railedAt(px, pz)) return false; // stairs / a roof deck
+    }
+    // gentle slope
+    if (Math.abs(groundHeight(x + fx * 1.8, z + fz * 1.8) - groundHeight(x - fx * 1.8, z - fz * 1.8)) > 1.4) return false;
+    // nothing solid under the three circles the car is made of
+    for (const o of [-1, 0, 1]) {
+      const cx = x + fx * o, cz = z + fz * o;
+      const cols = this.grid.near(cx, cz, d.carRadius + 2);
+      for (let i = 0; i < cols.length; i++) {
+        const c = cols[i];
+        if (c.only === 'foot') continue;
+        if (c.h !== undefined && y0 > c.h + 0.2) continue;
+        if (pushOut(c, cx, cz, d.carRadius + 0.25)) return false;
+      }
+    }
+    // never on a door mat, a FOR SALE lot or the Studio / builder pads
+    for (const tr of this.triggers) if (Math.hypot(x - tr.def.x, z - tr.def.z) < (tr.def.radius ?? 1.5) + 3.4) return false;
+    // not right on top of the walker
+    return Math.hypot(x - this.foot.x, z - this.foot.z) >= 2.6;
+  }
+
+  private callCar(): void {
+    const d = tuning.drive;
+    if (this.mode !== 'foot' || this.leaving || this.controls.suspended) return;
+    const now = performance.now();
+    if (now - this.lastCall < d.callCooldown * 1000) return;
+    const f = this.foot;
+    const hd = f.heading;
+    // ahead, a little nearer / farther, ahead-left / right, to the sides, then behind
+    const tries: [number, number][] = [
+      [0, d.callDistance], [0, d.callDistance - 1], [0, d.callDistance + 1.2],
+      [0.6, d.callDistance + 0.4], [-0.6, d.callDistance + 0.4], [0.6, d.callDistance + 1.4], [-0.6, d.callDistance + 1.4],
+      [1.2, d.callDistance], [-1.2, d.callDistance], [Math.PI, d.callDistance + 0.5], [2.3, d.callDistance + 0.5], [-2.3, d.callDistance + 0.5],
+    ];
+    let spot: { x: number; z: number } | null = null;
+    for (const [da, dist] of tries) {
+      const a = hd + da;
+      const x = f.x + Math.sin(a) * dist, z = f.z - Math.cos(a) * dist;
+      if (this.carSpotOk(x, z, hd)) {
+        spot = { x, z };
+        break;
+      }
+    }
+    if (!spot) {
+      toast('No room for the car here — try an open street 🚗');
+      return;
+    }
+    this.lastCall = now;
+    const p = this.phys;
+    bus.emit('carVanish', { pos: { x: p.x, y: p.y + 0.8, z: p.z } });
+    p.reset(spot.x, spot.z, hd);
+    this.pitch = this.roll = 0;
+    this.dropY = 3.2;
+    this.dropV = 0;
+    this.promptHold = true;
+    this.setPrompt(null);
+    // landing next to a mat must not trigger it when you get in: they sleep until you step off
+    for (const tr of this.triggers) if (Math.hypot(spot.x - tr.def.x, spot.z - tr.def.z) < (tr.def.radius ?? 1.5) + 4) tr.armed = false;
+    this.applyCarPose(0, true);
+    bus.emit('carAppear', { pos: { x: spot.x, y: p.y + 0.6, z: spot.z } });
+  }
+
+  /** The called car drops in with a couple of little bounces. */
+  private stepCarDrop(dt: number): void {
+    if (this.dropY <= 0 && this.dropV === 0) return;
+    this.dropV -= 38 * dt;
+    this.dropY += this.dropV * dt;
+    if (this.dropY <= 0) {
+      this.dropY = 0;
+      if (this.dropV < -3.5) {
+        const p = this.phys;
+        this.car.bump(Math.min(10, -this.dropV));
+        bus.emit('carLand', { pos: { x: p.x, y: p.y + 0.3, z: p.z }, strength: clamp(-this.dropV / 14, 0.3, 1) });
+        this.dropV = -this.dropV * 0.28;
+      } else this.dropV = 0;
+    }
+    this.applyCarPose(dt, false);
+  }
+
   private setMode(mode: 'car' | 'foot', initial: boolean): void {
     const was = this.mode;
     this.mode = mode;
@@ -697,8 +870,9 @@ export class DriveScene extends GameScene {
     this.car.setDriverVisible(car);
     this.controls.setMode(mode);
     const ico = this.modeBtn.querySelector('.ico');
-    if (ico) ico.textContent = car ? '🚶' : '🚗';
+    if (ico) ico.textContent = car ? '🚶' : '🚪'; // on foot the 🚗 button calls the car; this one hops in
     this.modeBtn.title = car ? 'Get out (E)' : 'Get in (E)';
+    this.callBtn.style.display = car ? 'none' : '';
     if (!car) {
       this.boostOn = false;
       this.boostLevel = 0;
@@ -751,6 +925,11 @@ export class DriveScene extends GameScene {
       const R = (def.radius ?? 1.5) + (onFoot ? 0 : 0.9);
       // a car on a FOR SALE mat never claims by itself: it gets a big "Build here?" bubble until it drives off
       if (!onFoot && def.carPrompt) {
+        if (this.promptHold) {
+          // a car that was just called here stays quiet until it has moved off
+          if (Math.abs(speed) > 1 || dist > R + 1.5) this.promptHold = false;
+          else continue;
+        }
         if (dist < (this.promptTr === tr ? R + 1.2 : R) && this.phys.grounded && !prompt) prompt = tr;
         continue;
       }
@@ -813,8 +992,30 @@ export class DriveScene extends GameScene {
     else this.placeFootCamera(dt, snap);
 
     // never inside the ground
-    const gy = groundHeight(this.camPos.x, this.camPos.z);
+    const foot = this.mode === 'foot';
+    const gy = groundHeight(this.camPos.x, this.camPos.z, foot);
     if (this.camPos.y < gy + 1.4) this.camPos.y = gy + 1.4;
+    // ...and never below the water surface (over the lake, the sea, or following a swimmer)
+    if (groundHeight(this.camPos.x, this.camPos.z, foot, true) < WATER_Y - 0.1) {
+      const minY = waveY(this.camPos.x, this.camPos.z, this.simT) + 0.9;
+      if (this.camPos.y < minY) this.camPos.y = minY;
+    }
+    // ...and never looking at the player THROUGH the ground (a ramp, a hill, a half-pipe wall):
+    // rise until the sightline from their head clears every surface in between
+    const sx = foot ? this.foot.x : this.phys.x, sz = foot ? this.foot.z : this.phys.z;
+    const sy = (foot ? this.foot.y : this.phys.y) + (foot ? 1.3 : 1.0);
+    let need = -Infinity;
+    for (let i = 2; i <= 8; i++) {
+      const t = i / 8;
+      const g = groundHeight(sx + (this.camPos.x - sx) * t, sz + (this.camPos.z - sz) * t, foot) + 0.35;
+      if (g > sy + (this.camPos.y - sy) * t) need = Math.max(need, sy + (g - sy) / t);
+    }
+    if (need > this.camPos.y) {
+      need = Math.min(need, sy + 8);
+      this.camPos.y += (need - this.camPos.y) * (snap ? 1 : 1 - Math.exp(-14 * dt));
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(sx, sy - 0.2, sz);
+    }
     this.camera.position.copy(this.camPos);
 
     // FOV: a touch wider at speed, a big kick on boost
@@ -864,7 +1065,9 @@ export class DriveScene extends GameScene {
   private placeFootCamera(dt: number, snap: boolean): void {
     const d = tuning.drive;
     const f = this.foot;
-    this.camBaseY += (f.y - this.camBaseY) * (snap ? 1 : 1 - Math.exp(-6 * dt));
+    // a swimmer is filmed from the water line, not from the sunken feet
+    const ref = f.y + f.swim01 * (WATER_Y - 0.1 - f.y);
+    this.camBaseY += (ref - this.camBaseY) * (snap ? 1 : 1 - Math.exp(-6 * dt));
     const bx = -Math.sin(this.camYaw), bz = Math.cos(this.camYaw);
     const dist = d.footCamDistance * (1 + this.camPitch * 0.25);
     const wantY = this.camBaseY + d.footCamHeight + this.camPitch * 4.2;

@@ -107,7 +107,19 @@ const carport: GenFn = (br, p) => {
   br.blk(-0.5, G, -0.5, 2.5, G + 0.05, 2.5, '#9a978f', 'concrete');
   for (const [x, z] of [[-0.4, -0.4], [2.4, -0.4], [-0.4, 2.4], [2.4, 2.4]]) br.blk(x - 0.05, G, z - 0.05, x + 0.05, G + 2.65, z + 0.05, K.black, 'metal');
   br.blk(-0.55, G + 2.65, -0.55, 2.55, G + 2.82, 2.55, p.color, 'paint');
-  br.blk(-0.55, G + 2.82, -0.55, 2.55, G + 2.86, -0.5, lighten(p.color, 0.2), 'paint');
+  // light trim round the edge (~0.13 high) so the roof reads as a roof from above, plus a solar array
+  const top = G + 2.82, lip = lighten(p.color, 0.55), lw = 0.08, lh = top + 0.13;
+  br.blk(-0.55, top, -0.55, 2.55, lh, -0.55 + lw, lip, 'paint');
+  br.blk(-0.55, top, 2.55 - lw, 2.55, lh, 2.55, lip, 'paint');
+  br.blk(-0.55, top, -0.55, -0.55 + lw, lh, 2.55, lip, 'paint');
+  br.blk(2.55 - lw, top, -0.55, 2.55, lh, 2.55, lip, 'paint');
+  for (const [x, z] of [[0.45, 0.4], [1.55, 0.4], [0.45, 1.6], [1.55, 1.6]]) {
+    br.box(x, top + 0.17, z, 0.92, 0.04, 0.92, '#2f4f86', 'paint', 0, -0.22, 0);
+    br.box(x, top + 0.195, z, 0.92, 0.012, 0.012, K.white, 'paint', 0, -0.22, 0);
+    br.box(x, top + 0.195, z, 0.012, 0.012, 0.9, K.white, 'paint', 0, -0.22, 0);
+    br.blk(x - 0.4, top, z - 0.04, x - 0.34, top + 0.1, z + 0.04, K.steel, 'paint');
+    br.blk(x + 0.34, top, z - 0.04, x + 0.4, top + 0.1, z + 0.04, K.steel, 'paint');
+  }
   br.blk(1.0, G + 2.6, 0.98, 1.0 + 0.2, G + 2.65, 1.18, '#fff2d6', 'glow');
 };
 

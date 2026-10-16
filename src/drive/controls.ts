@@ -2,7 +2,8 @@
 //   In the car:   WASD / arrows steer + gas / brake, Space = handbrake (drift),
 //                 Shift = ⚡ boost, H = horn, E or F = get out.
 //   On foot:      WASD / arrows walk (relative to the camera), Shift = run,
-//                 Space = jump, mouse / finger drag = look around, E or F = get in.
+//                 Space = jump (a dolphin hop when swimming), mouse / finger drag = look around,
+//                 E or F = get in, C = bring the car to me.
 // Touch: a big joystick (bottom-left: steer + gas zone in the car, free walking
 // on foot), GO / STOP / ⚡ / horn pedals in the car, a JUMP button on foot.
 // Pointer Events only, one pointerId per control, so steering and gas work at
@@ -35,6 +36,8 @@ export interface ControlHooks {
   onToggleMode(): void;
   /** Enter: confirm the on-screen prompt ("Build here?") */
   onConfirm?(): void;
+  /** C: bring the car to me (on foot) */
+  onCallCar?(): void;
 }
 
 export class DriveControls {
@@ -122,6 +125,10 @@ export class DriveControls {
     }
     if (c === 'Enter') {
       if (!e.repeat) this.hooks.onConfirm?.();
+      return;
+    }
+    if (c === 'KeyC') {
+      if (!e.repeat && this.mode === 'foot') this.hooks.onCallCar?.();
       return;
     }
     if (c === 'KeyE' || c === 'KeyF') {

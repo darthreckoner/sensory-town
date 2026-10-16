@@ -8,7 +8,7 @@ import { B, D2R, GB, TAU, type V3t } from './characterKit';
 export interface HairParts {
   base: THREE.BufferGeometry; // always shown (hugs the head / falls below a hat)
   vol: THREE.BufferGeometry | null; // volume on top (hidden under hats)
-  accent: THREE.BufferGeometry | null; // ties, scrunchies (lighter shade)
+  accent: THREE.BufferGeometry | null; // hair ties / scrunchies — drawn in a contrasting accent color
   dark: THREE.BufferGeometry | null; // shorter / shadowed hair (darker shade)
   front: THREE.BufferGeometry | null; // fringe / bangs (hidden under hats)
   tails: { geo: THREE.BufferGeometry; pivot: V3t; side: number; tilt: number }[]; // swaying parts (pivot in meters)
@@ -120,7 +120,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   (h) => {
     capN(h.base, 1.0, 0.08);
     fringe(h, -1, 0.7);
-    h.accent.ringAt(hp([0, 0.78, -0.74]), [0, 0.45, -0.9], 0.026, 0.009);
+    h.accent.ringAt(hp([0, 0.78, -0.74]), [0, 0.45, -0.9], 0.03, 0.016);
     const t = new GB();
     t.e([0, -0.02, -0.035], [0.03, 0.045, 0.03]);
     t.e([0, -0.095, -0.065], [0.034, 0.062, 0.032]);
@@ -169,7 +169,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     curtains(h, 0.7);
     for (const s of [-1, 1]) {
       P(h.vol, [0.62 * s, 1.1, -0.28], 0.52);
-      h.accent.ringAt(hp([0.5 * s, 0.86, -0.3]), [0.55 * s, 0.8, 0], 0.044, 0.011);
+      h.accent.ringAt(hp([0.5 * s, 0.86, -0.3]), [0.55 * s, 0.8, 0], 0.05, 0.02);
       E(h.base, [0.92 * s, -0.1, 0.38], [0.1, 0.55, 0.12]);
     }
     h.topY = 0.15;
@@ -204,7 +204,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     curtains(h, 0.66);
     for (const s of [-1, 1]) {
       braid(h.base, [s * 0.088, -0.02, -0.01], [s * 0.1, -0.38, 0.11], 0.022, 10);
-      h.accent.e([s * 0.1, -0.385, 0.112], [0.016, 0.014, 0.016]);
+      h.accent.e([s * 0.1, -0.385, 0.112], [0.024, 0.022, 0.024]);
     }
     h.topY = 0.15;
     h.hairR = 1.12;
@@ -228,7 +228,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
       P(h.vol, [0.86 * s, 1.0, -0.1], 0.82);
       P(h.vol, [0.86 * s + 0.38 * s, 0.82, -0.05], 0.46);
       P(h.vol, [0.86 * s - 0.2 * s, 1.5, -0.12], 0.44);
-      h.accent.ringAt(hp([0.72 * s, 0.7, -0.1]), [0.55 * s, 0.8, 0], 0.05, 0.009);
+      h.accent.ringAt(hp([0.72 * s, 0.7, -0.1]), [0.55 * s, 0.8, 0], 0.056, 0.02);
     }
     E(h.base, [0, 0.72, 0.5], [0.95, 0.16, 0.5]);
     h.topY = 0.15;
@@ -249,7 +249,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     E(h.dark, [0, -0.08, -0.12], [1.035, 0.84, 1.02]);
     E(h.base, [0, 0.36, -0.1], [0.96, 0.76, 0.98]);
     P(h.vol, [0, 1.3, -0.34], 0.5);
-    h.accent.ringAt(hp([0, 1.02, -0.3]), [0, 0.8, -0.3], 0.046, 0.011);
+    h.accent.ringAt(hp([0, 1.02, -0.3]), [0, 0.8, -0.3], 0.05, 0.02);
     E(h.base, [0, 0.74, 0.2], [0.7, 0.26, 0.66]);
     h.topY = 0.19;
     h.hairR = 1.1;

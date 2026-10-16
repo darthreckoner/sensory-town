@@ -233,6 +233,36 @@ export function initJuice(): void {
   bus.on('carBoost', () => audio.play('boost'));
   bus.on('carSkid', ({ strength }) => audio.play('skid', { vol: Math.min(1, 0.35 + strength * 0.5) }));
   bus.on('footstep', ({ run }) => audio.play('step', { vol: run ? 0.8 : 0.55, pitch: 0.92 + Math.random() * 0.16 }));
+  // ── Water + calling the car (v2 r3) ──
+  const WATER = ['#bfeaff', '#ffffff', '#7fd8ff', '#e8fbff'];
+  bus.on('waterSplash', ({ pos, strength, kind }) => {
+    const s = Math.max(0.2, Math.min(1.6, strength));
+    if (kind === 'enter') {
+      audio.play('splash', { vol: Math.min(1, 0.5 + s * 0.4), pitch: 1.15 - s * 0.18 });
+      fx.burst('drop', pos, { count: Math.round(14 + s * 18), color: WATER, speed: 1.5 + s * 0.7, size: 1.3, floorY: pos.y - 0.12 });
+      fx.burst('puff', pos, { count: 6, color: '#eefcff', speed: 0.6, size: 0.8 });
+    } else if (kind === 'kick') {
+      audio.play('splash', { vol: 0.5, pitch: 1.3 });
+      fx.burst('drop', pos, { count: 12, color: WATER, speed: 1.3, size: 1.1, floorY: pos.y - 0.12 });
+    } else if (kind === 'stroke') {
+      audio.play('stroke', { vol: 0.5 });
+      fx.burst('drop', pos, { count: 3, color: WATER, speed: 0.6, size: 0.7, floorY: pos.y - 0.1 });
+    } else {
+      audio.play('wade', { vol: 0.45 + s * 0.3 });
+      fx.burst('drop', pos, { count: 4, color: WATER, speed: 0.7, size: 0.7, floorY: pos.y - 0.1 });
+    }
+  });
+  bus.on('carVanish', ({ pos }) => {
+    audio.play('whoosh', { vol: 0.6, pitch: 1.4 });
+    fx.burst('puff', pos, { count: 16, speed: 1.4, size: 1.4 });
+    fx.burst('sparkle', pos, { count: 14, color: ['#ffffff', '#00d4ff', '#ff2e88'], speed: 1.2 });
+  });
+  bus.on('carAppear', ({ pos }) => {
+    audio.play('whoosh', { vol: 0.6, pitch: 0.8 });
+    window.setTimeout(() => audio.play('horn', { vol: 0.55, pitch: 1.5 }), 260);
+    fx.burst('puff', pos, { count: 16, speed: 1.4, size: 1.4 });
+    fx.burst('sparkle', pos, { count: 18, color: ['#ffffff', '#ffc93c', '#b6ff3b'], speed: 1.3 });
+  });
   bus.on('arriveWorkshop', () => audio.play('chime'));
   bus.on('arriveBuild', () => audio.play('chime'));
 }

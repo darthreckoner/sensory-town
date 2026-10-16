@@ -224,3 +224,61 @@ export class SpeedLines {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
+
+// ── water ripples: little rings that spread across the surface ──────────────
+export class Ripples {
+  readonly mesh: THREE.InstancedMesh;
+  private rings: { x: number; y: number; z: number; age: number; life: number; size: number }[] = [];
+  private readonly n: number;
+  private readonly dummy = new THREE.Object3D();
+  private readonly col = new THREE.Color();
+
+  constructor(n = 28) {
+    this.n = n;
+    const geo = new THREE.RingGeometry(0.8, 1, 28).rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color: '#ffffff', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.InstancedMesh(geo, mat, n);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 4;
+    this.mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+  }
+
+  /** A ring at a point on the water. size ~1 is a footstep, ~2.5 a belly flop. */
+  add(x: number, y: number, z: number, size = 1, life = 0.9): void {
+    if (this.rings.length >= this.n) this.rings.shift();
+    this.rings.push({ x, y, z, age: 0, life, size });
+  }
+
+  update(dt: number): void {
+    let k = 0;
+    const keep: typeof this.rings = [];
+    for (const r of this.rings) {
+      r.age += dt;
+      if (r.age >= r.life) continue;
+      keep.push(r);
+      const t = r.age / r.life;
+      const grow = 0.3 + 1.4 * (1 - (1 - t) * (1 - t));
+      const fade = Math.pow(1 - t, 1.6);
+      this.dummy.position.set(r.x, r.y, r.z);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.setScalar(r.size * grow);
+      this.dummy.updateMatrix();
+      this.mesh.setMatrixAt(k, this.dummy.matrix);
+      this.col.setRGB(0.55 * fade, 0.92 * fade, 1.0 * fade);
+      this.mesh.setColorAt(k, this.col);
+      k++;
+    }
+    this.rings = keep;
+    this.mesh.count = k;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  clear(): void {
+    this.rings.length = 0;
+    this.mesh.count = 0;
+  }
+}

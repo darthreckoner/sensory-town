@@ -18,8 +18,9 @@ import { buildScenery } from '../drive/scenery';
 import type { DoorDef, Piece } from '../drive/types';
 
 export type Collider =
-  | { kind: 'circle'; x: number; z: number; r: number; h?: number; only?: 'car' | 'foot' }
-  | { kind: 'box'; x: number; z: number; hw: number; hd: number; h?: number; only?: 'car' | 'foot' };
+  | { kind: 'circle'; x: number; z: number; r: number; h?: number; y0?: number; only?: 'car' | 'foot' }
+  | { kind: 'box'; x: number; z: number; hw: number; hd: number; h?: number; y0?: number; only?: 'car' | 'foot' };
+// h = top of the solid (a mover above it passes over); y0 = its underside (a railing on a deck: a swimmer below it passes under).
 
 export interface TownEnv {
   group: THREE.Group;

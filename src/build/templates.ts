@@ -79,7 +79,7 @@ function modernBox(): PlacedPiece[] {
   // partitions: living | bedroom + bath
   for (let z = 1; z <= 7; z++) b.add(z === 3 || z === 6 ? 'wallDoor' : 'wall', 6, z, 3, { color: '#f3f2ee', finish: 'paint' });
   for (let x = 6; x <= 9; x++) b.add('wall', x, 5, 0, { color: '#f3f2ee', finish: 'paint' });
-  b.roofs(X0, Z0, W, D, 'roofFlat', '#3a3a44');
+  b.roofs(X0, Z0, W, D, 'roofFlat', '#6b6f7d');
 
   // Furniture is kept sparse on purpose: every room has clear floor so a first drag always lands.
   // kitchen along the north wall
@@ -128,7 +128,7 @@ function cottage(): PlacedPiece[] {
   });
   for (let z = 2; z <= 3; z++) b.add('wall', 6, z, 3, { color: '#f3f2ee', finish: 'paint' });                     // bedroom nook wall
   b.add('wallDoor', 6, 4, 3, { color: '#f3f2ee', finish: 'paint' });
-  b.roofs(X0, Z0, W, D, 'roofGable', '#3a3a44', 0);
+  b.roofs(X0, Z0, W, D, 'roofGable', '#c2603f', 0);
 
   // Sparse on purpose: open floor in the living room and in the bedroom's corner for a first drag.
   // kitchen along the north wall + living (left 3 wide)
@@ -180,7 +180,7 @@ function twoStory(): PlacedPiece[] {
   for (let x = X0; x < X0 + W; x++) b.add('wallRail', x, Z0 + D - 1, 2, { color: '#23222a', level: 1 });
   // an inner wall upstairs separating the two bedrooms
   for (let x = X0 + 1; x <= X0 + 5; x++) if (x !== 7) b.add(x === 4 ? 'wallDoor' : 'wall', x, 5, 0, { color: '#f3f2ee', finish: 'paint', level: 1 });
-  b.roofs(X0, Z0, W, D, 'roofSlant', '#23222a', 0);
+  b.roofs(X0, Z0, W, D, 'roofSlant', '#6b6f7d', 0);
   // stairs: climb north along x = 7 from z = 6 up to z = 3 ... they climb toward local +z, so rotate 2 to climb north
   b.at('stairs', 7, 3, 2, { finish: 'oak', color: '#cf9b62' });
 
@@ -194,13 +194,12 @@ function twoStory(): PlacedPiece[] {
   // upstairs: bedroom (north) + gaming nook (south west)
   b.at('bed', 5, 2, 2, { color: '#2c3e5c', level: 1 });
   b.at('nightstand', 4, 2, 2, { level: 1 });
-  b.at('wardrobe', 7, 2, 2, { level: 1, color: '#b9b4ac' });
   b.at('gamingSetup', 3, 6, 1, { level: 1 });
   b.at('gamingChair', 4, 6, 3, { level: 1, color: '#7c4dff' });
   b.add('ledStrip', 5, 2, 0, { color: '#00d4ff', finish: 'rainbow', level: 1 });
   // yard
   for (let z = 8; z <= 11; z++) b.add('path', 4, z, 0, { finish: 'concrete', color: '#bdbab5' });
-  b.at('carport', 8, 8, 0, { color: '#3a3a44' });
+  b.at('carport', 8, 8, 0, { color: '#6b6f7d' });
   b.at('hedge', 3, 8, 0);
   b.at('yardTree', 1, 6, 0);
   b.at('mailbox', 1, 10, 0);
