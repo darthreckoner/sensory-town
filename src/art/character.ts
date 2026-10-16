@@ -23,7 +23,7 @@ import type { Outfit } from '../core/model';
 import type { OutfitSlot } from '../core/events';
 import type { Finish } from './materials';
 import { tuning } from '../tuning';
-import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, lipColor, shinGeo, thighGeo, upperArmGeo, forearmGeo, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
+import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, lipColor, armGeo, legGeo, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
 import { eyeTints, faceKey, frecklesGeo, freckleColor, getBrowGeo, getEyeKit, getEyeMakeup, getStickerGeo, lipGlossColor, lipHighlightGeo, resolveFace } from './characterFace';
@@ -1103,7 +1103,7 @@ export class Character {
       L[1].hx = lerp(L[1].hx, -0.12, w);
       L[1].kx = lerp(L[1].kx, 1.95, w);
       L[1].hz = lerp(L[1].hz, 0.1, w);
-      rigY = lerp(rigY, -0.39 + Math.sin(T * 7) * 0.006, w); // hips low: the trailing knee sits just above the ground
+      rigY = lerp(rigY, -0.41 + Math.sin(T * 7) * 0.006, w); // hips low: the trailing knee sits just above the ground
       rigX = lerp(rigX, 0, w);
       leanX = lerp(leanX, -0.62, w); // lean back ~35 deg
       headX = lerp(headX, 0.5, w); // the head stays up, looking where it is going
@@ -1360,7 +1360,7 @@ export class Character {
     this.backMount.position.set(0, 1.36 - TY, -0.108);
     this.backMount.rotation.y = Math.PI;
     upper.add(this.backMount);
-    this.gliderAnchor.position.set(0, 2.0 - TY, 0.2);
+    this.gliderAnchor.position.set(0, 1.99 - TY, 0.215);
     upper.add(this.gliderAnchor);
 
     // face bones: eyes and brows are mirrored copies (index 0 = +x)
@@ -1419,13 +1419,10 @@ export class Character {
     const add = (bone: THREE.Object3D, geo: THREE.BufferGeometry, color: THREE.Color | null = skin, cat: Cat = 'skin', extra?: THREE.Matrix4, key?: string, bone2?: THREE.Object3D) =>
       this.chunk('body', bone, geo, cat, color, extra, key, bone2);
     add(this.upper, torsoSkinGeo());
-    for (const leg of this.legs) {
-      add(leg.hip, thighGeo());
-      add(leg.knee, shinGeo());
-    }
+    // each arm and leg is ONE skin blended across its elbow / knee (no seam there, smooth bends)
+    for (const leg of this.legs) add(leg.hip, legGeo(), skin, 'skin', undefined, undefined, leg.knee);
     this.arms.forEach((arm, i) => {
-      add(arm.shoulder, upperArmGeo());
-      add(arm.elbow, forearmGeo());
+      add(arm.shoulder, armGeo(), skin, 'skin', undefined, undefined, arm.elbow);
       for (const k of this.handsBuilt) add(this.handBones[k][i], handGeo(arm.s, k));
     });
     add(this.headBody, headGeo(fo.makeup === 1 ? 1 : fo.makeup === 3 ? 2 : 0));

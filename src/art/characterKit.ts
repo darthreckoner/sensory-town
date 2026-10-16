@@ -91,8 +91,8 @@ export function limbGeo(r0: number, r1: number, len: number, seg = 8): THREE.Buf
  * top joint and 1 at the bottom joint, r in meters). Rounded caps at both ends (the top one blends into the
  * torso), `zr` squashes the cross-section front-to-back (slightly elliptical limbs), smooth normals.
  */
-export function limbProfile(key: string, prof: [number, number][], len: number, zr = 0.92, seg = 20): THREE.BufferGeometry {
-  return cached(`limbP|${key}|${len}|${zr}|${seg}`, () => {
+export function limbProfile(key: string, prof: [number, number][], len: number, zr = 0.92, topCap = 0.62, seg = 20, joint?: { at: number; half: number }): THREE.BufferGeometry {
+  return cached(`limbP|${key}|${len}|${zr}|${topCap}|${seg}`, () => {
     const curve = new THREE.SplineCurve(prof.map(([t, r]) => new THREE.Vector2(r, -t * len)));
     const mid = curve.getPoints(11).map((p) => new THREE.Vector2(Math.max(0.001, p.x), p.y));
     const r0 = mid[0].x, r1 = mid[mid.length - 1].x;
@@ -100,15 +100,26 @@ export function limbProfile(key: string, prof: [number, number][], len: number, 
     // bottom cap (pole first so the faces point outward), the swelling profile bottom → top, then the top cap
     for (let i = 0; i <= 4; i++) {
       const t = (i / 4) * (Math.PI / 2);
-      pts.push(new THREE.Vector2(Math.max(0.0005, r1 * Math.sin(t)), -len - r1 * 0.9 * Math.cos(t)));
+      pts.push(new THREE.Vector2(Math.max(0.0005, r1 * Math.sin(t)), -len - r1 * 0.95 * Math.cos(t)));
     }
     for (let i = mid.length - 1; i >= 0; i--) pts.push(mid[i]);
     for (let i = 1; i <= 4; i++) {
       const t = (1 - i / 4) * (Math.PI / 2);
-      pts.push(new THREE.Vector2(Math.max(0.0005, r0 * Math.sin(t)), r0 * 0.62 * Math.cos(t)));
+      pts.push(new THREE.Vector2(Math.max(0.0005, r0 * Math.sin(t)), r0 * topCap * Math.cos(t)));
     }
     const g = new THREE.LatheGeometry(pts, seg);
     if (zr !== 1) g.scale(1, 1, zr);
+    if (joint) {
+      // a whole arm / leg is ONE continuous skin: vertices blend from the upper bone to the lower bone around the
+      // joint (the 'w2' weight), so there is no seam at the elbow or knee and it bends smoothly
+      const p = g.attributes.position;
+      const w = new Float32Array(p.count);
+      for (let i = 0; i < p.count; i++) {
+        const k = Math.min(1, Math.max(0, (-p.getY(i) - (joint.at - joint.half)) / (2 * joint.half)));
+        w[i] = k * k * (3 - 2 * k);
+      }
+      g.setAttribute('w2', new THREE.BufferAttribute(w, 1));
+    }
     return g;
   });
 }
@@ -116,10 +127,17 @@ export const UPPER_ARM_PROF: [number, number][] = [[0, 0.047], [0.1, 0.055], [0.
 export const FOREARM_PROF: [number, number][] = [[0, 0.038], [0.16, 0.043], [0.42, 0.04], [0.78, 0.032], [1, 0.028]]; // forearm swell → wrist
 export const THIGH_PROF: [number, number][] = [[0, 0.083], [0.12, 0.089], [0.4, 0.079], [0.75, 0.063], [1, 0.054]]; // thigh → knee
 export const SHIN_PROF: [number, number][] = [[0, 0.054], [0.22, 0.059], [0.36, 0.058], [0.7, 0.044], [0.92, 0.034], [1, 0.032]]; // calf swell → ankle
-export const upperArmGeo = () => limbProfile('upperArm', UPPER_ARM_PROF, B.armUp, 0.93);
-export const forearmGeo = () => limbProfile('forearm', FOREARM_PROF, B.armLow, 0.9);
-export const thighGeo = () => limbProfile('thigh', THIGH_PROF, B.thighLen, 1.0);
-export const shinGeo = () => limbProfile('shin', SHIN_PROF, B.shinLen, 0.95);
+// the lower segments' top caps match the upper segments' bottom caps (same radius at the joint), so elbows and knees show no seam while straight
+/** The whole arm (shoulder → wrist) as one skin: skin it to the shoulder bone with the elbow as `bone2`. */
+export const ARM_PROF: [number, number][] = [[0, 0.047], [0.055, 0.055], [0.16, 0.052], [0.275, 0.047], [0.426, 0.041], [0.532, 0.038], [0.607, 0.043], [0.728, 0.04], [0.897, 0.032], [1, 0.028]];
+export const armGeo = () => limbProfile('arm', ARM_PROF, B.armUp + B.armLow, 0.92, 0.62, 22, { at: B.armUp, half: 0.05 });
+/** The whole leg (hip → ankle) as one skin: skin it to the hip bone with the knee as `bone2`. */
+export const LEG_PROF: [number, number][] = [[0, 0.083], [0.061, 0.089], [0.2, 0.079], [0.379, 0.063], [0.506, 0.054], [0.615, 0.059], [0.684, 0.058], [0.852, 0.044], [0.96, 0.034], [1, 0.032]];
+export const legGeo = () => limbProfile('leg', LEG_PROF, B.thighLen + B.shinLen, 0.98, 0.62, 22, { at: B.thighLen, half: 0.075 });
+export const upperArmGeo = () => limbProfile('upperArm', UPPER_ARM_PROF, B.armUp, 0.93, 0.62);
+export const forearmGeo = () => limbProfile('forearm', FOREARM_PROF, B.armLow, 0.9, 0.95);
+export const thighGeo = () => limbProfile('thigh', THIGH_PROF, B.thighLen, 1.0, 0.62);
+export const shinGeo = () => limbProfile('shin', SHIN_PROF, B.shinLen, 0.95, 0.95);
 /** Open tapered tube (sleeve / trouser leg): from yTop (radius rTop) down to yBot (radius rBot). */
 export function tubeGeo(yTop: number, yBot: number, rTop: number, rBot: number, seg = 12): THREE.BufferGeometry {
   return new THREE.LatheGeometry([new THREE.Vector2(rBot, yBot), new THREE.Vector2(rTop, yTop)], seg);
