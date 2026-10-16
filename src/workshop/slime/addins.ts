@@ -1,16 +1,17 @@
 // Instanced add-ins that stick to the slime surface and ride its deformation:
-// sprinkles (candy capsules), stars and pearls. Each instance is glued to one
+// sprinkles (candy capsules), stars and pearls — plus the crunchy slime's beads. Each instance is glued to one
 // mesh vertex; every frame it is re-posed from that vertex's position + normal.
 // Toggling on rains them down onto the slime; toggling off shrinks them away.
 import * as THREE from 'three';
 import { tuning } from '../../tuning';
 import type { SlimeSim } from './slimeSim';
 
-export type InstancedAddin = 'sprinkles' | 'stars' | 'pearls';
+export type InstancedAddin = 'sprinkles' | 'stars' | 'pearls' | 'beads';
 
-const SPRINKLE_COLORS = ['#ff5d8f', '#ffd166', '#5fd3a5', '#7fd8ff', '#ffffff', '#c9a7ff', '#ffb38a'];
-const STAR_COLORS = ['#ffd166', '#fff3a3', '#ffffff', '#ffb38a', '#ff8fb1', '#fff0c2'];
+const SPRINKLE_COLORS = ['#ff2e88', '#ffc93c', '#00e5a0', '#00d4ff', '#ffffff', '#7c4dff', '#ff8a3d'];
+const STAR_COLORS = ['#ffc93c', '#fff3a3', '#ffffff', '#ff8a3d', '#ff2e88', '#fff0c2'];
 const PEARL_COLORS = ['#ffffff', '#ffe5f1', '#e5f3ff', '#fff4cc', '#e9e0ff', '#dffff3'];
+const BEAD_COLORS = ['#ff2e88', '#00d4ff', '#b6ff3b', '#ffc93c', '#7c4dff', '#ffffff', '#ff8a3d'];
 
 class Layer {
   readonly mesh: THREE.InstancedMesh;
@@ -20,6 +21,8 @@ class Layer {
   readonly delay: Float32Array;
   readonly appear: Float32Array;
   readonly scl: Float32Array;
+  /** 0..1 pop pulse (crunchy beads) */
+  readonly pulse: Float32Array;
   on = false;
   /** surface offset along the normal so items sit slightly sunk in */
   lift: number;
@@ -38,6 +41,7 @@ class Layer {
     this.delay = new Float32Array(count);
     this.appear = new Float32Array(count);
     this.scl = new Float32Array(count);
+    this.pulse = new Float32Array(count);
     const c = new THREE.Color();
     for (let i = 0; i < count; i++) {
       this.mesh.setColorAt(i, c.set(colors[i % colors.length]));
@@ -73,6 +77,22 @@ export class SlimeAddins {
       color: '#ffffff', roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.05, iridescence: 1, iridescenceIOR: 1.6, sheen: 0.3,
     });
     this.add('pearls', new THREE.SphereGeometry(0.05, 14, 10), pearlMat, t.pearlCount, PEARL_COLORS, 0.026);
+
+    // crunchy slime: little foam beads poking out of the surface
+    const beadMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: 0.28, clearcoat: 0.8, clearcoatRoughness: 0.12 });
+    this.add('beads', new THREE.SphereGeometry(0.034, 10, 8), beadMat, t.beadCount, BEAD_COLORS, 0.014);
+  }
+
+  /** Crunch: beads near (x, z) (rest space) pop up for a moment. */
+  crunchAt(x: number, z: number, r = 0.55): void {
+    const l = this.layers.get('beads')!;
+    if (!l.on) return;
+    const rest = this.sim.rest, r2 = r * r;
+    for (let i = 0; i < l.count; i++) {
+      const v = l.vert[i];
+      const dx = rest[3 * v] - x, dz = rest[3 * v + 2] - z;
+      if (dx * dx + dz * dz < r2 && l.appear[i] >= 1) l.pulse[i] = 0.6 + Math.random() * 0.4;
+    }
   }
 
   private add(kind: InstancedAddin, geo: THREE.BufferGeometry, mat: THREE.Material, count: number, colors: string[], lift: number): void {
@@ -132,6 +152,7 @@ export class SlimeAddins {
 
   update(dt: number): void {
     const pos = this.sim.pos, nrm = this.sim.nrm, nbr = this.sim.nbr;
+    const pulseDecay = Math.exp(-9 * dt);
     for (const l of this.list) {
       if (!l.mesh.visible) continue;
       const m = l.mesh.instanceMatrix.array as Float32Array;
@@ -149,7 +170,9 @@ export class SlimeAddins {
         }
         alive = true;
         const e = 1 - Math.pow(1 - a, 3);
-        const sc = l.scl[i] * e * (1 + 0.18 * Math.sin(Math.PI * a));
+        let pu = l.pulse[i];
+        if (pu > 0.002) { pu *= pulseDecay; l.pulse[i] = pu; } else pu = 0;
+        const sc = l.scl[i] * e * (1 + 0.18 * Math.sin(Math.PI * a)) * (1 + 0.7 * pu);
         const vi = l.vert[i];
         const nx = nrm[3 * vi], ny = nrm[3 * vi + 1], nz = nrm[3 * vi + 2];
         // tangent along the grid's x direction, made perpendicular to the normal
@@ -165,7 +188,7 @@ export class SlimeAddins {
         const bx = ny * tz - nz * ty, by = nz * tx - nx * tz, bz = nx * ty - ny * tx; // n × t
         const sx = tx * ca + bx * sa, sy = ty * ca + by * sa, sz = tz * ca + bz * sa;
         const qx = ny * sz - nz * sy, qy = nz * sx - nx * sz, qz = nx * sy - ny * sx; // n × s
-        const lift = l.lift * sc;
+        const lift = l.lift * sc + pu * 0.05;
         const drop = (1 - e) * (1 - e) * 0.9;
         const px = pos[3 * vi] + nx * lift;
         const py = pos[3 * vi + 1] + ny * lift + drop;

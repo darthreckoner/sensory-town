@@ -18,6 +18,17 @@ export interface GameEvents {
   townExported: {};
   townImported: {};
   reset: { pos?: V3 };
+  /** v2: a charm was collected in town / a bonus reward unlocked. */
+  charmCollected: { pos: V3; count: number };
+  rewardUnlocked: { id: string; icon: string; label: string };
+  /** v2: car stunts (ramps / airtime). */
+  carJump: { pos: V3; strength: number };
+  carLand: { pos: V3; strength: number };
+  /** v2: boost fired (⚡ / Shift) and a tyre skid started (drift / handbrake turn). */
+  carBoost: { pos: V3 };
+  carSkid: { pos: V3; strength: number };
+  /** v2: on-foot footfall in town (run = jogging). */
+  footstep: { pos: V3; run: boolean };
   /** Picked an option in a station (shape, add-in, etc.). */
   optionPicked: { pos?: V3 };
 
@@ -25,6 +36,8 @@ export interface GameEvents {
   outfitChanged: { slot: OutfitSlot; pos?: V3; object?: THREE.Object3D };
   colorPicked: { color: string };
   characterSpin: { speed: number };
+  /** camera-flash photo moment in the Style studio */
+  photoFlash: { pos?: V3 };
 
   // ── Building ──
   piecePlaced: { pos: V3; type: string; object?: THREE.Object3D };
@@ -45,12 +58,23 @@ export interface GameEvents {
   squishRecover: { pos: V3 };
 
   // ── Slime ──
-  slimeGrab: { pos: V3 };
-  slimeStretch: { pos: V3; amount: number; speed: number };
-  slimeRelease: { pos: V3; amount: number };
-  slimePoke: { pos: V3 };
-  slimeFold: { pos: V3 };
+  // `kind` = slime type id ('glossy' | 'butter' | 'clear' | 'crunchy' | 'cloud' | 'holo' | 'galaxy') so sounds can vary per type.
+  slimeGrab: { pos: V3; kind?: string };
+  /** One wet click per stretch step. `big` = an occasional larger "air" pop. amount: 0..1 strand pulled out to the rubber band. */
+  slimeStretch: { pos: V3; amount: number; speed: number; kind?: string; big?: boolean };
+  slimeRelease: { pos: V3; amount: number; kind?: string };
+  slimePoke: { pos: V3; kind?: string };
+  slimeFold: { pos: V3; kind?: string };
   slimeAddin: { kind: string; pos?: V3 };
+  /** Crunchy slime: beads popping under a press / fold / drag. */
+  slimeCrunch: { pos: V3; strength: number };
+  /** A strand hit its limit and snapped back. */
+  slimeSnap: { pos: V3; amount: number; color: string };
+  /** An air bubble formed in a fold / popped (by a touch or by itself). */
+  slimeBubble: { pos: V3; size: number };
+  slimeBubblePop: { pos: V3; size: number; color: string };
+  /** Picked a slime type. */
+  slimeType: { kind: string; pos?: V3 };
 
   // ── Wax ──
   waxPourStart: { pos: V3 };

@@ -6,8 +6,13 @@ import type { ShapeId } from '../../core/model';
 import { tuning } from '../../tuning';
 import { makeShapeGeometry } from '../../art/shapes';
 
+/** Wax finishes: classic is base; the rest are charm rewards (see core/unlocks.ts). */
+export type WaxFinish = 'classic' | 'glitter' | 'chrome' | 'glow';
+export const FINISH_ID: Record<WaxFinish, number> = { classic: 0, glitter: 1, chrome: 2, glow: 3 };
+
 export interface Layer {
   color: string;
+  finish: WaxFinish;
   /** per-vertex coverage 0..1 (≥0.5 = covered) */
   cov: Float32Array;
   /** per-vertex surface radius offset (unit space) for this layer */
@@ -99,7 +104,7 @@ export class Coating {
     return n;
   }
 
-  beginLayer(color: string, kind: 'dip' | 'pour'): Layer {
+  beginLayer(color: string, kind: 'dip' | 'pour', finish: WaxFinish = 'classic'): Layer {
     const n = this.count;
     const cov = new Float32Array(n);
     const offset = new Float32Array(n);
@@ -121,13 +126,13 @@ export class Coating {
     geo.setAttribute('cov', covAttr);
     geo.setIndex(this.base.index);
     geo.computeVertexNormals();
-    const { mat, uniforms } = layerMaterial(color);
+    const { mat, uniforms } = layerMaterial(color, finish);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.renderOrder = idx + 1;
     this.group.add(mesh);
-    const layer: Layer = { color, cov, offset, mesh, mat, uniforms, hard: 0, final: false, kind, amount: 0, drip: 0, seed: Math.random() * 100 };
+    const layer: Layer = { color, finish, cov, offset, mesh, mat, uniforms, hard: 0, final: false, kind, amount: 0, drip: 0, seed: Math.random() * 100 };
     this.layers.push(layer);
     return layer;
   }
@@ -204,17 +209,38 @@ export class Coating {
   }
 }
 
-/** Wax layer material: coverage cut-out with a thick-looking rim; wet → matte. */
-export function layerMaterial(color: string): { mat: THREE.MeshPhysicalMaterial; uniforms: { uHard: { value: number } } } {
+/** Shared GLSL for wax finishes (used by layers and by the cracked shell). */
+export const FINISH_GLSL = `
+float waxHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+// sparkly flakes that twinkle as the view changes
+float waxGlitter(vec3 p, vec3 n, vec3 v) {
+  vec3 c = floor(p * 46.0);
+  float h = waxHash(c);
+  if (h < 0.82) return 0.0;
+  vec3 fn = normalize(vec3(waxHash(c + 1.3), waxHash(c + 2.7), waxHash(c + 4.1)) * 2.0 - 1.0);
+  float tw = pow(max(0.0, dot(reflect(-v, normalize(n + fn * 0.8)), vec3(0.0, 0.6, 0.8))), 28.0);
+  vec3 f = fract(p * 46.0) - 0.5;
+  return tw * (1.0 - smoothstep(0.18, 0.32, length(f))) * 3.0;
+}`;
+
+/** Wax layer material: coverage cut-out with a thick-looking rim; wet → matte; finish-aware. */
+export function layerMaterial(color: string, finish: WaxFinish = 'classic'): { mat: THREE.MeshPhysicalMaterial; uniforms: { uHard: { value: number } } } {
   const uniforms = { uHard: { value: 0 } };
-  const mat = new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0.3, sheenColor: new THREE.Color('#ffffff') });
+  const chrome = finish === 'chrome';
+  const mat = new THREE.MeshPhysicalMaterial({
+    color, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0.3, sheenColor: new THREE.Color('#ffffff'),
+    metalness: chrome ? 1 : 0,
+    emissive: finish === 'glow' ? new THREE.Color(color) : new THREE.Color('#000000'),
+    emissiveIntensity: finish === 'glow' ? 0.9 : 0,
+  });
+  const fid = FINISH_ID[finish];
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uHard = uniforms.uHard;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float cov;\nvarying float vCov;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCov = cov;');
+      .replace('#include <common>', '#include <common>\nattribute float cov;\nvarying float vCov;\nvarying vec3 vObj;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCov = cov;\nvObj = position;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vCov;\nuniform float uHard;')
+      .replace('#include <common>', '#include <common>\nvarying float vCov;\nvarying vec3 vObj;\nuniform float uHard;\n' + FINISH_GLSL)
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
@@ -222,18 +248,23 @@ if (vCov < 0.5) discard;
 // thick rim near the coverage edge, a bit darker (reads as wax thickness)
 float rim = 1.0 - smoothstep(0.5, 0.72, vCov);
 diffuseColor.rgb *= 1.0 - 0.28 * rim;
-// cooled wax goes paler and more opaque-looking
-diffuseColor.rgb = mix(diffuseColor.rgb * 0.94, mix(diffuseColor.rgb, vec3(1.0), 0.12), uHard);`,
+// cooled wax goes paler and more opaque-looking (not chrome)
+${fid === 2 ? '' : 'diffuseColor.rgb = mix(diffuseColor.rgb * 0.94, mix(diffuseColor.rgb, vec3(1.0), 0.12), uHard);'}`,
       )
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(0.08, 0.64, uHard);')
+      .replace('#include <roughnessmap_fragment>', `float roughnessFactor = ${fid === 2 ? 'mix(0.06, 0.16, uHard)' : 'mix(0.08, 0.64, uHard)'};`)
       .replace(
         '#include <lights_physical_fragment>',
         `#include <lights_physical_fragment>
-material.clearcoat = mix(1.0, 0.1, uHard);
+material.clearcoat = ${fid === 2 ? '1.0' : 'mix(1.0, 0.1, uHard)'};
 material.clearcoatRoughness = mix(0.03, 0.45, uHard);
 material.sheenColor *= (1.0 - uHard) * 0.6;`,
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+${fid === 1 ? 'totalEmissiveRadiance += vec3(1.0, 0.97, 0.9) * waxGlitter(vObj, normal, normalize(vViewPosition));' : ''}`,
       );
   };
-  mat.customProgramCacheKey = () => 'wax-layer';
+  mat.customProgramCacheKey = () => `wax-layer-${fid}`;
   return { mat, uniforms };
 }

@@ -23,6 +23,8 @@ export class SquishyBody {
   proxy!: THREE.Mesh;
   shape: ShapeId;
   color: string;
+  /** kawaii face painted on (opt-in in v2) */
+  face = false;
   private geo!: THREE.BufferGeometry;
   private rest!: Float32Array;
   private restN!: Float32Array;
@@ -69,6 +71,14 @@ export class SquishyBody {
     this.build();
   }
 
+  setFace(on: boolean): void {
+    if (on === this.face) return;
+    this.face = on;
+    const old = this.mesh.material as THREE.Material;
+    this.mesh.material = faceMaterial(this.color, this.shape, { face: on });
+    old.dispose();
+  }
+
   setColor(color: string): void {
     this.color = color;
     const m = this.mesh.material as THREE.MeshPhysicalMaterial;
@@ -93,7 +103,7 @@ export class SquishyBody {
     const dentAttr = new THREE.BufferAttribute(this.dent, 1);
     dentAttr.setUsage(THREE.DynamicDrawUsage);
     this.geo.setAttribute('aDent', dentAttr);
-    this.mesh = new THREE.Mesh(this.geo, faceMaterial(this.color, this.shape));
+    this.mesh = new THREE.Mesh(this.geo, faceMaterial(this.color, this.shape, { face: this.face }));
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
     this.proxy = new THREE.Mesh(base, new THREE.MeshBasicMaterial({ visible: false }));

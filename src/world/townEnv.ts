@@ -1,67 +1,107 @@
-// Static town environment: ground, roads, workshop, build yard, landmarks,
-// scenery, hills and clouds. Shared by the Drive scene and the Build scene,
-// so it is self-contained and cheap (merged meshes + InstancedMeshes).
-//
-// The pieces live in src/drive/*; this file only assembles them.
+// Static town environment (v2): terrain, sky, roads, every district, scenery.
+// Shared by the Drive scene and the Build scene, so it is self-contained.
+// The pieces live in src/drive/*; this file only assembles them and does the
+// distance culling (districts, terrain chunks and vegetation chunks hide when
+// the viewer is far away).
 import * as THREE from 'three';
-import { WORKSHOP, BUILD_YARD } from './townLayout';
+import { RESIDENTIAL } from './townLayout';
+import { tuning } from '../tuning';
 import { buildTerrain } from '../drive/terrain';
 import { buildSky } from '../drive/sky';
-import { buildWorkshop } from '../drive/workshop';
-import { buildYard } from '../drive/buildYard';
-import { buildLandmarks } from '../drive/landmarks';
-import { buildScenery, type Keepout } from '../drive/scenery';
-import { makePad } from '../drive/pads';
-import type { Piece } from '../drive/types';
+import { buildDowntown } from '../drive/downtown';
+import { buildHomeHills } from '../drive/homehills';
+import { buildBeach } from '../drive/beach';
+import { buildPark } from '../drive/park';
+import { buildSkate } from '../drive/skate';
+import { buildLookout } from '../drive/lookout';
+import { buildScenery } from '../drive/scenery';
+import type { DoorDef, Piece } from '../drive/types';
 
 export type Collider =
-  | { kind: 'circle'; x: number; z: number; r: number }
-  | { kind: 'box'; x: number; z: number; hw: number; hd: number };
+  | { kind: 'circle'; x: number; z: number; r: number; h?: number; only?: 'car' | 'foot' }
+  | { kind: 'box'; x: number; z: number; hw: number; hd: number; h?: number; only?: 'car' | 'foot' };
 
 export interface TownEnv {
   group: THREE.Group;
   colliders: Collider[];
   update(dt: number, t: number): void;
+  /** Tell the environment where the camera is (sky follows, far districts hide). Optional for callers. */
+  setViewer?(x: number, y: number, z: number): void;
+  /** Walk-in / drive-in doors contributed by the districts. */
+  doors?: DoorDef[];
+  /** Rough counts for the debug overlay. */
+  stats?: () => Record<string, number>;
 }
 
 export function buildTownEnvironment(): TownEnv {
   const group = new THREE.Group();
   group.name = 'townEnv';
   const colliders: Collider[] = [];
-  const pieces: Piece[] = [buildWorkshop(), buildYard(), ...buildLandmarks()];
+  const doors: DoorDef[] = [];
+  const pieces: Piece[] = [];
 
-  group.add(buildTerrain());
+  const terrain = buildTerrain();
+  group.add(terrain.group);
   const sky = buildSky();
   group.add(sky.group);
 
-  const pads = [
-    makePad(WORKSHOP.pad.x, WORKSHOP.pad.z, '#ff9fcd', '🧪'),
-    makePad(BUILD_YARD.pad.x, BUILD_YARD.pad.z, '#ffd75e', '🔨'),
-  ];
-  for (const p of pads) group.add(p.group);
-
-  for (const p of pieces) {
+  const add = (p: Piece): void => {
+    pieces.push(p);
     group.add(p.group);
     colliders.push(...p.colliders);
-  }
+    if (p.doors) doors.push(...p.doors);
+  };
+  const dt = buildDowntown();
+  const hh = buildHomeHills();
+  const bc = buildBeach();
+  const pk = buildPark();
+  add(dt);
+  add(hh);
+  add(bc);
+  add(pk);
+  add(buildSkate());
+  add(buildLookout());
 
-  // Scenery goes last so it can steer clear of everything above.
-  const keepouts: Keepout[] = [
-    ...colliders,
-    { kind: 'circle', x: WORKSHOP.pad.x, z: WORKSHOP.pad.z, r: 4 },
-    { kind: 'circle', x: BUILD_YARD.pad.x, z: BUILD_YARD.pad.z, r: 4 },
-  ];
-  const scenery = buildScenery(keepouts);
-  group.add(scenery.group);
-  colliders.push(...scenery.colliders);
+  // scenery last, so it can keep clear of everything above
+  const sc = buildScenery({
+    keepouts: colliders.slice(),
+    sites: [...dt.trees, ...hh.trees, ...pk.trees],
+    palms: bc.palms,
+    rocks: bc.rocks,
+  });
+  group.add(sc.build.group);
+  colliders.push(...sc.veg.colliders);
+
+  let vx = RESIDENTIAL.center.x, vz = RESIDENTIAL.center.z;
+  const apply = (): void => {
+    for (const p of pieces) {
+      if (!p.cull) continue;
+      p.group.visible = Math.hypot(vx - p.cull.x, vz - p.cull.z) < p.cull.r;
+    }
+    for (const c of terrain.chunks) c.visible = Math.hypot(vx - c.userData.cx, vz - c.userData.cz) < tuning.drive.cullTerrain;
+    for (const c of sc.build.chunks) {
+      const vis = Math.hypot(vx - c.cx, vz - c.cz) < tuning.drive.cullVegetation;
+      for (const mesh of c.meshes) mesh.visible = vis;
+    }
+  };
+  apply();
 
   return {
     group,
     colliders,
-    update(dt: number, t: number) {
+    doors,
+    setViewer(x, y, z) {
+      sky.follow(x, y, z);
+      if (Math.abs(x - vx) + Math.abs(z - vz) > 3) {
+        vx = x;
+        vz = z;
+        apply();
+      }
+    },
+    update(dt, t) {
       sky.update(dt);
-      for (const p of pads) p.update(t);
-      for (const p of pieces) p.update?.(dt, t);
+      terrain.water.update(t);
+      for (const p of pieces) if (p.group.visible) p.update?.(dt, t);
     },
   };
 }

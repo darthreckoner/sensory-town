@@ -1,5 +1,5 @@
 // IndexedDB persistence with a versioned schema + migration hook.
-import { SAVE_VERSION, type SaveData, emptySave, defaultSettings } from './model';
+import { SAVE_VERSION, type SaveData, emptySave, defaultSettings, STARTER_OUTFITS, V1_STARTER_OUTFITS, V1_STARTER_CARS } from './model';
 import { tuning } from '../tuning';
 
 const DB_NAME = 'sensory-town';
@@ -77,9 +77,22 @@ export function migrate(raw: any): SaveData {
   data.town.houses ??= [];
   data.town.decorations ??= [];
   data.settings = { ...defaultSettings(), ...(data.settings ?? {}) };
-  for (const p of data.profiles) {
+  const wasV1 = (data.version ?? 1) < 2;
+  data.profiles.forEach((p, i) => {
     p.creations ??= [];
-  }
+    // v1 → v2: charms + car style
+    p.charms ??= [];
+    p.carStyle ??= {};
+    if (wasV1) {
+      // a kid who never touched their v1 starter look gets the v2 (tween) starter look + car
+      const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+      const k = V1_STARTER_OUTFITS.findIndex((o) => same(o, p.outfit));
+      if (k >= 0) p.outfit = structuredClone(STARTER_OUTFITS[k % STARTER_OUTFITS.length]);
+      const c = V1_STARTER_CARS.indexOf(p.carColor);
+      if (c >= 0) p.carColor = ['#e23b3b', '#3d6bff', '#16151c', '#f6f6f4', '#7c4dff', '#ffc93c'][c];
+    }
+    void i;
+  });
   if (data.version > SAVE_VERSION) {
     console.warn('[save] save is from a newer build; loading as-is');
   }

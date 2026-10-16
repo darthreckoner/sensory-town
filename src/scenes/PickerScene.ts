@@ -1,12 +1,13 @@
-// Launch screen: pick who's playing. Each kid's character poses on a pedestal.
+// Launch screen: pick who's playing. A dark lineup stage — each player stands
+// on a glowing floor ring under a spotlight.
 import * as THREE from 'three';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus } from '../core/events';
 import { tuning } from '../tuning';
 import { Character } from '../art/character';
-import { addLights, gradientTexture } from '../art/env';
-import { toyMat, mesh } from '../art/materials';
+import { studioLights } from '../art/env';
+import { toyMat, mesh, roundedBox } from '../art/materials';
 import { el, button, sheet, bindTap } from '../ui/ui';
 import type { Profile } from '../core/model';
 
@@ -27,18 +28,28 @@ export class PickerScene extends GameScene {
   private picking = false;
   private tagLayer!: HTMLDivElement;
 
+  private ringMats: THREE.MeshStandardMaterial[] = [];
+
   init(): void {
-    this.scene.background = gradientTexture('#ffd6e8', '#fff3e0', '#ffe4f0');
-    addLights(this.scene, { shadowSize: 8, sunPos: new THREE.Vector3(3, 10, 8) });
-    const floor = mesh(new THREE.CircleGeometry(30, 64), toyMat('#ffe9f2', 'matte'), false, true);
+    studioLights(this.scene, { shadowSize: 8 });
+    // glossy dark floor + back wall with neon strips
+    const floor = mesh(new THREE.CircleGeometry(40, 64), new THREE.MeshPhysicalMaterial({ color: '#16141f', roughness: 0.22, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.15 }), false, true);
     floor.rotation.x = -Math.PI / 2;
-    this.scene.add(floor, this.stage);
-    // floating candy balls for depth
-    const cols = ['#ff8fb1', '#7fd8ff', '#ffd166', '#c9a7ff', '#5fd3a5'];
-    for (let i = 0; i < 14; i++) {
-      const b = mesh(new THREE.SphereGeometry(0.3 + Math.random() * 0.5, 24, 16), toyMat(cols[i % cols.length]), false, false);
-      const a = (i / 14) * Math.PI * 2;
-      b.position.set(Math.cos(a) * (9 + Math.random() * 4), 1 + Math.random() * 5, -6 - Math.random() * 6);
+    const wall = mesh(new THREE.PlaneGeometry(60, 20), toyMat('#1b1826', 'matte'), false, true);
+    wall.position.set(0, 9, -9);
+    this.scene.add(floor, wall, this.stage);
+    const neon = (color: string, y: number, w: number) => {
+      const m = mesh(roundedBox(w, 0.12, 0.12, 0.05), toyMat(color, 'emissive'), false, false);
+      m.position.set(0, y, -8.9);
+      this.scene.add(m);
+    };
+    neon('#ff2e88', 2.2, 22);
+    neon('#7c4dff', 6.2, 30);
+    // soft bokeh lights far back
+    const cols = ['#ff2e88', '#00d4ff', '#7c4dff', '#ffc93c'];
+    for (let i = 0; i < 18; i++) {
+      const b = mesh(new THREE.SphereGeometry(0.08 + Math.random() * 0.12, 12, 8), toyMat(cols[i % cols.length], 'emissive'), false, false);
+      b.position.set((Math.random() - 0.5) * 26, 0.8 + Math.random() * 7, -8.5 + Math.random() * 1.5);
       b.userData.bob = Math.random() * 6;
       this.scene.add(b);
     }
@@ -49,14 +60,15 @@ export class PickerScene extends GameScene {
   enter(): void {
     this.ui.innerHTML = '';
     const titleWrap = el('div', 'tc', this.ui);
-    const title = el('div', 'title bob', titleWrap, 'Sensory Town');
-    title.style.fontSize = '52px';
+    const title = el('div', 'title', titleWrap, 'SENSORY <span class="hl">TOWN</span>');
+    title.style.fontSize = '54px';
     title.style.whiteSpace = 'nowrap';
-    const sub = el('div', 'label', this.ui, 'Who is playing?');
-    Object.assign(sub.style, { position: 'absolute', top: 'calc(86px + var(--safe-t))', left: '50%', transform: 'translateX(-50%)', fontSize: '24px' });
+    title.style.letterSpacing = '2px';
+    const sub = el('div', 'label', this.ui, 'Choose your player');
+    Object.assign(sub.style, { position: 'absolute', top: 'calc(92px + var(--safe-t))', left: '50%', transform: 'translateX(-50%)', fontSize: '16px' });
     this.tagLayer = el('div', '', this.ui) as HTMLDivElement;
     if (store.data.profiles.length < tuning.app.maxProfiles) {
-      button(this.ui, { icon: '➕', label: 'New Player', cls: 'br mint big' }, () => this.addPlayer());
+      button(this.ui, { icon: '＋', label: 'New player', cls: 'br big' }, () => this.addPlayer());
     }
     this.buildSlots();
     this.picking = false;
@@ -82,20 +94,30 @@ export class PickerScene extends GameScene {
     ps.forEach((p, i) => {
       const root = new THREE.Group();
       root.position.x = (i - (ps.length - 1) / 2) * gap;
-      const pedColor = ['#ff8fb1', '#7fd8ff', '#ffd166', '#c9a7ff', '#5fd3a5', '#ffb38a'][i % 6];
-      const pedestal = mesh(new THREE.CylinderGeometry(1.05, 1.15, 0.35, 48), toyMat(pedColor));
-      pedestal.position.y = 0.175;
-      root.add(pedestal);
+      const ringColor = ['#ff2e88', '#00d4ff', '#b6ff3b', '#7c4dff', '#ffc93c', '#ff8a3d'][i % 6];
+      // glowing floor ring (the "spotlight" spot) + a dark plinth
+      const plinth = mesh(new THREE.CylinderGeometry(1.0, 1.05, 0.08, 48), new THREE.MeshPhysicalMaterial({ color: '#221f2e', roughness: 0.3, clearcoat: 1 }));
+      plinth.position.y = 0.04;
+      const ringMat = new THREE.MeshStandardMaterial({ color: ringColor, emissive: ringColor, emissiveIntensity: 1.4, toneMapped: false });
+      this.ringMats.push(ringMat);
+      const ring = mesh(new THREE.TorusGeometry(1.03, 0.035, 8, 64), ringMat, false, false);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.085;
+      const pedestal = plinth;
+      root.add(plinth, ring);
+      const spot = new THREE.SpotLight('#ffffff', 30, 12, 0.42, 0.6, 1.5);
+      spot.position.set(0, 7, 2.5);
+      spot.target = plinth;
+      root.add(spot);
       const char = new Character(p.outfit);
-      char.group.position.y = 0.35;
-      char.group.scale.setScalar(1.3);
+      char.group.position.y = 0.08;
       char.group.rotation.y = (i - (ps.length - 1) / 2) * -0.15;
       root.add(char.group);
       this.stage.add(root);
 
       const tag = el('div', 'interactive', this.tagLayer) as HTMLDivElement;
       Object.assign(tag.style, { position: 'absolute', transform: 'translate(-50%, 0)', display: 'flex', gap: '8px', alignItems: 'center' });
-      const nameBtn = button(tag, { label: p.name, cls: 'big', tap: 'big' }, () => this.pick(i));
+      const nameBtn = button(tag, { label: p.name, cls: 'big primary', tap: 'big' }, () => this.pick(i));
       nameBtn.style.minWidth = '150px';
       button(tag, { icon: '✏️', cls: 'round ghost' }, () => this.rename(p));
       this.slots.push({ profile: p, root, char, tag, pedestal });
@@ -135,7 +157,7 @@ export class PickerScene extends GameScene {
 
   private rename(p: Profile): void {
     sheet((body, close) => {
-      el('h2', '', body, '✏️ Your name');
+      el('h2', '', body, 'Your name');
       const input = el('input', 'textin', body) as HTMLInputElement;
       input.value = p.name;
       input.maxLength = 14;
@@ -154,14 +176,14 @@ export class PickerScene extends GameScene {
 
   private addPlayer(): void {
     sheet((body, close) => {
-      el('h2', '', body, '🌟 New player');
+      el('h2', '', body, 'New player');
       const input = el('input', 'textin', body) as HTMLInputElement;
       input.placeholder = 'Name';
       input.maxLength = 14;
       const row = el('div', 'row', body);
       row.style.marginTop = '16px';
       row.style.justifyContent = 'flex-end';
-      button(row, { label: 'Add', cls: 'mint big' }, () => {
+      button(row, { label: 'Add', cls: 'pink big' }, () => {
         const v = input.value.trim().slice(0, 14) || `Player ${store.data.profiles.length + 1}`;
         const np = store.addProfile(v);
         close();

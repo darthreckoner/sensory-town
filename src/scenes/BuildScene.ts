@@ -1,37 +1,51 @@
 // Build scene: one orbit-camera scene with two modes.
-//   TOWN  — the whole village: claim a plot (＋), visit houses, place trees/fences/lamps...
-//   HOUSE — edit a plot you own: drag pieces from the palette, snap, rotate, recolor, undo.
+//   TOWN  - the village: claim a lot (BUILD HERE), visit houses, place trees / planters / benches...
+//   HOUSE - edit a lot you own: two storeys, 60+ pieces in 7 categories, finishes,
+//           drag from the palette, snap, move, rotate, recolor, duplicate, undo.
 // All changes go through store.update (autosave). Sound + squash-and-stretch come
 // from the juice layer via events (piecePlaced, pieceDeleted, ...).
 import * as THREE from 'three';
+import * as LAYOUT from '../world/townLayout';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type V3 } from '../core/events';
 import { tweens, ease, popScale } from '../core/tween';
 import { uid, type Decoration, type DecoType, type Hex, type House, type PieceType, type PlacedPiece } from '../core/model';
 import { tuning } from '../tuning';
-import { addLights, skyBackground, type LightRig } from '../art/env';
+import { goldenHour, sunDirection, type LightRig } from '../art/env';
 import { buildTownEnvironment, type TownEnv } from '../world/townEnv';
 import { PLOTS, isReserved } from '../world/townLayout';
 import {
-  buildTownContent, buildDecorationMesh, refillDecorationObject, buildPieceObject, PIECE_CATALOG, DECO_CATALOG, pieceDef, decoDef,
+  buildTownContent, buildDecorationMesh, refillDecorationObject, buildPieceObject, buildPiecesMesh, PIECE_CATALOG, DECO_CATALOG, CATS, pieceDef, decoDef,
+  tickBuildMaterials,
 } from '../world/houseMesh';
 import { Baker, Brush, bakedToGroup, ghostify, disposeBaked } from '../build/bake';
-import { dims, isRoofType, isWallType, makeCtx, pieceRotY } from '../build/pieces';
-import { kindOf, snapCell, canPlace, autoRotFurn, autoRotGable, faceOutward, wallAt, type Cand, type Rot } from '../build/rules';
+import { dims } from '../build/kit';
+import { pieceBaseY, pieceRotY } from '../build/pieces';
+import {
+  canPlace, edgeKey, isBodyWall, isRoofType, levelOf, makeCtx, snapPiece, type Cand, type HouseCtx, type Level, type Rot,
+} from '../build/rules';
+import type { PieceCat, PieceDef } from '../build/catalog';
+import { finishesFor } from '../build/finishes';
 import { OrbitCam } from '../build/orbit';
 import { EditView } from '../build/editView';
 import { paletteTile, type PalItem, type DragPhase } from '../build/palette';
-import { el, button, tabs, swatches, confirmDialog, toast, nameTag } from '../ui/ui';
+import { buildStylePicker, type StylePicker } from '../build/stylePicker';
+import { TEMPLATES, orientLayout, turnsForFront, type Template } from '../build/templates';
+import { templateThumb } from '../build/thumbs';
+import { isUnlocked, rewardFor, lockedToast } from '../core/unlocks';
+import { el, button, sheet, confirmDialog, toast, nameTag, bindTap } from '../ui/ui';
 
 type Mode = 'town' | 'house';
-type TabId = 'build' | 'furn' | 'mine';
+type CatId = PieceCat | 'mine';
 
 /** What the player is currently placing. */
 type Tool =
-  | { kind: 'piece'; id: string; type: PieceType; color: Hex; creationId?: string; paint: boolean }
+  | { kind: 'piece'; id: string; type: PieceType; color: Hex; finish?: string; creationId?: string; rot: Rot; paint: boolean }
   | { kind: 'deco'; id: string; type: DecoType; color: Hex; paint: boolean }
-  | { kind: 'erase'; id: string };
+  | { kind: 'erase'; id: string }
+  | { kind: 'room'; id: string; style: 'floor' | 'wall' }
+  | { kind: 'move'; id: string; piece: PlacedPiece; from: { x: number; z: number; rot: Rot; level: Level }; viaDrag: boolean };
 
 /** Where the current tool would land, and whether that is allowed. */
 interface Target {
@@ -41,18 +55,22 @@ interface Target {
   cand?: Cand;                       // house mode
   replace?: PlacedPiece;             // a wall this window/door would swap in for
   color?: Hex;                       // colour the piece will get (a replacement keeps the wall's colour)
+  finish?: string;
   deco?: { x: number; z: number; rot: number }; // town mode
 }
 
 interface Ptr { x: number; y: number; sx: number; sy: number; t0: number; button: number; type: string }
 type Gesture = 'none' | 'tap' | 'orbit' | 'pan' | 'multi' | 'paint';
 
-/** Wall, window and door share one remembered colour so they match. */
-const colorKey = (t: PieceType): string => (t === 'wall' || t === 'wallWindow' || t === 'wallDoor' ? 'wall' : t);
+/** Wall-family pieces share one remembered style so windows and doors match the walls. */
+const familyOf = (t: PieceType): string => (isBodyWall(t) ? 'wall' : t === 'floor' || t === 'stairs' ? 'floor' : t);
 
 const KIND_ICON: Record<string, string> = { squishy: '🧸', slime: '🫧', wax: '🕯️' };
-const STARTER_WALLS = ['#ffc4d6', '#bfe3ff', '#ffe2a8', '#c6f2c9', '#e0d0ff'];
-const STARTER_ROOFS = ['#ff5d8f', '#5aa9ff', '#ff9f6e', '#3fbf8a', '#8f7cff'];
+const LAYOUT_ANY = LAYOUT as unknown as {
+  RESIDENTIAL?: { center: { x: number; z: number }; radius: number };
+  BOUNDS?: number;
+  plotFront?: (p: (typeof PLOTS)[number]) => { nx: number; nz: number };
+};
 
 export class BuildScene extends GameScene {
   readonly name = 'build' as const;
@@ -61,18 +79,19 @@ export class BuildScene extends GameScene {
   private env!: TownEnv;
   private rig!: LightRig;
   private orbit!: OrbitCam;
-  private sunOffset = new THREE.Vector3(14, 30, 18);
+  private sunOffset = new THREE.Vector3(60, 40, 60);
   private staticGroup = new THREE.Group();   // every house except the one being edited (merged)
   private decoGroup = new THREE.Group();
-  private markerGroup = new THREE.Group();   // dashed outlines + floating ＋ on empty plots
+  private markerGroup = new THREE.Group();   // dashed outlines + pins on empty lots
   private pickGroup = new THREE.Group();     // invisible tap targets
   private plotPicks: THREE.Mesh[] = [];
   private decoPicks = new Map<string, THREE.Mesh>();
   private decoObjs = new Map<string, THREE.Object3D>();
-  private plusSigns: THREE.Group[] = [];
+  private pins: THREE.Group[] = [];
   private selMarker = new THREE.Group();
-  private selRing!: THREE.Mesh;
+  private selFrame: THREE.Mesh[] = [];       // 4 bars forming a rectangle outline
   private selBar!: THREE.Mesh;
+  private selMat!: THREE.MeshBasicMaterial;
   private ghostHolder = new THREE.Group();
   private ghostObj: THREE.Object3D | null = null;
   private ghostKey = '';
@@ -86,26 +105,34 @@ export class BuildScene extends GameScene {
   private plotIdx = -1;
   private house: House | null = null;
   private edit: EditView | null = null;
+  private level: Level = 0;
+  private cat: CatId = 'build';
   private tool: Tool | null = null;
   private dragTool: Tool | null = null;
   private dragTarget: Target | null = null;
   private target: Target | null = null;
+  private moveCtx: HouseCtx | null = null;
+  private pendingMove: PlacedPiece | null = null;
   private lastTargetKey = '';
   private sel: { kind: 'piece' | 'deco'; id: string } | null = null;
   private undoStack: (() => void)[] = [];
   private houseVer = 0;
-  private tab: TabId = 'build';
   private roofsShown = true;
   private wallsLow = false;
-  private lastColor = new Map<string, Hex>();
+  private lastStyle = new Map<string, { color: Hex; finish?: string }>();
   private lastRecolor: { id: string; t: number } | null = null;
   private strokeIds: string[] = [];
+  private strokeOld: PlacedPiece[] = [];
   private eraseStroke: PlacedPiece[] = [];
   private eraseDecoStroke: Decoration[] = [];
-  private strokeOld: PlacedPiece[] = [];     // walls swapped out during the current stroke
   private paintFirst: Target | null = null;
   private paintTimer = 0;
   private fenceRot = 0;
+  private areaStart: { x: number; z: number } | null = null;
+  private areaEnd: { x: number; z: number } | null = null;
+  private areaFakes: PlacedPiece[] = [];
+  private toolRot: Rot = 0;
+  private sheetOpen = false;
 
   // ── input ──
   private ray = new THREE.Raycaster();
@@ -118,16 +145,19 @@ export class BuildScene extends GameScene {
   // ── DOM ──
   private hud!: HTMLDivElement;
   private tagLayer!: HTMLDivElement;
-  private tags: { el: HTMLDivElement; pos: THREE.Vector3 }[] = [];
+  private tags: { el: HTMLDivElement; pos: THREE.Vector3; kind: 'owner' | 'build' }[] = [];
   private bubble: HTMLDivElement | null = null;
   private bubbleAnchor: (() => THREE.Vector3 | null) | null = null;
   private palItems: HTMLDivElement | null = null;
-  private setTabUi: ((id: string) => void) | null = null;
-  private chip: HTMLDivElement | null = null;
+  private catRow: HTMLDivElement | null = null;
+  private brushPanel: HTMLDivElement | null = null;
+  private brushStyle: StylePicker | null = null;
+  private hint: HTMLDivElement | null = null;
   private undoBtn: HTMLButtonElement | null = null;
   private roofBtn: HTMLButtonElement | null = null;
   private wallBtn: HTMLButtonElement | null = null;
-  private starterBtn: HTMLButtonElement | null = null;
+  private levelBtns: HTMLButtonElement[] = [];
+  private tplBtn: HTMLButtonElement | null = null;
   private tmpV = new THREE.Vector3();
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -136,23 +166,25 @@ export class BuildScene extends GameScene {
   init(): void {
     this.pixelRatioCap = tuning.app.townPixelRatio;
     this.fxScale = 1.5;
-    skyBackground(this.scene);
-    this.rig = addLights(this.scene, { shadowSize: 38, sunPos: this.sunOffset.clone() });
-    this.rig.sun.shadow.mapSize.set(2048, 2048);
+    this.rig = goldenHour(this.scene, { shadowSize: tuning.build.shadowSizeTown, distance: 1 });
+    this.sunOffset = sunDirection().multiplyScalar(110);
     this.camera.fov = 40;
     this.camera.near = 0.5;
-    this.camera.far = 400;
+    this.camera.far = 700;
     this.camera.updateProjectionMatrix();
 
     this.env = buildTownEnvironment();
     this.scene.add(this.env.group, this.staticGroup, this.decoGroup, this.markerGroup, this.pickGroup);
 
-    // selection marker (ring for cells, bar for wall edges)
-    const mat = new THREE.MeshBasicMaterial({ color: 0xff5d8f, transparent: true, opacity: 0.9, depthWrite: false });
-    this.selRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 8, 36), mat);
-    this.selRing.rotation.x = Math.PI / 2;
-    this.selBar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.07, 0.44), mat);
-    this.selMarker.add(this.selRing, this.selBar);
+    // selection marker: a rectangle outline for footprints, a bar for wall edges
+    this.selMat = new THREE.MeshBasicMaterial({ color: 0xff2e88, transparent: true, opacity: 0.95, depthWrite: false });
+    for (let i = 0; i < 4; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1, 0.06, 1), this.selMat);
+      this.selFrame.push(m);
+      this.selMarker.add(m);
+    }
+    this.selBar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.08, 1), this.selMat);
+    this.selMarker.add(this.selBar);
     this.selMarker.visible = false;
     this.selMarker.renderOrder = 3;
     this.scene.add(this.selMarker);
@@ -163,7 +195,8 @@ export class BuildScene extends GameScene {
     this.orbit = new OrbitCam(this.camera);
   }
 
-  enter(params?: { plot?: number }): void {
+  /** enter({ plot, claim }): open that plot. `claim` takes an empty lot for the current player first. */
+  enter(params?: { plot?: number; claim?: boolean }): void {
     this.ui.innerHTML = '';
     this.resetState();
     this.tagLayer = el('div', '', this.ui) as HTMLDivElement;
@@ -173,7 +206,7 @@ export class BuildScene extends GameScene {
     this.setLimitsFor('town');
     const tv = this.townView();
     this.orbit.snapTo(tv.target, tv.dist, 0, tuning.build.townPitch);
-    this.setShadowSize(38);
+    this.setShadowSize(tuning.build.shadowSizeTown);
     this.buildTownHud();
 
     const cv = scenes.canvas;
@@ -195,8 +228,12 @@ export class BuildScene extends GameScene {
     const plot = params?.plot;
     if (plot !== undefined && PLOTS[plot]) {
       const h = store.houseOnPlot(plot);
-      if (h && h.ownerId === store.profile.id) this.openHouse(plot, true);
-      else this.orbit.snapTo(new THREE.Vector3(PLOTS[plot].center.x, 0, PLOTS[plot].center.z), 26);
+      if (!h && params?.claim) this.claimPlot(plot, true);
+      else if (h && h.ownerId === store.profile.id) this.openHouse(plot, true);
+      else if (h) {
+        this.orbit.snapTo(new THREE.Vector3(PLOTS[plot].center.x, 0, PLOTS[plot].center.z), 30);
+        this.visitHouse(plot);
+      } else this.orbit.snapTo(new THREE.Vector3(PLOTS[plot].center.x, 0, PLOTS[plot].center.z), 36);
     }
   }
 
@@ -207,9 +244,10 @@ export class BuildScene extends GameScene {
     this.edit?.dispose();
     this.edit = null;
     this.house = null;
+    this.moveCtx = null;
     this.ptrs.clear();
     this.gesture = 'none';
-    tweens.cancel(this.selMarker);
+    this.sheetOpen = false;
   }
 
   private resetState(): void {
@@ -218,25 +256,32 @@ export class BuildScene extends GameScene {
     this.house = null;
     this.edit?.dispose();
     this.edit = null;
+    this.level = 0;
+    this.cat = 'build';
     this.tool = null;
     this.dragTool = null;
     this.dragTarget = null;
     this.target = null;
+    this.moveCtx = null;
+    this.pendingMove = null;
     this.sel = null;
     this.undoStack = [];
-    this.tab = 'build';
     this.roofsShown = true;
     this.wallsLow = false;
     this.strokeIds = [];
+    this.strokeOld = [];
     this.eraseStroke = [];
     this.eraseDecoStroke = [];
     this.paintFirst = null;
+    this.toolRot = 0;
+    this.sheetOpen = false;
     this.ptrs.clear();
     this.gesture = 'none';
     this.selMarker.visible = false;
     this.clearGhost();
     this.bubble = null;
-    this.chip = null;
+    this.brushPanel = null;
+    this.brushStyle = null;
   }
 
   resetStation(): void {
@@ -254,14 +299,11 @@ export class BuildScene extends GameScene {
     return {
       mode: this.mode,
       plot: this.plotIdx,
+      level: this.level,
       pieces: this.house?.pieces.length ?? 0,
       undo: this.undoStack.length,
       tool: this.tool?.id ?? '-',
     };
-  }
-
-  resize(w: number, h: number): void {
-    super.resize(w, h);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -299,8 +341,8 @@ export class BuildScene extends GameScene {
     const o = buildDecorationMesh(d);
     this.decoGroup.add(o);
     this.decoObjs.set(d.id, o);
-    const h = decoDef(d.type)?.height ?? 1.5;
-    const pick = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, h, 8));
+    const h = decoDef(d.type)?.height ?? 2;
+    const pick = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, h, 8));
     pick.visible = false;
     pick.position.set(d.x, h / 2, d.z);
     pick.userData.decoId = d.id;
@@ -333,7 +375,7 @@ export class BuildScene extends GameScene {
     }
     this.plotPicks = [];
     for (const plot of PLOTS) {
-      const h = store.houseOnPlot(plot.index) ? 4.8 : 0.6;
+      const h = store.houseOnPlot(plot.index) ? 9 : 0.8;
       const m = new THREE.Mesh(new THREE.BoxGeometry(plot.size, h, plot.size));
       m.visible = false;
       m.position.set(plot.center.x, h / 2, plot.center.z);
@@ -344,35 +386,38 @@ export class BuildScene extends GameScene {
     }
   }
 
-  /** Dashed outline + a floating ＋ on every plot nobody has claimed. */
+  /** Dashed outline + a bobbing pin on every lot nobody has claimed. */
   private rebuildMarkers(): void {
     disposeBaked(this.markerGroup);
     this.markerGroup.clear();
-    this.plusSigns = [];
+    this.pins = [];
     const dashes = new Baker();
     const db = new Brush(dashes);
     for (const plot of PLOTS) {
       if (store.houseOnPlot(plot.index)) continue;
       const { x: cx, z: cz } = plot.center;
-      const half = plot.size / 2 - 0.2, dash = 0.7, gap = 0.45;
+      const half = plot.size / 2 - 0.25, dash = 0.9, gap = 0.55;
       for (let t = -half + dash / 2; t < half - dash / 2 + 0.01; t += dash + gap) {
-        db.rbox(cx + t, 0.11, cz - half, dash, 0.06, 0.16, '#ff8fb1', 0.03);
-        db.rbox(cx + t, 0.11, cz + half, dash, 0.06, 0.16, '#ff8fb1', 0.03);
-        db.rbox(cx - half, 0.11, cz + t, 0.16, 0.06, dash, '#ff8fb1', 0.03);
-        db.rbox(cx + half, 0.11, cz + t, 0.16, 0.06, dash, '#ff8fb1', 0.03);
+        db.rbox(cx + t, 0.14, cz - half, dash, 0.08, 0.2, '#ff2e88', 0.03, 'glow');
+        db.rbox(cx + t, 0.14, cz + half, dash, 0.08, 0.2, '#ff2e88', 0.03, 'glow');
+        db.rbox(cx - half, 0.14, cz + t, 0.2, 0.08, dash, '#ff2e88', 0.03, 'glow');
+        db.rbox(cx + half, 0.14, cz + t, 0.2, 0.08, dash, '#ff2e88', 0.03, 'glow');
       }
+      // a map-pin style marker: sphere on a cone, with a white house glyph
       const b = new Baker();
       const br = new Brush(b);
-      br.cyl(0, 0, 0, 1.25, 1.25, 0.3, '#ff8fb1', 'gloss', 28, Math.PI / 2);
-      br.rbox(0, 0, 0.2, 1.3, 0.38, 0.14, '#ffffff', 0.06);
-      br.rbox(0, 0, 0.2, 0.38, 1.3, 0.14, '#ffffff', 0.06);
-      const sign = bakedToGroup(b.bake());
-      sign.position.set(cx, 3.2, cz);
-      sign.scale.setScalar(1.25);
-      sign.userData.baseY = 3.2;
-      sign.userData.phase = plot.index * 0.9;
-      this.plusSigns.push(sign);
-      this.markerGroup.add(sign);
+      br.cyl(0, 0.9, 0, 0.0, 0.5, 1.2, '#ff2e88', 'glow', 18, Math.PI);
+      br.ball(0, 1.9, 0, 0.9, '#ff2e88', 'glow');
+      br.box(0, 1.78, 0.82, 0.8, 0.5, 0.06, '#ffffff', 'paint');
+      br.box(0, 2.2, 0.82, 0.56, 0.06, 0.06, '#ffffff', 'paint', 0, 0, 0.9);
+      br.box(0, 2.2, 0.82, 0.56, 0.06, 0.06, '#ffffff', 'paint', 0, 0, -0.9);
+      const pin = bakedToGroup(b.bake());
+      pin.position.set(cx, 3.2, cz);
+      pin.scale.setScalar(1.2);
+      pin.userData.baseY = 3.2;
+      pin.userData.phase = plot.index * 0.9;
+      this.pins.push(pin);
+      this.markerGroup.add(pin);
     }
     const dg = bakedToGroup(dashes.bake());
     this.markerGroup.add(dg);
@@ -385,40 +430,81 @@ export class BuildScene extends GameScene {
   private rebuildTags(): void {
     this.tagLayer.innerHTML = '';
     this.tags = [];
-    for (const h of store.data.town.houses) {
-      const plot = PLOTS[h.plot];
-      if (!plot) continue;
-      const name = store.profileById(h.ownerId)?.name ?? '?';
-      this.tags.push({
-        el: nameTag(this.tagLayer, `🏡 ${name}`),
-        pos: new THREE.Vector3(plot.center.x, tuning.build.tagHeight, plot.center.z),
-      });
+    for (const plot of PLOTS) {
+      const h = store.houseOnPlot(plot.index);
+      if (h) {
+        const name = store.profileById(h.ownerId)?.name ?? '?';
+        this.tags.push({
+          el: nameTag(this.tagLayer, `🏡 ${name}`),
+          pos: new THREE.Vector3(plot.center.x, tuning.build.tagHeight, plot.center.z),
+          kind: 'owner',
+        });
+      } else {
+        const t = el('div', 'buildtag', this.tagLayer) as HTMLDivElement;
+        el('span', 'ico', t, '🏠');
+        el('span', '', t, 'BUILD HERE');
+        this.tags.push({ el: t, pos: new THREE.Vector3(plot.center.x, 5.6, plot.center.z), kind: 'build' });
+      }
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
   // Camera + light helpers
   // ═══════════════════════════════════════════════════════════════════════
+  private residential(): { cx: number; cz: number; r: number } {
+    const R = LAYOUT_ANY.RESIDENTIAL;
+    if (R) return { cx: R.center.x, cz: R.center.z, r: R.radius };
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of PLOTS) {
+      x0 = Math.min(x0, p.center.x - p.size / 2);
+      x1 = Math.max(x1, p.center.x + p.size / 2);
+      z0 = Math.min(z0, p.center.z - p.size / 2);
+      z1 = Math.max(z1, p.center.z + p.size / 2);
+    }
+    if (x0 > x1) return { cx: 0, cz: 0, r: 30 };
+    return { cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, r: Math.hypot(x1 - x0, z1 - z0) / 2 };
+  }
+
   private townView(): { target: THREE.Vector3; dist: number } {
+    const { cx, cz, r } = this.residential();
     const half = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const dist = THREE.MathUtils.clamp(24 / (half * Math.min(this.camera.aspect, 1.6)), tuning.build.orbitMinDistance, tuning.build.orbitMaxDistance);
-    return { target: new THREE.Vector3(0, 0, -14), dist };
+    const dist = THREE.MathUtils.clamp((r * 1.05) / (half * Math.min(this.camera.aspect, 1.5)), tuning.build.orbitMinDistance, tuning.build.orbitMaxDistance);
+    return { target: new THREE.Vector3(cx, 0, cz), dist };
+  }
+
+  /** The side of a lot that faces its street (falls back to south). */
+  private plotFrontVec(i: number): { nx: number; nz: number } {
+    try {
+      return LAYOUT_ANY.plotFront?.(PLOTS[i]) ?? { nx: 0, nz: 1 };
+    } catch {
+      return { nx: 0, nz: 1 };
+    }
+  }
+
+  /** A camera yaw that looks at the lot's front from the street. */
+  private frontYaw(i: number): number {
+    const f = this.plotFrontVec(i);
+    return Math.atan2(f.nx, f.nz) + 0.5;
   }
 
   /** Camera pose for editing the current plot (looks a little south of it so it clears the palette). */
   private houseView(yaw: number): { target: THREE.Vector3; dist: number } {
     const c = PLOTS[this.plotIdx].center;
     const half = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const dist = THREE.MathUtils.clamp(Math.max(tuning.build.houseDistance, 4.9 / (half * this.camera.aspect)), tuning.build.houseMinDistance, tuning.build.houseMaxDistance);
-    return { target: new THREE.Vector3(c.x + Math.sin(yaw) * 1.4, 0.4, c.z + Math.cos(yaw) * 1.4), dist };
+    const need = (PLOTS[this.plotIdx].size * 0.62) / (half * this.camera.aspect);
+    const dist = THREE.MathUtils.clamp(Math.max(tuning.build.houseDistance, need), tuning.build.houseMinDistance, tuning.build.houseMaxDistance);
+    const { H } = dims();
+    return { target: new THREE.Vector3(c.x + Math.sin(yaw) * 2.2, this.level * H * 0.6, c.z + Math.cos(yaw) * 2.2), dist };
   }
 
   private setLimitsFor(mode: Mode): void {
     const b = tuning.build;
-    if (mode === 'town') this.orbit.setLimits(b.orbitMinDistance, b.orbitMaxDistance, { x0: -48, x1: 48, z0: -48, z1: 40 });
-    else {
+    if (mode === 'town') {
+      const lim = (LAYOUT_ANY.BOUNDS ?? 60) * 0.95;
+      this.orbit.setLimits(b.orbitMinDistance, b.orbitMaxDistance, { x0: -lim, x1: lim, z0: -lim, z1: lim });
+    } else {
       const c = PLOTS[this.plotIdx].center;
-      const r = PLOTS[this.plotIdx].size / 2 + 3;
+      const r = PLOTS[this.plotIdx].size / 2 + 4;
       this.orbit.setLimits(b.houseMinDistance, b.houseMaxDistance, { x0: c.x - r, x1: c.x + r, z0: c.z - r, z1: c.z + r });
     }
   }
@@ -435,14 +521,14 @@ export class BuildScene extends GameScene {
   // ═══════════════════════════════════════════════════════════════════════
   // Mode switching
   // ═══════════════════════════════════════════════════════════════════════
-  private claimPlot(i: number): void {
+  private claimPlot(i: number, snap = false): void {
     const plot = PLOTS[i];
     const house: House = { plot: i, ownerId: store.profile.id, pieces: [] };
     store.update((d) => {
       d.town.houses.push(house);
     });
     bus.emit('plotClaimed', { pos: { x: plot.center.x, y: 1, z: plot.center.z }, plot: i });
-    this.openHouse(i);
+    this.openHouse(i, snap);
   }
 
   private openHouse(i: number, snap = false): void {
@@ -458,9 +544,11 @@ export class BuildScene extends GameScene {
     this.selMarker.visible = false;
     this.undoStack = [];
     this.houseVer++;
-    this.tab = 'build';
+    this.level = 0;
+    this.cat = 'build';
     this.roofsShown = true;
     this.wallsLow = false;
+    this.toolRot = 0;
 
     this.rebuildStatic([i]);
     this.rebuildPicks();
@@ -470,15 +558,16 @@ export class BuildScene extends GameScene {
     this.scene.add(this.edit.root);
 
     this.setLimitsFor('house');
-    const yaw = snap ? 0.5 : this.orbit.goalYaw;
+    const yaw = snap ? this.frontYaw(i) : this.orbit.goalYaw;
     const hv = this.houseView(yaw);
     if (snap) this.orbit.snapTo(hv.target, hv.dist, yaw, tuning.build.housePitch);
     else this.orbit.flyTo(hv.target, hv.dist, yaw, tuning.build.housePitch);
-    this.setShadowSize(12);
+    this.setShadowSize(tuning.build.shadowSizeHouse);
     this.buildHouseHud();
+    if (house.pieces.length === 0 && house.ownerId === store.profile.id) window.setTimeout(() => this.showTemplateSheet(), snap ? 120 : 450);
   }
 
-  /** "Done" — back to the village. An empty claimed plot is given back. */
+  /** "Done" - back to the village. An empty claimed lot is given back. */
   private closeHouse(): void {
     const house = this.house;
     if (!house) return;
@@ -507,6 +596,7 @@ export class BuildScene extends GameScene {
   private leaveHouse(c: { x: number; z: number }): void {
     this.closeBubble();
     this.clearGhost();
+    this.restoreMoved();
     this.edit?.dispose();
     this.edit = null;
     this.house = null;
@@ -517,10 +607,11 @@ export class BuildScene extends GameScene {
     this.selMarker.visible = false;
     this.undoStack = [];
     this.plotIdx = -1;
+    this.level = 0;
     this.rebuildTown();
     this.setLimitsFor('town');
-    this.orbit.flyTo(new THREE.Vector3(c.x, 0, c.z), 34, undefined, tuning.build.townPitch);
-    this.setShadowSize(38);
+    this.orbit.flyTo(new THREE.Vector3(c.x, 0, c.z), Math.min(52, this.townView().dist), undefined, tuning.build.townPitch);
+    this.setShadowSize(tuning.build.shadowSizeTown);
     this.buildTownHud();
   }
 
@@ -528,7 +619,7 @@ export class BuildScene extends GameScene {
     const h = store.houseOnPlot(i);
     const plot = PLOTS[i];
     const name = (h && store.profileById(h.ownerId)?.name) ?? 'someone';
-    this.orbit.flyTo(new THREE.Vector3(plot.center.x, 0, plot.center.z), 22, undefined, tuning.build.townPitch);
+    this.orbit.flyTo(new THREE.Vector3(plot.center.x, 0, plot.center.z), 34, undefined, tuning.build.townPitch);
     bus.emit('pieceSelected', { pos: { x: plot.center.x, y: 1, z: plot.center.z } });
     toast(`This is ${name}'s house 🏡`);
   }
@@ -539,12 +630,19 @@ export class BuildScene extends GameScene {
   private clearHud(): void {
     this.hud.innerHTML = '';
     this.palItems = null;
-    this.setTabUi = null;
-    this.chip = null;
+    this.catRow = null;
+    this.brushPanel = null;
+    this.brushStyle = null;
+    this.hint = null;
     this.undoBtn = null;
     this.roofBtn = null;
     this.wallBtn = null;
-    this.starterBtn = null;
+    this.levelBtns = [];
+    this.tplBtn = null;
+  }
+
+  private ownsAHouse(): boolean {
+    return store.data.town.houses.some((h) => h.ownerId === store.profile.id);
   }
 
   private buildTownHud(): void {
@@ -553,9 +651,11 @@ export class BuildScene extends GameScene {
     const tr = el('div', 'tr row', hud);
     this.undoBtn = button(tr, { icon: '↶', cls: 'round', tap: 'back' }, () => this.doUndo());
     button(tr, { icon: '🚗', label: 'Drive', cls: 'blue big' }, () => void scenes.go('town'));
-    el('div', 'bhint', hud, 'Tap ＋ to build 🏡');
+    this.hint = el('div', this.ownsAHouse() ? 'bhint' : 'bhint pulse', hud, this.ownsAHouse() ? 'Tap your house to edit it' : 'Tap a lot to build your home 🏠') as HTMLDivElement;
 
     const wrap = el('div', 'bpal', hud);
+    this.brushPanel = el('div', 'panel bbrush', wrap) as HTMLDivElement;
+    this.brushPanel.style.display = 'none';
     this.palItems = el('div', 'panel bpal-items', wrap) as HTMLDivElement;
     this.fillPalette();
     this.refreshHud();
@@ -564,27 +664,30 @@ export class BuildScene extends GameScene {
   private buildHouseHud(): void {
     this.clearHud();
     const hud = this.hud;
+    const house = this.house!;
+    const owner = store.profileById(house.ownerId)?.name ?? 'Home';
+    el('div', 'btitle', hud, `🏠 <b>${escapeHtml(owner)}</b> · Home`);
+
     const tr = el('div', 'tr row', hud);
     this.undoBtn = button(tr, { icon: '↶', cls: 'round', tap: 'back' }, () => this.doUndo());
+    const seg = el('div', 'bseg', tr);
+    for (const lv of [0, 1] as const) {
+      const b = button(seg, { label: lv === 0 ? '1F' : '2F', cls: 'ghost lvl', tap: 'tab' }, () => this.setLevel(lv));
+      this.levelBtns.push(b);
+    }
     this.roofBtn = button(tr, { icon: '🏠', cls: 'round' }, () => this.setRoofs(!this.roofsShown));
     this.wallBtn = button(tr, { icon: '🧱', cls: 'round' }, () => this.setWalls(!this.wallsLow));
     button(tr, { icon: '✔️', label: 'Done', cls: 'mint big' }, () => this.closeHouse());
 
-    const lc = el('div', 'lc col', hud);
-    this.starterBtn = button(lc, { icon: '🪄', label: 'Starter', cls: 'butter bob' }, () => this.stampStarter());
+    const lc = el('div', 'blc', hud);
+    this.tplBtn = button(lc, { icon: '✨', label: 'Templates', cls: 'butter bob' }, () => this.showTemplateSheet());
     button(lc, { icon: '🗑️', cls: 'round ghost' }, () => void this.removeHouse());
 
     const wrap = el('div', 'bpal', hud);
-    this.setTabUi = tabs(
-      wrap,
-      [
-        { id: 'build', icon: '🧱', label: 'Build' },
-        { id: 'furn', icon: '🛋️', label: 'Furniture' },
-        { id: 'mine', icon: '⭐', label: 'Mine' },
-      ],
-      this.tab,
-      (id) => this.switchTab(id as TabId),
-    );
+    this.brushPanel = el('div', 'panel bbrush', wrap) as HTMLDivElement;
+    this.brushPanel.style.display = 'none';
+    this.catRow = el('div', 'panel bcats', wrap) as HTMLDivElement;
+    this.fillCats();
     this.palItems = el('div', 'panel bpal-items', wrap) as HTMLDivElement;
     this.fillPalette();
     this.refreshHud();
@@ -592,17 +695,50 @@ export class BuildScene extends GameScene {
 
   private refreshHud(): void {
     if (this.undoBtn) this.undoBtn.disabled = this.undoStack.length === 0;
-    if (this.starterBtn) this.starterBtn.style.display = this.house && this.house.pieces.length === 0 ? '' : 'none';
+    if (this.tplBtn) this.tplBtn.style.display = this.house && this.house.pieces.length === 0 ? '' : 'none';
     if (this.roofBtn) this.roofBtn.querySelector('.ico')!.textContent = this.roofsShown ? '🏠' : '👀';
     this.wallBtn?.classList.toggle('selected', this.wallsLow);
+    this.levelBtns.forEach((b, i) => b.classList.toggle('selected', i === this.level));
   }
 
-  private switchTab(id: TabId): void {
-    this.tab = id;
+  private fillCats(): void {
+    const row = this.catRow;
+    if (!row) return;
+    row.innerHTML = '';
+    for (const c of CATS) {
+      const b = el('button', 'tab' + (c.id === this.cat ? ' on' : ''), row);
+      b.dataset.cat = c.id;
+      el('span', 'ico', b, c.icon);
+      el('span', '', b, c.name);
+      bindTap(b, () => {
+        bus.emit('uiTap', { kind: 'tab' });
+        this.switchCat(c.id);
+      });
+    }
+  }
+
+  private switchCat(id: CatId): void {
+    this.cat = id;
     this.setTool(null);
+    this.catRow?.querySelectorAll('.tab').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.cat === id));
     // furnish with the roof off, build with it on
-    this.setRoofs(id === 'build');
+    this.setRoofs(id === 'build' && this.level === 0);
     this.fillPalette();
+  }
+
+  private setLevel(l: Level): void {
+    if (!this.edit || l === this.level) return;
+    this.level = l;
+    this.deselect();
+    this.setTool(null);
+    this.edit.setLevel(l);
+    this.setRoofs(this.cat === 'build' && l === 0);
+    const { H } = dims();
+    const t = this.orbit.goalTarget;
+    this.orbit.flyTo(new THREE.Vector3(t.x, l * H * 0.6, t.z), this.orbit.goalDist);
+    this.fillPalette();
+    this.refreshHud();
+    bus.emit('uiTap', { kind: 'tab' });
   }
 
   private fillPalette(): void {
@@ -613,45 +749,57 @@ export class BuildScene extends GameScene {
     if (this.mode === 'town') {
       for (const d of DECO_CATALOG) items.push({ id: `d:${d.type}`, icon: d.icon, label: d.name, dot: d.color, data: { kind: 'deco', def: d } });
       items.push({ id: 'erase', icon: '🧹', label: 'Erase', data: { kind: 'erase' } });
-    } else if (this.tab === 'build') {
-      for (const d of PIECE_CATALOG) if (d.cat === 'build') items.push({ id: `p:${d.type}`, icon: d.icon, label: d.name, dot: this.lastColor.get(colorKey(d.type)) ?? d.color, data: { kind: 'piece', type: d.type } });
-      items.push({ id: 'erase', icon: '🧹', label: 'Erase', data: { kind: 'erase' } });
-    } else if (this.tab === 'furn') {
-      for (const d of PIECE_CATALOG) if (d.cat === 'furniture') items.push({ id: `p:${d.type}`, icon: d.icon, label: d.name, dot: this.lastColor.get(colorKey(d.type)) ?? d.color, data: { kind: 'piece', type: d.type } });
-      items.push({ id: 'erase', icon: '🧹', label: 'Erase', data: { kind: 'erase' } });
-    } else {
+    } else if (this.cat === 'mine') {
       for (const c of store.profile.creations) {
         items.push({ id: `c:${c.id}`, icon: KIND_ICON[c.kind] ?? '⭐', label: c.shape ?? c.kind, dot: c.color, data: { kind: 'piece', type: 'creation', creationId: c.id } });
       }
+    } else {
+      if (this.cat === 'build') items.push({ id: 'room', icon: '⬛', label: 'Room', data: { kind: 'room' } });
+      for (const d of PIECE_CATALOG) {
+        if (d.cat !== this.cat) continue;
+        const st = this.lastStyle.get(familyOf(d.type));
+        const locked = d.reward && !isUnlocked(d.reward) ? `💎${rewardFor(d.reward)?.at ?? ''}` : undefined;
+        const dim = this.level === 1 && (d.outdoor || d.kind === 'stairs');
+        items.push({ id: `p:${d.type}`, icon: d.icon, label: d.name, dot: st?.color ?? d.color, data: { kind: 'piece', type: d.type }, lock: locked, dim });
+      }
+      items.push({ id: 'erase', icon: '🧹', label: 'Erase', data: { kind: 'erase' } });
     }
     if (items.length === 0) {
       const empty = el('div', 'bempty', box);
       el('span', 'ico', empty, '🧪');
-      button(empty, { label: 'Make something!', cls: 'peach' }, () => void scenes.go('workshop'));
+      button(empty, { label: 'Make something in the Studio', cls: 'peach' }, () => void scenes.go('workshop'));
       return;
     }
     for (const it of items) {
       const tile = paletteTile(box, it, {
         onTap: (item) => this.onTileTap(item),
         onDrag: (item, x, y, phase, touch) => this.onTileDrag(item, x, y, phase, touch),
+        onBlocked: (item) => this.onTileBlocked(item),
       });
       if (this.tool?.id === it.id) tile.classList.add('on');
+    }
+  }
+
+  private onTileBlocked(it: PalItem): void {
+    const d = it.data as { type?: PieceType };
+    const def = d.type ? pieceDef(d.type) : undefined;
+    if (def?.reward && !isUnlocked(def.reward)) lockedToast(def.reward);
+    else {
+      toast('That goes on the ground floor 🏡');
+      bus.emit('placementBlocked', {});
     }
   }
 
   private toolFromItem(it: PalItem): Tool {
     const d = it.data as { kind: string; type?: PieceType; def?: { type: DecoType; color: Hex; paint: boolean }; creationId?: string };
     if (d.kind === 'erase') return { kind: 'erase', id: it.id };
+    if (d.kind === 'room') return { kind: 'room', id: it.id, style: 'floor' };
     if (d.kind === 'deco') return { kind: 'deco', id: it.id, type: d.def!.type, color: d.def!.color, paint: d.def!.paint };
-    const def = pieceDef(d.type!);
-    return {
-      kind: 'piece',
-      id: it.id,
-      type: d.type!,
-      color: this.lastColor.get(colorKey(d.type!)) ?? def?.color ?? '#ffffff',
-      creationId: d.creationId,
-      paint: def?.paint ?? false,
-    };
+    const def = pieceDef(d.type!)!;
+    const st = this.lastStyle.get(familyOf(def.type));
+    // keep a remembered finish only if this piece can wear it
+    const finish = def.finishSet && st?.finish && finishesFor(def.finishSet).some((f) => f.id === st.finish) ? st.finish : def.finish;
+    return { kind: 'piece', id: it.id, type: def.type, color: st?.color ?? def.color, finish, creationId: d.creationId, rot: this.toolRot, paint: def.paint };
   }
 
   /** Tap a tile: arm it as a brush (tap the world to place, drag to paint); tap again to put it down. */
@@ -661,27 +809,125 @@ export class BuildScene extends GameScene {
   }
 
   private setTool(t: Tool | null): void {
+    if (this.tool?.kind === 'move' && t?.kind !== 'move') this.restoreMoved();
     this.tool = t;
+    this.moveCtx = null;
     this.clearGhost();
     this.palItems?.querySelectorAll('.ptile').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.id === t?.id));
-    this.chip?.remove();
-    this.chip = null;
-    const hint = this.hud.querySelector('.bhint') as HTMLElement | null;
-    if (hint) hint.style.display = t ? 'none' : '';
-    if (t) {
-      const icon = (this.palItems?.querySelector(`.ptile[data-id="${t.id}"] .ico`) as HTMLElement | null)?.textContent ?? '✨';
-      const chip = el('div', 'bchip', this.hud);
-      el('span', 'ico', chip, icon);
-      el('span', '', chip, t.kind === 'erase' ? 'Tap to erase' : 'Tap or drag');
-      button(chip, { icon: '✖️', cls: 'round ghost', tap: 'back' }, () => this.setTool(null));
-      this.chip = chip;
+    if (this.hint) this.hint.style.display = t ? 'none' : '';
+    this.refreshBrushPanel();
+  }
+
+  /** The panel above the palette while a brush is armed: what it is, rotate, finish + colour. */
+  private refreshBrushPanel(): void {
+    const bp = this.brushPanel;
+    if (!bp) return;
+    bp.innerHTML = '';
+    this.brushStyle = null;
+    const t = this.tool;
+    if (!t) {
+      bp.style.display = 'none';
+      return;
     }
+    bp.style.display = '';
+    const head = el('div', 'bhead', bp);
+    const icon = (this.palItems?.querySelector(`.ptile[data-id="${t.id}"] .ico`) as HTMLElement | null)?.textContent ?? '✨';
+    el('span', 'ico', head, icon);
+    const name = t.kind === 'erase' ? 'Erase' : t.kind === 'move' ? 'Move' : t.kind === 'room' ? 'Room' : t.kind === 'deco' ? decoDef(t.type)?.name ?? '' : pieceDef(t.type)?.name ?? '';
+    el('span', 'nm', head, name);
+    const area = this.isAreaTool(t);
+    el('span', 'tip', head, t.kind === 'erase' ? 'tap or drag over things' : t.kind === 'move' ? 'drop it somewhere' : t.kind === 'room' ? 'drag a rectangle: floor + walls' : area ? 'drag to fill an area' : 'tap or drag');
+    const needRot = t.kind === 'move' || (t.kind === 'piece' && ['furn', 'rug', 'stairs', 'roof', 'creation'].includes(pieceDef(t.type)!.kind) && pieceDef(t.type)!.type !== 'roofGable');
+    if (needRot) button(head, { icon: '⟳', cls: 'round ghost', tap: 'tab' }, () => this.rotateTool());
+    button(head, { icon: '✖️', cls: 'round ghost', tap: 'back' }, () => this.setTool(null));
+    if (t.kind === 'room') {
+      const seg = el('div', 'bseg', bp);
+      (['floor', 'wall'] as const).forEach((w) => {
+        const b = button(seg, { label: w === 'floor' ? 'Floor' : 'Walls', cls: 'ghost lvl' + (t.style === w ? ' selected' : ''), tap: 'tab' }, () => {
+          t.style = w;
+          this.refreshBrushPanel();
+        });
+        void b;
+      });
+      const defType: PieceType = t.style === 'floor' ? 'floor' : 'wall';
+      const def = pieceDef(defType)!;
+      const st = this.lastStyle.get(familyOf(defType));
+      const finish = st?.finish ?? def.finish;
+      const color = st?.color ?? def.color;
+      this.brushStyle = buildStylePicker(bp, {
+        finishes: finishesFor(def.finishSet),
+        finish,
+        colors: this.colorsFor(def, finish),
+        color,
+        onFinish: (f) => {
+          const c = f.colors.some((x) => x.toLowerCase() === (this.lastStyle.get(familyOf(defType))?.color ?? def.color).toLowerCase()) ? this.lastStyle.get(familyOf(defType))?.color ?? def.color : f.colors[0];
+          this.rememberStyle(defType, c, f.id);
+          this.brushStyle?.set(f.id, c, f.colors);
+          this.ghostKey = '';
+        },
+        onColor: (c) => {
+          this.rememberStyle(defType, c, this.lastStyle.get(familyOf(defType))?.finish ?? def.finish);
+          this.ghostKey = '';
+        },
+      });
+    } else if (t.kind === 'piece') {
+      const def = pieceDef(t.type)!;
+      if (def.kind !== 'creation') {
+        const fins = finishesFor(def.finishSet);
+        this.brushStyle = buildStylePicker(bp, {
+          finishes: fins,
+          finish: t.finish,
+          colors: this.colorsFor(def, t.finish),
+          color: t.color,
+          onFinish: (f) => {
+            t.finish = f.id;
+            if (!f.colors.some((c) => c.toLowerCase() === t.color.toLowerCase())) t.color = f.colors[0];
+            this.rememberStyle(def.type, t.color, t.finish);
+            this.brushStyle?.set(t.finish, t.color, f.colors);
+            this.ghostKey = '';
+          },
+          onColor: (c) => {
+            t.color = c;
+            this.rememberStyle(def.type, c, t.finish);
+            this.ghostKey = '';
+          },
+        });
+      }
+    } else if (t.kind === 'deco') {
+      buildStylePicker(bp, { finishes: [], colors: tuning.art.palette, color: t.color, onColor: (c) => { t.color = c; this.ghostKey = ''; } });
+    }
+  }
+
+  private colorsFor(def: PieceDef, finish?: string): Hex[] {
+    const f = finishesFor(def.finishSet).find((x) => x.id === (finish ?? def.finish));
+    return f ? f.colors : tuning.art.palette;
+  }
+
+  private rememberStyle(type: PieceType, color: Hex, finish?: string): void {
+    this.lastStyle.set(familyOf(type), { color, finish });
+  }
+
+  private rotateTool(): void {
+    const t = this.tool;
+    if (!t) return;
+    if (t.kind === 'piece') t.rot = (((t.rot + 1) & 3) as Rot);
+    if (t.kind === 'move') t.piece.rot = (((t.piece.rot + 1) & 3) as Rot);
+    this.toolRot = t.kind === 'piece' ? t.rot : this.toolRot;
+    this.ghostKey = '';
+    bus.emit('pieceRotated', { pos: this.target?.pos ?? { x: 0, y: 0, z: 0 } });
+    if (this.target) this.updateTargetForLast();
+  }
+
+  private lastPointer = { x: 0, y: 0 };
+  private updateTargetForLast(): void {
+    if (this.tool && this.tool.kind !== 'erase') this.updateTargetFor(this.tool, this.lastPointer.x, this.lastPointer.y, 0);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
   // Input
   // ═══════════════════════════════════════════════════════════════════════
   private onKey(e: KeyboardEvent): void {
+    if (this.sheetOpen) return;
     if (e.key === 'Escape') {
       this.setTool(null);
       this.deselect();
@@ -689,7 +935,8 @@ export class BuildScene extends GameScene {
       e.preventDefault();
       this.doUndo();
     } else if (e.key === 'r' || e.key === 'R') {
-      if (this.sel) this.rotateSelected();
+      if (this.tool) this.rotateTool();
+      else if (this.sel) this.rotateSelected();
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       if (this.sel) this.deleteSelected();
     }
@@ -703,8 +950,10 @@ export class BuildScene extends GameScene {
       /* ignore */
     }
     this.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t0: performance.now(), button: e.button, type: e.pointerType });
+    this.lastPointer = { x: e.clientX, y: e.clientY };
     if (this.ptrs.size >= 2) {
       this.cancelPaint();
+      this.pendingMove = null;
       this.gesture = 'multi';
       this.startMulti();
       return;
@@ -718,10 +967,17 @@ export class BuildScene extends GameScene {
       this.paintStart(e);
       return;
     }
+    // dragging the selected piece moves it
+    this.pendingMove = null;
+    if (this.sel?.kind === 'piece' && this.mode === 'house' && this.edit && this.house?.ownerId === store.profile.id) {
+      const p = this.selectedPiece();
+      if (p && this.pieceUnder(e.clientX, e.clientY)?.id === p.id) this.pendingMove = p;
+    }
     this.gesture = 'tap';
   }
 
   private onMove(e: PointerEvent): void {
+    this.lastPointer = { x: e.clientX, y: e.clientY };
     const p = this.ptrs.get(e.pointerId);
     if (!p) {
       // mouse hover: show the ghost for the armed brush
@@ -733,7 +989,14 @@ export class BuildScene extends GameScene {
     p.y = e.clientY;
     switch (this.gesture) {
       case 'tap':
-        if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > tuning.build.tapMaxPx) this.gesture = 'orbit';
+        if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > tuning.build.tapMaxPx) {
+          if (this.pendingMove) {
+            this.beginMove(this.pendingMove, true);
+            this.pendingMove = null;
+            this.gesture = 'paint';
+            this.paintStart(e);
+          } else this.gesture = 'orbit';
+        }
         break;
       case 'orbit':
         this.orbit.orbit(dx, dy);
@@ -761,6 +1024,7 @@ export class BuildScene extends GameScene {
       /* ignore */
     }
     if (!p) return;
+    this.pendingMove = null;
     if (this.gesture === 'tap' && !cancelled) {
       const moved = Math.hypot(e.clientX - p.sx, e.clientY - p.sy);
       if (moved <= tuning.build.tapMaxPx && performance.now() - p.t0 <= tuning.build.tapMaxMs) this.onTap(e.clientX, e.clientY);
@@ -822,16 +1086,20 @@ export class BuildScene extends GameScene {
       else this.visitHouse(i);
       return;
     }
-    if (!this.edit) return;
-    const hits = this.ray.intersectObjects(this.edit.pickLayers(), true);
-    for (const h of hits) {
+    const p = this.pieceUnder(x, y);
+    if (p) this.selectPiece(p);
+    else this.deselect();
+  }
+
+  /** The piece under a screen point (house mode). */
+  private pieceUnder(x: number, y: number): PlacedPiece | undefined {
+    if (!this.edit) return undefined;
+    this.setRay(x, y);
+    for (const h of this.ray.intersectObjects(this.edit.pickLayers(), true)) {
       const p = this.edit.pieceFromObject(h.object);
-      if (p) {
-        this.selectPiece(p);
-        return;
-      }
+      if (p) return p;
     }
-    this.deselect();
+    return undefined;
   }
 
   // ── Ray helpers ──
@@ -879,7 +1147,7 @@ export class BuildScene extends GameScene {
     if (key !== this.ghostKey) {
       this.clearGhostObj();
       const o = make();
-      this.ghostBaseY = o.position.y;   // roofs pivot at wall height
+      this.ghostBaseY = o.position.y;   // storeys + roofs sit at their own height
       o.position.x = 0;
       o.position.z = 0;
       ghostify(o, ok);
@@ -895,37 +1163,45 @@ export class BuildScene extends GameScene {
     this.ghostGoal.copy(goal);
   }
 
-  /** Work out where `tool` would land for a pointer position, and show the ghost there. */
+  /** The piece a tool would place (type + style), or undefined for tools that don't place pieces. */
+  private pieceSpec(tool: Tool): { type: PieceType; color: Hex; finish?: string; creationId?: string; rot: Rot; ignoreId?: string } | undefined {
+    if (tool.kind === 'piece') return { type: tool.type, color: tool.color, finish: tool.finish, creationId: tool.creationId, rot: tool.rot };
+    if (tool.kind === 'move') return { type: tool.piece.type, color: tool.piece.color, finish: tool.piece.finish, creationId: tool.piece.creationId, rot: tool.piece.rot, ignoreId: tool.piece.id };
+    return undefined;
+  }
+
+  /** Work out where `tool` would land for a pointer position. */
   private computeTarget(tool: Tool, x: number, y: number, lift: number): Target | null {
-    if (this.mode === 'house' && this.edit && this.house && tool.kind === 'piece') {
-      const { S, FL } = dims();
+    if (this.mode === 'house' && this.edit && this.house) {
+      const spec = this.pieceSpec(tool);
+      if (!spec) return null;
+      const def = pieceDef(spec.type);
+      if (!def) return null;
+      const { S, FL, H } = dims();
       const plot = this.edit.plot;
-      const hit = this.groundHit(x, y - lift, FL);
+      const hit = this.groundHit(x, y - lift, def.outdoor ? 0.05 : this.level * H + FL);
       if (!hit) return null;
       const gx = (hit.x - plot.origin.x) / S, gz = (hit.z - plot.origin.z) / S;
-      const kind = kindOf(tool.type);
-      const sn = snapCell(kind, gx, gz);
-      let rot: Rot = sn.rot;
-      const ctx = this.edit.ctx;
-      if (kind === 'furn') rot = autoRotFurn(ctx, sn.x, sn.z, 0);
-      else if (tool.type === 'roofGable') rot = autoRotGable(this.house.pieces, ctx, sn.x, sn.z);
-      let cand: Cand = { type: tool.type, x: sn.x, z: sn.z, rot };
-      if (kind === 'edge') cand = faceOutward(this.house.pieces, cand);
-      let ok = sn.inside && canPlace(this.house.pieces, cand);
+      const ctx = spec.ignoreId && this.moveCtx ? this.moveCtx : this.edit.ctx;
+      const pieces = ctx.pieces;
+      const sn = snapPiece(def, gx, gz, this.level, ctx, pieces, spec.rot);
+      const cand = sn.cand;
+      let ok = sn.inside && canPlace(pieces, cand);
       let replace: PlacedPiece | undefined;
-      if (!ok && sn.inside && kind === 'edge') {
+      if (!ok && sn.inside && def.kind === 'edge' && def.w === 1 && isBodyWall(spec.type)) {
         // dropping a window/door on an existing wall swaps it in
-        const w = wallAt(this.house.pieces, cand);
-        if (w && w.type !== cand.type && canPlace(this.house.pieces, cand, w.id)) {
+        const w = ctx.walls.get(`${cand.level}|${edgeKey(cand)}`);
+        if (w && w.type !== spec.type && isBodyWall(w.type) && pieceDef(w.type)?.w === 1) {
           ok = true;
           replace = w;
         }
       }
-      const color = replace?.color ?? tool.color;
+      const color = replace?.color ?? spec.color;
+      const finish = replace ? replace.finish : spec.finish;
       return {
-        ok, cand, replace, color,
-        key: `${cand.type}|${cand.x}|${cand.z}|${cand.rot}|${replace?.id ?? ''}`,
-        pos: this.edit.worldPos(this.fake(tool, cand, color), 0.3),
+        ok, cand, replace, color, finish,
+        key: `${cand.type}|${cand.x}|${cand.z}|${cand.rot}|${cand.level}|${replace?.id ?? ''}`,
+        pos: this.edit.worldPos(this.fake(spec, cand, color, finish), 0.3),
       };
     }
     if (this.mode === 'town' && tool.kind === 'deco') {
@@ -935,7 +1211,7 @@ export class BuildScene extends GameScene {
       const taken = store.data.town.decorations.some((d) => d.x === dx && d.z === dz);
       const ok = !isReserved(dx, dz) && !taken;
       let rot = 0;
-      if (tool.type === 'fence') rot = this.fenceRotAt(dx, dz);
+      if (tool.type === 'fence' || tool.type === 'hedge') rot = this.fenceRotAt(dx, dz);
       return { ok, deco: { x: dx, z: dz, rot }, key: `${tool.type}|${dx}|${dz}`, pos: { x: dx, y: 0.4, z: dz } };
     }
     return null;
@@ -943,14 +1219,18 @@ export class BuildScene extends GameScene {
 
   /** Fences line up with a neighbouring fence, else keep the last direction. */
   private fenceRotAt(x: number, z: number): number {
-    const at = (px: number, pz: number) => store.data.town.decorations.find((d) => d.type === 'fence' && d.x === px && d.z === pz);
+    const at = (px: number, pz: number) => store.data.town.decorations.find((d) => (d.type === 'fence' || d.type === 'hedge') && d.x === px && d.z === pz);
     const n = at(x + 1, z) ?? at(x - 1, z) ?? at(x, z + 1) ?? at(x, z - 1);
     if (n) this.fenceRot = n.rot;
     return this.fenceRot;
   }
 
-  private fake(tool: Extract<Tool, { kind: 'piece' }>, c: Cand, color: Hex = tool.color): PlacedPiece {
-    return { id: 'ghost', type: c.type, x: c.x, z: c.z, rot: c.rot, color, creationId: tool.creationId };
+  private fake(spec: { type: PieceType; creationId?: string }, c: Cand, color: Hex, finish?: string): PlacedPiece {
+    const p: PlacedPiece = { id: 'ghost', type: c.type, x: c.x, z: c.z, rot: c.rot, color };
+    if (c.level === 1) p.level = 1;
+    if (finish) p.finish = finish;
+    if (spec.creationId) p.creationId = spec.creationId;
+    return p;
   }
 
   /** Compute + display the target; returns it. */
@@ -962,16 +1242,17 @@ export class BuildScene extends GameScene {
       return null;
     }
     const { S } = dims();
-    if (t.cand && tool.kind === 'piece' && this.edit && this.house) {
-      const color = t.color ?? tool.color;
-      const fake = this.fake(tool, t.cand, color);
+    const spec = this.pieceSpec(tool);
+    if (t.cand && spec && this.edit && this.house) {
+      const color = t.color ?? spec.color;
+      const fake = this.fake(spec, t.cand, color, t.finish);
       const goal = new THREE.Vector3((t.cand.x + 0.5) * S, 0, (t.cand.z + 0.5) * S);
-      const house = this.house;
-      this.setGhost(`${t.key}|${t.ok}|${color}|${this.houseVer}`, () => buildPieceObject(fake, makeCtx([...house.pieces, fake])), t.ok, goal, this.edit.root);
+      const edit = this.edit;
+      const rest = spec.ignoreId ? this.house.pieces.filter((p) => p.id !== spec.ignoreId) : this.house.pieces;
+      this.setGhost(`${t.key}|${t.ok}|${color}|${t.finish ?? ''}|${this.houseVer}`, () => buildPieceObject(fake, makeCtx([...rest, fake]), edit.origin), t.ok, goal, this.edit.root);
     } else if (t.deco && tool.kind === 'deco') {
       const d: Decoration = { id: 'ghost', type: tool.type, x: t.deco.x, z: t.deco.z, rot: t.deco.rot, color: tool.color, ownerId: store.profile.id };
       this.setGhost(`${t.key}|${t.ok}|${tool.color}|${t.deco.rot}`, () => buildDecorationMesh(d), t.ok, new THREE.Vector3(d.x, 0, d.z), this.scene);
-      // the deco mesh carries its own rotation; the holder only moves it
       if (this.ghostObj) this.ghostObj.rotation.y = d.rot;
     }
     if (t.key !== this.lastTargetKey) {
@@ -1008,6 +1289,25 @@ export class BuildScene extends GameScene {
       }
       return;
     }
+    if (tool.kind === 'room') {
+      // dropping the Room tile gives a ready-made 4 x 4 room centred on the finger
+      const c = this.areaCell(x, y - (touch ? tuning.build.touchLift : 0), true);
+      if (c) {
+        const N = tuning.build.plotCells;
+        const x0 = Math.min(Math.max(0, c.x - 2), N - 4), z0 = Math.min(Math.max(0, c.z - 2), N - 4);
+        this.areaStart = { x: x0, z: z0 };
+        this.areaEnd = { x: x0 + 3, z: z0 + 3 };
+        this.updateAreaGhost(tool);
+      }
+      if (phase === 'end') {
+        if (c) this.commitArea(tool);
+        this.areaStart = null;
+        this.areaEnd = null;
+        this.clearGhost();
+        this.dragTool = null;
+      }
+      return;
+    }
     this.dragTarget = this.updateTargetFor(tool, x, y, touch ? tuning.build.touchLift : 0);
     if (phase === 'end') {
       const t = this.dragTarget;
@@ -1032,8 +1332,14 @@ export class BuildScene extends GameScene {
       this.eraseAt(e.clientX, e.clientY);
       return;
     }
+    if (this.isAreaTool(tool)) {
+      this.areaStart = this.areaCell(e.clientX, e.clientY, false);
+      this.areaEnd = this.areaStart;
+      this.updateAreaGhost(tool);
+      return;
+    }
     const t = this.updateTargetFor(tool, e.clientX, e.clientY, 0);
-    if (!t || !tool.paint) return;
+    if (!t || tool.kind === 'move' || tool.kind === 'room' || !tool.paint) return;
     this.paintFirst = t;
     // a finger might be about to become a two-finger gesture: wait a beat before the first stamp
     if (e.pointerType === 'mouse') this.commitFirst();
@@ -1054,9 +1360,18 @@ export class BuildScene extends GameScene {
       this.eraseAt(e.clientX, e.clientY);
       return;
     }
+    if (this.isAreaTool(tool)) {
+      const c = this.areaCell(e.clientX, e.clientY, true);
+      if (!this.areaStart) this.areaStart = this.areaCell(e.clientX, e.clientY, false);
+      if (c && (!this.areaEnd || c.x !== this.areaEnd.x || c.z !== this.areaEnd.z)) {
+        this.areaEnd = c;
+        this.updateAreaGhost(tool);
+      }
+      return;
+    }
     const prev = this.target?.key;
     const t = this.updateTargetFor(tool, e.clientX, e.clientY, 0);
-    if (!t || !tool.paint || t.key === prev) return;
+    if (!t || tool.kind === 'move' || tool.kind === 'room' || !tool.paint || t.key === prev) return;
     this.commitFirst();
     this.commit(tool, t, true, true);
   }
@@ -1067,22 +1382,36 @@ export class BuildScene extends GameScene {
     if (tool && !cancelled) {
       if (tool.kind === 'erase') {
         /* strokes finish below */
-      } else if (tool.paint) {
+      } else if (this.isAreaTool(tool)) {
+        if (!this.areaEnd) this.areaEnd = this.areaCell(e.clientX, e.clientY, true);
+        this.commitArea(tool);
+      } else if (tool.kind !== 'move' && tool.kind !== 'room' && tool.paint) {
         this.commitFirst();
       } else {
         const t = this.updateTargetFor(tool, e.clientX, e.clientY, 0);
-        if (t) this.commit(tool, t, false);
+        if (tool.kind === 'move') {
+          const placed = t ? this.commit(tool, t, false) : false;
+          if (!placed && tool.viaDrag) this.setTool(null);   // dragged onto an invalid spot: it goes back
+          else if (placed) this.setTool(null);
+        } else if (t) this.commit(tool, t, false);
       }
-    }
+    } else if (tool?.kind === 'move' && tool.viaDrag) this.setTool(null);
+    this.areaStart = null;
+    this.areaEnd = null;
     this.finishStroke();
-    if (e.pointerType !== 'mouse') this.clearGhost();
+    if (e.pointerType !== 'mouse' || this.isAreaTool(tool)) this.clearGhost();
   }
 
   private cancelPaint(): void {
     window.clearTimeout(this.paintTimer);
     this.paintFirst = null;
+    this.areaStart = null;
+    this.areaEnd = null;
     this.finishStroke();
-    if (this.gesture === 'paint') this.clearGhost();
+    if (this.gesture === 'paint') {
+      if (this.tool?.kind === 'move' && this.tool.viaDrag) this.setTool(null);
+      this.clearGhost();
+    }
   }
 
   /** Bundle everything a stroke placed/erased into ONE undo step. */
@@ -1117,18 +1446,145 @@ export class BuildScene extends GameScene {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Rectangle fills: floors, roofs, and whole rooms
+  // ═══════════════════════════════════════════════════════════════════════
+  /** Floors / roofs fill a dragged rectangle; the Room tool adds walls around it. */
+  private isAreaTool(t: Tool | null): boolean {
+    if (!t || this.mode !== 'house') return false;
+    if (t.kind === 'room') return true;
+    if (t.kind !== 'piece' || !t.paint) return false;
+    const k = pieceDef(t.type)?.kind;
+    return k === 'floor' || k === 'roof';
+  }
+
+  /** The plot cell under a pointer. With `clamp`, dragging past the lot's edge keeps the nearest cell. */
+  private areaCell(x: number, y: number, clamp: boolean): { x: number; z: number } | null {
+    if (!this.edit) return null;
+    const { S, FL, H } = dims();
+    const hit = this.groundHit(x, y, this.level * H + FL);
+    if (!hit) return null;
+    const N = tuning.build.plotCells;
+    const o = this.edit.plot.origin;
+    const gx = (hit.x - o.x) / S, gz = (hit.z - o.z) / S;
+    const inside = gx >= 0 && gx < N && gz >= 0 && gz < N;
+    if (!inside && !clamp) return null;
+    return { x: Math.min(N - 1, Math.max(0, Math.floor(gx))), z: Math.min(N - 1, Math.max(0, Math.floor(gz))) };
+  }
+
+  /** The pieces a rectangle would create (only cells / edges that are free). */
+  private areaPieces(tool: Tool, a: { x: number; z: number }, b: { x: number; z: number }): PlacedPiece[] {
+    const house = this.house;
+    if (!house) return [];
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), z0 = Math.min(a.z, b.z), z1 = Math.max(a.z, b.z);
+    const out: PlacedPiece[] = [];
+    const level = this.level;
+    const add = (type: PieceType, x: number, z: number, rot: Rot, color: Hex, finish?: string) => {
+      const c: Cand = { type, x, z, rot, level };
+      if (!canPlace(house.pieces, c)) return;
+      const p: PlacedPiece = { id: 'ghost', type, x, z, rot, color };
+      if (level === 1 && !isRoofType(type)) p.level = 1;
+      if (finish) p.finish = finish;
+      out.push(p);
+    };
+    const style = (type: PieceType) => {
+      const def = pieceDef(type)!;
+      const st = this.lastStyle.get(familyOf(type));
+      return { color: st?.color ?? def.color, finish: st?.finish ?? def.finish };
+    };
+    if (tool.kind === 'room') {
+      const f = style('floor'), w = style('wall');
+      for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) add('floor', x, z, 0, f.color, f.finish);
+      for (let x = x0; x <= x1; x++) {
+        add('wall', x, z0, 0, w.color, w.finish);
+        add('wall', x, z1, 2, w.color, w.finish);
+      }
+      for (let z = z0; z <= z1; z++) {
+        add('wall', x0, z, 3, w.color, w.finish);
+        add('wall', x1, z, 1, w.color, w.finish);
+      }
+    } else if (tool.kind === 'piece') {
+      // gables run along the longer side of the area
+      const rot: Rot = tool.type === 'roofGable' ? (x1 - x0 >= z1 - z0 ? 0 : 1) : tool.type === 'roofSlant' ? tool.rot : 0;
+      for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) add(tool.type, x, z, rot, tool.color, tool.finish);
+    }
+    return out;
+  }
+
+  private updateAreaGhost(tool: Tool): void {
+    const a = this.areaStart, b = this.areaEnd;
+    if (!this.edit || !this.house || !a || !b) {
+      this.ghostHolder.visible = false;
+      this.areaFakes = [];
+      return;
+    }
+    const fakes = this.areaPieces(tool, a, b);
+    this.areaFakes = fakes;
+    const edit = this.edit;
+    const key = `area|${a.x},${a.z}|${b.x},${b.z}|${this.houseVer}|${this.level}|${tool.id}|${fakes.length}`;
+    const ctx = makeCtx([...this.house.pieces, ...fakes]);
+    this.ghostSnap = true;
+    this.setGhost(key, () => buildPiecesMesh(fakes, ctx), fakes.length > 0, new THREE.Vector3(0, 0, 0), edit.root);
+    this.ghostHolder.position.set(0, 0, 0);
+    const k = `${a.x},${a.z}|${b.x},${b.z}`;
+    if (k !== this.lastTargetKey) {
+      this.lastTargetKey = k;
+      bus.emit('ghostMoved', { pos: edit.worldPos(fakes[0] ?? { id: 'g', type: 'floor', x: b.x, z: b.z, rot: 0, color: '#fff' }, 0.3) });
+    }
+  }
+
+  /** Stamp the rectangle: everything lands at once with a quick build-up. */
+  private commitArea(tool: Tool): void {
+    const house = this.house, edit = this.edit;
+    const a = this.areaStart, b = this.areaEnd;
+    if (!house || !edit || !a || !b) return;
+    const fakes = this.areaPieces(tool, a, b);
+    if (fakes.length === 0) {
+      bus.emit('placementBlocked', { pos: edit.worldPos({ id: 'g', type: 'floor', x: b.x, z: b.z, rot: 0, color: '#fff', ...(this.level === 1 ? { level: 1 as const } : {}) }, 0.3) });
+      return;
+    }
+    const list = fakes.map((f) => ({ ...f, id: uid('pc_') }));
+    store.update(() => {
+      house.pieces.push(...list);
+    });
+    edit.ctx = makeCtx(house.pieces);
+    const objs = list.map((p) => edit.add(p, false));
+    edit.refreshAll();
+    this.houseVer++;
+    this.ghostKey = '';
+    const step = Math.min(22, 700 / list.length);
+    const every = Math.max(3, Math.floor(list.length / 10));
+    objs.forEach((obj, i) => {
+      obj.visible = false;
+      window.setTimeout(() => {
+        if (!obj.parent) return;
+        obj.visible = true;
+        if (i % every === 0) bus.emit('piecePlaced', { pos: this.fxPos(list[i]), type: list[i].type, object: obj });
+        else popScale(obj, tuning.build.placeBounceSeconds, 0.22);
+      }, step * i);
+    });
+    const ids = list.map((p) => p.id);
+    this.pushUndo(() => this.undoPlaced(ids));
+    this.refreshHud();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Placing / erasing
   // ═══════════════════════════════════════════════════════════════════════
-  /** Place at a target. `inStroke` collects it into the running stroke's undo step. */
+  /** Place at a target. `inStroke` collects it into the running stroke's undo step. Returns true when it landed. */
   private commit(tool: Tool, t: Target, inStroke: boolean, quietBlock = false): boolean {
+    if (tool.kind === 'room') return false;
     if (!t.ok) {
       if (!quietBlock) bus.emit('placementBlocked', { pos: t.pos });
       return false;
     }
+    if (tool.kind === 'move' && t.cand) {
+      this.applyMove(tool, t.cand);
+      return true;
+    }
     if (tool.kind === 'piece' && t.cand) {
       const old = t.replace;
       if (old) this.removePieceData(old, false);
-      const p = this.placePiece(tool, t.cand, t.color ?? tool.color);
+      const p = this.placePiece(tool, t.cand, t.color ?? tool.color, t.finish);
       if (inStroke) {
         this.strokeIds.push(p.id);
         if (old) this.strokeOld.push(old);
@@ -1150,13 +1606,14 @@ export class BuildScene extends GameScene {
   }
 
   private fxPos(p: PlacedPiece): V3 {
-    const { H, FL } = dims();
-    return this.edit!.worldPos(p, isRoofType(p.type) ? H + 0.3 : isWallType(p.type) ? 0.5 : FL + 0.25);
+    return this.edit!.worldPos(p, isRoofType(p.type) ? 0.3 : 0.4);
   }
 
-  private placePiece(tool: Extract<Tool, { kind: 'piece' }>, c: Cand, color: Hex): PlacedPiece {
+  private placePiece(tool: Extract<Tool, { kind: 'piece' }>, c: Cand, color: Hex, finish?: string): PlacedPiece {
     const house = this.house!, edit = this.edit!;
     const piece: PlacedPiece = { id: uid('pc_'), type: c.type, x: c.x, z: c.z, rot: c.rot, color };
+    if (c.level === 1 && !isRoofType(c.type)) piece.level = 1;
+    if (finish) piece.finish = finish;
     if (tool.creationId) piece.creationId = tool.creationId;
     store.update(() => {
       house.pieces.push(piece);
@@ -1183,16 +1640,13 @@ export class BuildScene extends GameScene {
 
   /** Erase brush: remove whatever is under the pointer. */
   private eraseAt(x: number, y: number): void {
-    this.setRay(x, y);
     if (this.mode === 'house' && this.edit && this.house) {
-      for (const h of this.ray.intersectObjects(this.edit.pickLayers(), true)) {
-        const p = this.edit.pieceFromObject(h.object);
-        if (!p) continue;
-        this.removePieceData(p, true);
-        this.eraseStroke.push(p);
-        return;
-      }
+      const p = this.pieceUnder(x, y);
+      if (!p) return;
+      this.removePieceData(p, true);
+      this.eraseStroke.push(p);
     } else if (this.mode === 'town') {
+      this.setRay(x, y);
       const h = this.ray.intersectObjects([...this.decoPicks.values()], false)[0];
       const id = h?.object.userData.decoId as string | undefined;
       const d = id ? store.data.town.decorations.find((q) => q.id === id) : undefined;
@@ -1234,7 +1688,7 @@ export class BuildScene extends GameScene {
 
   private notMine(ownerId: string): void {
     const name = store.profileById(ownerId)?.name ?? 'someone';
-    toast(`That one is ${name}'s 🌳`);
+    toast(`That one is ${name}'s`);
   }
 
   // ── Undo ──
@@ -1301,6 +1755,91 @@ export class BuildScene extends GameScene {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Move + duplicate
+  // ═══════════════════════════════════════════════════════════════════════
+  /** Pick a piece up: it hides, a ghost follows the pointer, drop to place (or ✖ to put it back). */
+  private beginMove(p: PlacedPiece, viaDrag: boolean): void {
+    if (!this.edit || !this.house) return;
+    this.closeBubble();
+    this.selMarker.visible = false;
+    this.sel = null;
+    this.palItems?.querySelectorAll('.ptile').forEach((n) => n.classList.remove('on'));
+    this.tool = { kind: 'move', id: 'move', piece: p, from: { x: p.x, z: p.z, rot: p.rot, level: levelOf(p) }, viaDrag };
+    this.moveCtx = makeCtx(this.house.pieces.filter((q) => q.id !== p.id));
+    const o = this.edit.objs.get(p.id);
+    if (o) o.visible = false;
+    this.clearGhost();
+    this.refreshBrushPanel();
+    if (!viaDrag) toast('Drag it where you want it');
+    bus.emit('pieceSelected', { pos: this.fxPos(p) });
+  }
+
+  /** If a move was abandoned, put the piece back (visible, original spot). */
+  private restoreMoved(): void {
+    const t = this.tool;
+    if (t?.kind !== 'move' || !this.edit) return;
+    t.piece.x = t.from.x;
+    t.piece.z = t.from.z;
+    t.piece.rot = t.from.rot;
+    const o = this.edit.objs.get(t.piece.id);
+    if (o) o.visible = true;
+  }
+
+  private applyMove(tool: Extract<Tool, { kind: 'move' }>, c: Cand): void {
+    const p = tool.piece, edit = this.edit!;
+    const from = { ...tool.from };
+    const moved = from.x !== c.x || from.z !== c.z || from.rot !== c.rot || from.level !== c.level;
+    store.update(() => {
+      p.x = c.x;
+      p.z = c.z;
+      p.rot = c.rot;
+      if (c.level === 1 && !isRoofType(p.type)) p.level = 1;
+      else delete p.level;
+    });
+    const obj = edit.objs.get(p.id);
+    if (obj) obj.visible = true;
+    edit.update(p);
+    if (obj) {
+      obj.rotation.y = pieceRotY(p);
+      obj.position.y = pieceBaseY(p, edit.ctx);
+    }
+    this.houseVer++;
+    this.ghostKey = '';
+    bus.emit('piecePlaced', { pos: this.fxPos(p), type: p.type, object: obj });
+    if (moved) {
+      this.pushUndo(() => {
+        store.update(() => {
+          p.x = from.x;
+          p.z = from.z;
+          p.rot = from.rot;
+          if (from.level === 1) p.level = 1;
+          else delete p.level;
+        });
+        edit.update(p);
+        const o = edit.objs.get(p.id);
+        if (o) {
+          o.rotation.y = pieceRotY(p);
+          popScale(o, 0.3, 0.2);
+        }
+        this.houseVer++;
+      });
+    }
+    tool.from = { x: p.x, z: p.z, rot: p.rot, level: levelOf(p) };
+  }
+
+  /** 📋 Arm a brush that places copies of the selected piece. */
+  private duplicateSelected(): void {
+    const p = this.selectedPiece();
+    if (!p) return;
+    const def = pieceDef(p.type);
+    if (!def) return;
+    this.deselect();
+    this.setTool({ kind: 'piece', id: `p:${p.type}`, type: p.type, color: p.color, finish: p.finish, creationId: p.creationId, rot: p.rot, paint: false });
+    this.toolRot = p.rot;
+    toast('Tap to place a copy');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Selection + bubble
   // ═══════════════════════════════════════════════════════════════════════
   private deselect(): void {
@@ -1316,19 +1855,22 @@ export class BuildScene extends GameScene {
     this.placeMarker(p);
     bus.emit('pieceSelected', { pos: this.fxPos(p) });
     if (this.house.ownerId !== store.profile.id) {
-      toast("Only the owner can change this 🏡");
+      toast('Only the owner can change this house');
       return;
     }
-    const canRot = !(p.type === 'floor' || p.type === 'roofFlat' || p.type === 'rug' || p.type === 'table' || p.type === 'lamp' || p.type === 'plant');
-    const canColor = p.type !== 'creation';
+    const def = pieceDef(p.type)!;
+    const canRot = def.kind !== 'floor' && p.type !== 'table' && p.type !== 'lamp' && p.type !== 'rug' && p.type !== 'beanBag' && p.type !== 'hedge' && p.type !== 'yardTree' && p.type !== 'plant' && p.type !== 'monstera';
     const edit = this.edit;
     this.openBubble({
       rotate: canRot,
-      color: canColor,
-      current: p.color,
+      move: true,
+      dup: true,
+      style: def.kind !== 'creation',
+      styleFor: p,
       anchor: () => edit.topPoint(p, this.tmpV),
       onRotate: () => this.rotateSelected(),
-      onColor: (c) => this.recolorSelected(c),
+      onMove: () => this.beginMove(p, false),
+      onDup: () => this.duplicateSelected(),
       onDelete: () => this.deleteSelected(),
     });
   }
@@ -1344,74 +1886,105 @@ export class BuildScene extends GameScene {
       this.notMine(d.ownerId);
       return;
     }
-    const h = decoDef(d.type)?.height ?? 1.5;
+    const h = decoDef(d.type)?.height ?? 2;
     this.openBubble({
       rotate: d.type !== 'streetLamp',
-      color: true,
-      current: d.color,
-      anchor: () => this.tmpV.set(d.x, h + 0.2, d.z),
+      move: false,
+      dup: false,
+      style: true,
+      styleDeco: d,
+      anchor: () => this.tmpV.set(d.x, h + 0.3, d.z),
       onRotate: () => this.rotateSelected(),
-      onColor: (c) => this.recolorSelected(c),
       onDelete: () => this.deleteSelected(),
     });
   }
 
-  /** Ring on the ground (or a bar along a wall edge) around the selected thing. */
+  /** Outline on the ground around the selected thing (rectangle for footprints, bar for wall edges). */
   private placeMarker(t: PlacedPiece | Decoration): void {
     this.selMarker.visible = true;
     this.selMarker.scale.setScalar(1);
-    if ('ownerId' in t) {
-      this.selMarker.position.set(t.x, 0.14, t.z);
-      this.selMarker.rotation.y = 0;
-      this.selRing.visible = true;
+    this.selMarker.rotation.y = 0;
+    const rect = (cx: number, cy: number, cz: number, w: number, d: number) => {
+      const th = 0.09;
       this.selBar.visible = false;
-      this.selRing.scale.setScalar(1.05);
+      const spec: [number, number, number, number][] = [[0, -d / 2, w + th, th], [0, d / 2, w + th, th], [-w / 2, 0, th, d + th], [w / 2, 0, th, d + th]];
+      this.selFrame.forEach((m, i) => {
+        m.visible = true;
+        m.position.set(spec[i][0], 0, spec[i][1]);
+        m.scale.set(spec[i][2], 1, spec[i][3]);
+      });
+      this.selMarker.position.set(cx, cy, cz);
+    };
+    if ('ownerId' in t) {
+      rect(t.x, 0.14, t.z, 1.4, 1.4);
       return;
     }
-    const w = this.edit!.worldPos(t, 0.14);
-    const { H, FL } = dims();
-    if (isWallType(t.type)) {
+    const m = this.edit!.markerBox(t);
+    const ox = this.edit!.plot.origin.x, oz = this.edit!.plot.origin.z;
+    if (m.kind === 'edge') {
+      this.selFrame.forEach((f) => (f.visible = false));
       this.selBar.visible = true;
-      this.selRing.visible = false;
-      this.selMarker.position.set(w.x, 0.14, w.z);
-      this.selMarker.rotation.y = t.rot % 2 ? Math.PI / 2 : 0;
-    } else {
-      this.selBar.visible = false;
-      this.selRing.visible = true;
-      this.selRing.scale.setScalar(1);
-      this.selMarker.rotation.y = 0;
-      this.selMarker.position.set(w.x, isRoofType(t.type) ? H + 0.3 : FL + 0.04, w.z);
-    }
+      this.selBar.scale.set(m.alongX ? m.w : m.d, 1, m.alongX ? m.d : m.w);
+      this.selMarker.position.set(ox + m.x, m.y, oz + m.z);
+    } else rect(ox + m.x, m.y, oz + m.z, m.w, m.d);
   }
 
   private openBubble(o: {
     rotate: boolean;
-    color: boolean;
-    current: Hex;
+    move: boolean;
+    dup: boolean;
+    style: boolean;
+    styleFor?: PlacedPiece;
+    styleDeco?: Decoration;
     anchor: () => THREE.Vector3 | null;
     onRotate: () => void;
-    onColor: (c: Hex) => void;
+    onMove?: () => void;
+    onDup?: () => void;
     onDelete: () => void;
   }): void {
     this.closeBubble();
     const b = el('div', 'bbubble panel', this.ui) as HTMLDivElement;
     const row = el('div', 'row', b);
     if (o.rotate) button(row, { icon: '⟳', cls: 'round' }, o.onRotate);
+    if (o.move) button(row, { icon: '✋', cls: 'round' }, () => o.onMove?.());
+    if (o.dup) button(row, { icon: '📋', cls: 'round' }, () => o.onDup?.());
     let tray: HTMLDivElement | null = null;
-    if (o.color) {
+    if (o.style) {
       button(row, { icon: '🎨', cls: 'round' }, () => {
         if (tray) {
           tray.style.display = tray.style.display === 'none' ? '' : 'none';
           return;
         }
-        tray = el('div', '', b) as HTMLDivElement;
-        swatches(tray, tuning.art.palette, o.current, o.onColor, 'wide');
+        tray = el('div', 'btray', b) as HTMLDivElement;
+        this.buildBubbleStyle(tray, o.styleFor, o.styleDeco);
       });
     }
     button(row, { icon: '🗑️', cls: 'round' }, o.onDelete);
     this.bubble = b;
     this.bubbleAnchor = o.anchor;
     this.positionOverlays();
+  }
+
+  private buildBubbleStyle(tray: HTMLElement, p?: PlacedPiece, d?: Decoration): void {
+    if (p) {
+      const def = pieceDef(p.type)!;
+      const fins = finishesFor(def.finishSet);
+      let picker: StylePicker;
+      picker = buildStylePicker(tray, {
+        finishes: fins,
+        finish: p.finish ?? def.finish,
+        colors: this.colorsFor(def, p.finish ?? def.finish),
+        color: p.color,
+        onFinish: (f) => {
+          const color = f.colors.some((c) => c.toLowerCase() === p.color.toLowerCase()) ? p.color : f.colors[0];
+          this.setStyle(p, color, f.id);
+          picker.set(f.id, color, f.colors);
+        },
+        onColor: (c) => this.setStyle(p, c, p.finish ?? def.finish),
+      });
+    } else if (d) {
+      buildStylePicker(tray, { finishes: [], colors: tuning.art.palette, color: d.color, onColor: (c) => this.recolorDeco(d, c) });
+    }
   }
 
   private closeBubble(): void {
@@ -1434,23 +2007,18 @@ export class BuildScene extends GameScene {
   private rotateSelected(): void {
     const p = this.selectedPiece();
     if (p && this.edit && this.house) {
+      const def = pieceDef(p.type)!;
       const from = p.rot;
-      let to: Rot = ((from + 1) % 4) as Rot;
-      if (isWallType(p.type)) {
-        // a wall swings to the next free edge of its cell
-        let found = false;
-        for (let s = 1; s <= 3; s++) {
-          const r = ((from + s) % 4) as Rot;
-          if (canPlace(this.house.pieces, { type: p.type, x: p.x, z: p.z, rot: r }, p.id)) {
-            to = r;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          bus.emit('placementBlocked', { pos: this.fxPos(p) });
-          return;
-        }
+      let to: Rot | null = null;
+      if (def.kind === 'creation') to = ((from + 1) & 3) as Rot;
+      for (let s = 1; s <= 3 && to === null; s++) {
+        const r = ((from + s) & 3) as Rot;
+        if (p.type === 'roofGable' && r % 2 === from % 2) continue;
+        if (canPlace(this.house.pieces, { type: p.type, x: p.x, z: p.z, rot: r, level: levelOf(p) }, p.id)) to = r;
+      }
+      if (to === null) {
+        bus.emit('placementBlocked', { pos: this.fxPos(p) });
+        return;
       }
       this.setRotation(p, to);
       this.pushUndo(() => this.setRotation(p, from, true));
@@ -1475,7 +2043,8 @@ export class BuildScene extends GameScene {
     });
     this.houseVer++;
     edit.update(p);
-    if (obj && !isRoofType(p.type) && steps !== 0) {
+    const flat = pieceDef(p.type)?.kind === 'roof' || pieceDef(p.type)?.kind === 'floor';
+    if (obj && !flat && steps !== 0) {
       const a0 = obj.rotation.y, a1 = a0 - steps * (Math.PI / 2);
       const end = pieceRotY(p);
       tweens.add(0.22, (k) => (obj.rotation.y = a0 + (a1 - a0) * k), { ease: ease.outBack, key: obj.rotation, done: () => (obj.rotation.y = end) });
@@ -1496,55 +2065,56 @@ export class BuildScene extends GameScene {
     if (!quiet) bus.emit('pieceRotated', { pos: { x: d.x, y: 0.5, z: d.z }, object: obj });
   }
 
-  private recolorSelected(color: Hex): void {
-    const p = this.selectedPiece();
-    if (p && this.edit) {
-      const orig = p.color;
-      if (orig === color) return;
-      const merge = this.lastRecolor && this.lastRecolor.id === p.id && performance.now() - this.lastRecolor.t < tuning.build.undoMergeMs;
-      store.update(() => {
-        p.color = color;
-      });
-      this.edit.update(p);
-      this.houseVer++;
-      this.lastColor.set(colorKey(p.type), color);
-      const obj = this.edit.objs.get(p.id);
-      bus.emit('pieceRecolored', { pos: this.fxPos(p), object: obj });
-      if (merge) this.lastRecolor!.t = performance.now();
-      else {
-        this.pushUndo(() => {
-          store.update(() => {
-            p.color = orig;
-          });
-          this.edit?.update(p);
-          this.houseVer++;
+  /** Change a piece's colour + finish (recolors within a few seconds merge into one undo step). */
+  private setStyle(p: PlacedPiece, color: Hex, finish?: string): void {
+    const edit = this.edit;
+    if (!edit) return;
+    const origColor = p.color, origFinish = p.finish;
+    if (origColor === color && origFinish === finish) return;
+    const merge = this.lastRecolor && this.lastRecolor.id === p.id && performance.now() - this.lastRecolor.t < tuning.build.undoMergeMs;
+    store.update(() => {
+      p.color = color;
+      if (finish !== undefined) p.finish = finish;
+    });
+    edit.update(p);
+    this.houseVer++;
+    this.rememberStyle(p.type, color, p.finish);
+    bus.emit('pieceRecolored', { pos: this.fxPos(p), object: edit.objs.get(p.id) });
+    if (merge) this.lastRecolor!.t = performance.now();
+    else {
+      this.pushUndo(() => {
+        store.update(() => {
+          p.color = origColor;
+          if (origFinish) p.finish = origFinish;
+          else delete p.finish;
         });
-        this.lastRecolor = { id: p.id, t: performance.now() };
-      }
-      return;
+        this.edit?.update(p);
+        this.houseVer++;
+      });
+      this.lastRecolor = { id: p.id, t: performance.now() };
     }
-    const d = this.selectedDeco();
-    if (d) {
-      const orig = d.color;
-      if (orig === color) return;
-      const merge = this.lastRecolor && this.lastRecolor.id === d.id && performance.now() - this.lastRecolor.t < tuning.build.undoMergeMs;
-      store.update(() => {
-        d.color = color;
-      });
-      const obj = this.decoObjs.get(d.id);
-      if (obj) refillDecorationObject(obj, d);
-      bus.emit('pieceRecolored', { pos: { x: d.x, y: 0.6, z: d.z }, object: obj });
-      if (merge) this.lastRecolor!.t = performance.now();
-      else {
-        this.pushUndo(() => {
-          store.update(() => {
-            d.color = orig;
-          });
-          const o = this.decoObjs.get(d.id);
-          if (o) refillDecorationObject(o, d);
+  }
+
+  private recolorDeco(d: Decoration, color: Hex): void {
+    const orig = d.color;
+    if (orig === color) return;
+    const merge = this.lastRecolor && this.lastRecolor.id === d.id && performance.now() - this.lastRecolor.t < tuning.build.undoMergeMs;
+    store.update(() => {
+      d.color = color;
+    });
+    const obj = this.decoObjs.get(d.id);
+    if (obj) refillDecorationObject(obj, d);
+    bus.emit('pieceRecolored', { pos: { x: d.x, y: 0.6, z: d.z }, object: obj });
+    if (merge) this.lastRecolor!.t = performance.now();
+    else {
+      this.pushUndo(() => {
+        store.update(() => {
+          d.color = orig;
         });
-        this.lastRecolor = { id: d.id, t: performance.now() };
-      }
+        const o = this.decoObjs.get(d.id);
+        if (o) refillDecorationObject(o, d);
+      });
+      this.lastRecolor = { id: d.id, t: performance.now() };
     }
   }
 
@@ -1587,31 +2157,68 @@ export class BuildScene extends GameScene {
     this.refreshHud();
   }
 
-  /** 🪄 A small 4×4 house in one tap. */
-  private stampStarter(): void {
+  // ── Starter templates ──
+  /** The big "Choose your starter home" sheet (shown on an empty lot, and from ✨ Templates). */
+  private showTemplateSheet(): void {
+    const house = this.house;
+    if (!house || this.sheetOpen || house.ownerId !== store.profile.id) return;
+    if (house.pieces.length > 0) {
+      toast('Templates are for empty lots - remove the house to start over');
+      return;
+    }
+    this.sheetOpen = true;
+    this.setTool(null);
+    sheet((body, close) => {
+      body.classList.add('tsheet');
+      el('h2', '', body, 'Choose your starter home');
+      el('div', 'tsub', body, 'Pick a style, then make it yours. You can change everything.');
+      const row = el('div', 'tcards', body);
+      TEMPLATES.forEach((t, i) => {
+        const card = el('button', 'tcard', row);
+        card.style.setProperty('--ca', t.colors[0]);
+        card.style.setProperty('--cb', t.colors[1]);
+        const thumb = el('div', 'tthumb', card);
+        el('span', 'tico', thumb, t.icon);
+        el('div', 'tname', card, t.name);
+        el('div', 'tblurb', card, t.blurb);
+        bindTap(card, () => {
+          bus.emit('uiTap', { kind: 'big' });
+          close();
+          this.sheetOpen = false;
+          this.stampTemplate(t);
+        });
+        window.setTimeout(() => {
+          const url = templateThumb(t);
+          if (url) {
+            thumb.style.backgroundImage = `url(${url})`;
+            thumb.classList.add('ready');
+          }
+        }, 80 + i * 60);
+      });
+      const bottom = el('div', 'row', body);
+      bottom.style.justifyContent = 'center';
+      bottom.style.marginTop = '18px';
+      button(bottom, { label: 'Start from scratch', cls: 'ghost big', tap: 'back' }, () => {
+        close();
+        this.sheetOpen = false;
+      });
+    }, { dismissable: true });
+    // the backdrop closes the sheet without going through our buttons
+    const watch = window.setInterval(() => {
+      if (!document.querySelector('.tsheet')) {
+        this.sheetOpen = false;
+        window.clearInterval(watch);
+      }
+    }, 300);
+    this.onExit(() => window.clearInterval(watch));
+  }
+
+  /** Stamp a template with a quick build-up animation. */
+  private stampTemplate(t: Template): void {
     const house = this.house, edit = this.edit;
     if (!house || !edit || house.pieces.length > 0 || house.ownerId !== store.profile.id) return;
-    const N = tuning.build.plotCells;
-    const o = Math.floor((N - 4) / 2);
-    const k = this.plotIdx % STARTER_WALLS.length;
-    const wallC = this.lastColor.get('wall') ?? STARTER_WALLS[k];
-    const roofC = this.lastColor.get('roofGable') ?? STARTER_ROOFS[k];
-    const floorC = this.lastColor.get('floor') ?? pieceDef('floor')!.color;
-    const list: PlacedPiece[] = [];
-    const add = (type: PieceType, x: number, z: number, rot: Rot, color: Hex) => list.push({ id: uid('pc_'), type, x: o + x, z: o + z, rot, color });
-    for (let z = 0; z < 4; z++) for (let x = 0; x < 4; x++) add('floor', x, z, 0, floorC);
-    const south: PieceType[] = ['wall', 'wallDoor', 'wallWindow', 'wall'];
-    const north: PieceType[] = ['wall', 'wallWindow', 'wallWindow', 'wall'];
-    const west: PieceType[] = ['wall', 'wallWindow', 'wall', 'wall'];
-    const east: PieceType[] = ['wall', 'wall', 'wallWindow', 'wall'];
-    for (let i = 0; i < 4; i++) {
-      add(south[i], i, 3, 2, wallC);
-      add(north[i], i, 0, 0, wallC);
-      add(west[i], 0, i, 3, wallC);
-      add(east[i], 3, i, 1, wallC);
-    }
-    for (let z = 0; z < 4; z++) for (let x = 0; x < 4; x++) add('roofGable', x, z, 0, roofC);
-
+    const f = this.plotFrontVec(this.plotIdx);
+    const list = orientLayout(t.build(), turnsForFront(f.nx, f.nz), tuning.build.plotCells);
     store.update(() => {
       house.pieces.push(...list);
     });
@@ -1619,19 +2226,22 @@ export class BuildScene extends GameScene {
     const objs = list.map((p) => edit.add(p, false));
     edit.refreshAll();
     this.houseVer++;
-    // build it up piece by piece
+    const step = Math.min(26, 1700 / list.length);
+    const every = Math.max(4, Math.floor(list.length / 24));
     objs.forEach((obj, i) => {
       obj.visible = false;
       window.setTimeout(() => {
         if (!obj.parent) return;
         obj.visible = true;
-        if (i % 4 === 0) bus.emit('piecePlaced', { pos: this.fxPos(list[i]), type: list[i].type, object: obj });
-        else popScale(obj, tuning.build.placeBounceSeconds, 0.28);
-      }, 24 * i);
+        if (i % every === 0) bus.emit('piecePlaced', { pos: this.fxPos(list[i]), type: list[i].type, object: obj });
+        else popScale(obj, tuning.build.placeBounceSeconds, 0.22);
+      }, step * i);
     });
     const ids = list.map((p) => p.id);
     this.pushUndo(() => this.undoPlaced(ids));
     this.refreshHud();
+    // show the upstairs too if the template has one: the camera stays on the ground floor
+    window.setTimeout(() => toast(`${t.icon} ${t.name} - make it yours`), 600);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1640,16 +2250,17 @@ export class BuildScene extends GameScene {
   update(dt: number, t: number): void {
     this.orbit.update(dt);
     this.env.update(dt, t);
+    tickBuildMaterials(t);
 
     // the sun follows what we look at, so the shadow map stays sharp
     this.rig.sun.target.position.copy(this.orbit.target);
     this.rig.sun.position.copy(this.orbit.target).add(this.sunOffset);
 
-    // floating ＋ signs face the camera and bob
-    for (const s of this.plusSigns) {
-      s.quaternion.copy(this.camera.quaternion);   // billboard: face the camera exactly
-      s.position.y = s.userData.baseY + Math.sin(t * 2 + s.userData.phase) * 0.22;
-      s.scale.setScalar(1.25 * (1 + Math.sin(t * 3 + s.userData.phase) * 0.04));
+    // pins face the camera and bob
+    for (const s of this.pins) {
+      s.rotation.y = this.orbit.yaw;
+      s.position.y = s.userData.baseY + Math.sin(t * 2 + s.userData.phase) * 0.3;
+      s.scale.setScalar(1.2 * (1 + Math.sin(t * 3 + s.userData.phase) * 0.04));
     }
 
     // ghost glides to its snapped spot and bobs a little
@@ -1657,15 +2268,11 @@ export class BuildScene extends GameScene {
       const k = 1 - Math.exp(-tuning.build.ghostLerp * dt);
       this.ghostHolder.position.lerp(this.ghostGoal, k);
       this.ghostBob += dt;
-      if (this.ghostObj) this.ghostObj.position.y = this.ghostBaseY + 0.05 + Math.sin(this.ghostBob * 7) * 0.02;
+      if (this.ghostObj) this.ghostObj.position.y = this.ghostBaseY + 0.04 + Math.sin(this.ghostBob * 7) * 0.015;
     }
 
     // selection marker pulse
-    if (this.selMarker.visible) {
-      const s = 1 + Math.sin(t * 7) * 0.05;
-      this.selRing.scale.setScalar(s);
-      this.selBar.scale.set(1, 1, 1 + Math.sin(t * 7) * 0.2);
-    }
+    if (this.selMarker.visible) this.selMat.opacity = 0.7 + Math.sin(t * 7) * 0.25;
 
     this.positionOverlays();
   }
@@ -1704,3 +2311,8 @@ export class BuildScene extends GameScene {
     }
   }
 }
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+

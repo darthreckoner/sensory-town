@@ -24,23 +24,43 @@ export const tuning = {
 
   // ── Art / palette ─────────────────────────────────────────────────────────
   art: {
-    // Main candy palette offered in every color picker (16 swatches).
+    // v2 fashion palette (24) offered in every color picker — neutrals, denim,
+    // earth tones, jewel tones and a few neons/pastels as *choices*.
     palette: [
-      '#ff8fb1', '#ff5d8f', '#ffb38a', '#ffd166', '#fff3a3', '#b8f2a6',
-      '#5fd3a5', '#7fd8ff', '#5aa9ff', '#9d8cff', '#c9a7ff', '#f2f2f7',
-      '#ffffff', '#3d3a4b', '#8a5a44', '#e0b48a',
+      '#16151c', '#3a3a44', '#8d8b96', '#f6f6f4', '#efe6d2', '#b8a07a',
+      '#6e4a33', '#3d5a80', '#22304f', '#9fb59a', '#2f6b4f', '#6b7a3c',
+      '#7d1f3a', '#e23b3b', '#ff8a3d', '#ffc93c', '#b6ff3b', '#00b3a4',
+      '#00d4ff', '#3d6bff', '#7c4dff', '#b9a6ff', '#ff2e88', '#f6b8c8',
     ],
     skinTones: ['#ffe0cc', '#f6c9a8', '#e0a87e', '#c58a5f', '#93603d', '#5e3b27'],
-    clearcoat: 0.6,
-    clearcoatRoughness: 0.25,
-    roughness: 0.42,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.3,
+    roughness: 0.45,
     envIntensity: 0.9,
-    exposure: 1.05,
-    shadowMapSize: 1024,
-    skyTop: '#9fd8ff',
-    skyBottom: '#ffe6f0',
-    fogNear: 60,
-    fogFar: 140,
+    exposure: 1.0,
+    shadowMapSize: 2048,
+    // golden hour (town / build)
+    skyTop: '#2f5fc4',
+    skyMid: '#7fa7e8',
+    skyBottom: '#ffc7a1',
+    sunColor: '#ffcf9e',
+    sunIntensity: 3.0,
+    sunElevation: 26,          // degrees above the horizon
+    sunAzimuth: 225,           // degrees (0 = +z / south, 90 = +x / east)
+    hemiSky: '#9ec5ff',
+    hemiGround: '#6b5a4a',
+    hemiIntensity: 0.85,
+    fogColor: '#f3c9aa',
+    fogNear: 90,
+    fogFar: 260,
+    // creator studio (workshop / style)
+    studioBg: '#14121c',
+    studioKey: 2.4,            // softbox key light intensity
+    studioRim: 1.6,            // colored LED rim lights intensity
+    studioRimA: '#ff2e88',
+    studioRimB: '#00d4ff',
+    ringLight: 9,              // brightness of the ring light seen in reflections
+    studioEnvIntensity: 1.0,
   },
 
   // ── Audio ─────────────────────────────────────────────────────────────────
@@ -51,9 +71,9 @@ export const tuning = {
     musicInWorkshop: false,
     pitchVariation: 0.08,      // ± fraction of pitch randomization per event
     volumeVariation: 0.15,     // ± fraction of volume randomization per event
-    engineBaseHz: 55,
-    engineTopHz: 150,
-    engineVolume: 0.14,
+    engineBaseHz: 42,
+    engineTopHz: 128,
+    engineVolume: 0.16,
     pourVolume: 0.35,
     minRepeatMs: 28,           // the same sound won't retrigger faster than this
   },
@@ -68,126 +88,193 @@ export const tuning = {
   dressup: {
     rotateSpeed: 0.012,        // radians per px dragged
     rotateInertia: 0.92,
-    zoomMin: 3.2,              // camera distance
+    zoomMin: 2.7,              // camera distance
     zoomMax: 7.5,
-    zoomDefault: 5.4,
-    poseSeconds: 0.9,
-    sparkleCount: 26,
+    zoomDefault: 5.6,
+    poseSeconds: 0.9,          // quick pose (taps, changes)
+    poseHold: 1.7,             // the Pose button holds longer for the photo
+    sparkleCount: 22,
     // character animation
     waveSeconds: 1.5,
     hopSeconds: 0.5,
-    hopHeight: 0.28,           // world units
-    idleSway: 0.02,            // radians of body roll
-    breath: 0.018,             // body squash amount while breathing
-    // dress-up stage
+    hopHeight: 0.22,           // world units
+    idleSway: 0.012,           // radians of body roll
+    breath: 0.018,             // chest rise while breathing
+    // Style studio camera
     zoomButtonStep: 1.25,      // distance multiplier per +/- tap
     zoomWheel: 0.0015,         // distance change per wheel delta
     zoomSmooth: 9,             // camera glide (higher = snappier)
-    lookYWide: 1.08,           // camera look-at height when zoomed out
-    lookYClose: 1.5,           // ... and when zoomed in (upper body)
+    lookYWide: 1.0,            // camera look-at height when zoomed out (world y, floor = 0)
+    lookYClose: 1.55,          // ... and when zoomed in (head and shoulders)
     fov: 34,
-    faceFrontDelay: 6,         // seconds idle before the character turns back to the front
+    faceFrontDelay: 7,         // seconds idle before the character turns back to the front
     faceFrontSpeed: 3.2,
     autoFocus: true,           // tapping a category glides the camera to that body part
-    focusDist: { hair: 3.7, accessory: 3.7, skin: 4.1, top: 4.7, bottom: 5.0, shoes: 4.4 } as Record<string, number>,
-    focusLookBias: { hair: 0.1, accessory: 0.1, skin: 0, top: 0, bottom: -0.4, shoes: -0.8 } as Record<string, number>,
+    focusDist: { hair: 3.0, accessory: 3.0, skin: 4.6, top: 3.9, bottom: 4.5, shoes: 3.6, looks: 5.6 } as Record<string, number>,
+    focusLookY: { hair: 1.66, accessory: 1.66, skin: 1.0, top: 1.28, bottom: 0.62, shoes: 0.3, looks: 0.98 } as Record<string, number>,
     spinSoundEvery: 0.16,      // seconds between swish sounds while spinning
     surpriseStaggerMs: 120,    // delay between pieces when rolling a random outfit
     undoMax: 40,
+    // Looks (saved outfits) + photo moment
+    looksMax: 4,
+    longPressMs: 550,
+    flashDelayMs: 380,         // pose ramp-up before the camera flash
+    studio: {
+      floorOpacity: 0.84,      // glossy floor over the mirrored reflection
+      ledSpeed: 0.18,          // LED color drift (cycles per second)
+      beamAlpha: 0.1,          // spotlight cone brightness
+    },
+    // locomotion (Character.setMove): cycles per second, swing amplitudes in radians
+    gait: {
+      walkHz: 1.15, runHz: 2.2,
+      walkSwing: 0.46, runSwing: 0.85,
+      walkKnee: 0.8, runKnee: 1.6,
+      walkArm: 0.4, runArm: 0.9,
+      walkBob: 0.04, runBob: 0.09,
+      walkLean: 0.02, runLean: 0.17,
+    },
   },
 
-  // ── Driving ───────────────────────────────────────────────────────────────
+  // ── Driving + the big world (drive module) ───────────────────────────────
   drive: {
-    topSpeed: 16,              // units / s
-    reverseSpeed: 6,
-    acceleration: 9,
-    brakeForce: 22,
-    coastDrag: 2.2,
-    turnRate: 2.3,             // rad / s at full steer
+    // handling (units / s)
+    topSpeed: 22,
+    reverseSpeed: 7,
+    acceleration: 11,
+    brakeForce: 26,
+    coastDrag: 2.0,
+    turnRate: 2.4,             // rad / s at full steer
     turnSpeedFull: 4,          // speed at which steering reaches full authority
-    bounceRestitution: 0.45,
-    cameraFollowDistance: 11,
-    cameraHeight: 6.5,
-    cameraLag: 4.5,
-    controlSize: 132,          // px, on-screen control diameter
-    hornCooldownMs: 250,
-    jobTriggerRadius: 3.2,
-    doorTriggerRadius: 3.0,
-    passengerHopSeconds: 0.6,
-
-    // ── added by the drive module ──
-    // handling
-    grip: 10,                  // sideways grip (1/s): higher = less drift
+    bounceRestitution: 0.4,
+    grip: 9.5,                 // sideways grip (1/s): higher = less drift
     steerResponse: 9,          // how fast the steering wheel follows the stick (1/s)
-    turnMinAuthority: 0.22,    // fraction of turnRate available at a standstill (helps get unstuck)
-    turnSpeedLoss: 0.3,        // fraction of turnRate lost at top speed
-    joyDeadzone: 0.12,         // joystick steering deadzone (0..1)
-    joyGasZone: 0.5,           // joystick vertical push (0..1) needed before it acts as gas / reverse
+    turnMinAuthority: 0.22,    // fraction of turnRate available at a standstill
+    turnSpeedLoss: 0.32,       // fraction of turnRate lost at top speed
+    joyDeadzone: 0.12,
+    joyGasZone: 0.5,           // joystick vertical push needed before it acts as gas / reverse
+    // boost (⚡ / Shift): a burst, no score, no penalty
+    boostSeconds: 2.0,
+    boostCooldown: 3.5,        // the meter refills over this long
+    boostSpeed: 1.5,           // top speed multiplier while boosting
+    boostAccel: 2.6,           // acceleration multiplier while boosting
+    boostFov: 15,              // extra FOV degrees at full boost
+    // drift (brake or Space + steer at speed): looser grip, skid marks, tyre squeal
+    driftMinSpeed: 9,
+    driftGrip: 0.24,           // grip multiplier while drifting
+    driftYaw: 1.3,             // steering multiplier while drifting
+    driftBrake: 0.28,          // how much of brakeForce still applies while drifting
+    skidSlip: 2.6,             // sideways speed that leaves skid marks
+    // air + terrain
+    gravity: 24,
+    climbLimit: 0.95,          // a step taller than this is a wall for the car
+    slopeGravity: 9,           // how hard hills slow you down / speed you up
+    launchMinVy: 1.2,          // upward speed that counts as a jump (carJump)
+    landMinVy: 3.5,            // landing speed that counts as a landing (carLand)
+    airSteer: 0.35,            // steering authority in the air
+    waterLimit: -0.5,          // the car can't enter ground lower than this (the sea, the lake)
     // collisions
-    carRadius: 1.05,           // the car is two circles (front + rear) of this radius
-    carCircleOffset: 0.95,     // distance of each circle from the car center
-    collideCooldownMs: 280,    // min gap between carCollide events
-    collideMinSpeed: 2.2,      // softer bumps are silent and don't rebound
+    carRadius: 1.0,            // the car is two circles (front + rear) of this radius
+    carCircleOffset: 1.0,
+    collideCooldownMs: 280,
+    collideMinSpeed: 2.4,
     // camera
-    cameraLookAhead: 5,        // look this far in front of the car
+    cameraFollowDistance: 11,
+    cameraHeight: 6.0,
+    cameraLag: 4.5,
+    cameraLookAhead: 5,
     cameraLookHeight: 1.2,
-    cameraPosLag: 1.7,         // position follow speed = cameraLag * this
-    cameraMinDistance: 4.5,    // closest the camera is pulled in when a building is in the way
+    cameraPosLag: 1.7,
+    cameraMinDistance: 4.5,
     cameraFov: 54,
     cameraFovBoost: 8,         // extra FOV at top speed
-    shadowSize: 26,            // half-extent of the sun shadow box that follows the car
-    shadowAhead: 9,            // shadow box is centered this far in front of the car
+    fogNear: 90,
+    fogFar: 340,
+    shadowSize: 30,            // half-extent of the sun shadow box that follows the player
+    shadowAhead: 10,
+    shadowMap: 2048,
     // car look
-    carLean: 0.11,             // body roll in turns (rad at full steer + full speed)
-    carPitch: 0.05,            // nose lift / dive on accel / brake (rad)
-    carSquash: 0.045,          // vertical squash on accel / brake
-    carBounceKick: 2.4,        // bounce impulse of a bump
-    wheelSteerAngle: 0.5,      // max front wheel angle (rad)
-    driverScale: 0.7,          // size of the seated characters in the car
-    driverY: 1.17,             // seat cushion height: the character's butt (Character.SEAT_Y) rests here
+    carLean: 0.1,
+    carPitch: 0.05,
+    carSquash: 0.04,
+    carBounceKick: 2.2,
+    wheelSteerAngle: 0.5,
+    driverScale: 0.92,         // size of the seated characters in the car
+    driverY: 0.62,             // seat cushion height: the character's seat point (Character.SEAT_Y) rests here
     driverYaw: Math.PI,        // characters are built facing +z; the car faces -z
-    // jobs (pickup / drop-off — optional, no timer, no penalty)
-    jobRespawnSeconds: 4,      // pause before the next passenger appears
-    jobFirstSeconds: 1.5,      // delay before the very first passenger
-    jobMinDistance: 32,        // destination is at least this far from the pickup
-    jobWaveRadius: 16,         // a waiting passenger waves when the car is this close
+    // on foot
+    walkSpeed: 4.6,
+    runSpeed: 8.4,
+    runStick: 0.86,            // stick push (0..1) that counts as running
+    footAccel: 26,
+    jumpSpeed: 7.4,
+    footGravity: 24,
+    footRadius: 0.42,
+    stepUp: 0.62,              // tallest step a walker climbs
+    waterWade: -0.22,          // walkers stop at the shoreline
+    getInRadius: 3.6,          // how close to the car you must be to hop back in
+    getOutMaxSpeed: 5,
+    footCamDistance: 5.4,
+    footCamHeight: 2.5,
+    footCamLag: 7,
+    footCamLook: 1.25,
+    footstepEvery: 0.46,       // seconds between footstep ticks at a walk (shorter when running)
+    // doors (walk-in / drive-in triggers)
+    doorRadius: 1.6,
+    plotDoorRadius: 2.4,
+    plotCarSpeed: 6,           // a car below this speed triggers a For Sale mat
+    doorPadCarSpeed: 99,       // the Studio / Builder pads trigger at any speed (as before)
+    doorTriggerRadius: 3.0,    // the Studio / Builder car pads
+    // charms
+    charmRadius: 2.3,
+    charmBeamRange: 70,
+    charmMapRange: 40,
+    // jobs (pickup / drop-off, optional, no timer)
+    controlSize: 132,          // px, on-screen control diameter
+    hornCooldownMs: 250,
+    jobTriggerRadius: 3.4,
+    passengerHopSeconds: 0.6,
+    jobRespawnSeconds: 4,
+    jobFirstSeconds: 2.5,
+    jobMinDistance: 70,
+    jobWaveRadius: 18,
     jobWaveEverySeconds: 6,
-    jobCelebrateSeconds: 2.8,  // how long a dropped-off passenger waves before leaving
+    jobCelebrateSeconds: 2.8,
     // hud
-    minimapSize: 150,          // px
-    minimapRadius: 66,         // world units shown from the center of the map to the edge of the dial
-    nameTagDistance: 45,       // owner tags fade in inside this distance
+    minimapSize: 160,          // px
+    minimapRadius: 72,         // world units from the centre to the edge of the dial
+    nameTagDistance: 55,
     // world
-    cloudSpeed: 0.0035,        // rad / s around the town
-    sceneryTrees: 50,
-    sceneryPines: 40,
-    sceneryBushes: 56,
-    sceneryFlowerPatches: 44,
+    cloudSpeed: 0.0035,
     scenerySeed: 20261016,
+    cullTerrain: 250,          // terrain chunks farther than this hide
+    cullVegetation: 190,
   },
 
   // ── House & village building ──────────────────────────────────────────────
   build: {
-    gridSize: 1,               // world units per cell
-    plotCells: 8,              // each house plot is plotCells × plotCells
-    plotsPerTown: 8,
-    snapTolerance: 0.5,        // cells — drag release snaps to the nearest cell within this
-    wallHeight: 1.6,
-    wallThickness: 0.14,
+    gridSize: 1,               // world units (metres) per cell
+    plotCells: 12,             // each house plot is plotCells x plotCells (v2: bigger lots)
+    plotsPerTown: 12,
+    snapTolerance: 0.5,        // cells: a drag this far outside the plot still snaps to its edge
+    wallHeight: 2.6,           // one storey (v2: real proportions; a character is ~1.75 tall)
+    wallThickness: 0.2,
+    floorHeight: 0.12,         // thickness of a floor tile (keep a bit above the lot's pad)
     placeBounceSeconds: 0.35,
-    maxUndo: 60,
-    orbitMinDistance: 8,       // town view: closest the camera may get
-    orbitMaxDistance: 70,      // town view: farthest
+    maxUndo: 80,
+    // roofs
+    roofPitch: 0.5,            // gable rise per unit of run
+    roofMaxRise: 2.4,          // tallest a gable/slant may get (wide houses get a flatter pitch)
+    roofThickness: 0.16,
+    roofFlatThickness: 0.22,
+    roofOverhang: 0.3,
+    slantPitch: 0.24,          // modern single-slope roof rise per unit of run
+    // camera
+    orbitMinDistance: 10,      // town view: closest the camera may get
+    orbitMaxDistance: 130,     // town view: farthest (the whole residential district fits)
     orbitRotateSpeed: 0.006,   // radians per px dragged
-    // — added by the build module —
-    floorHeight: 0.12,         // thickness of a floor tile (keep a bit above the plot pad)
-    roofPitch: 0.55,           // gable rise per unit of run
-    roofMaxRise: 1.5,          // tallest a gable may get (wide houses get a flatter pitch)
-    roofThickness: 0.1,
-    roofOverhang: 0.14,
-    houseDistance: 15,         // camera distance when editing a house
-    houseMinDistance: 5,
-    houseMaxDistance: 30,
+    houseDistance: 24,         // camera distance when editing a house
+    houseMinDistance: 6,
+    houseMaxDistance: 52,
     townPitch: 0.85,           // camera elevation (radians) in town / house mode
     housePitch: 1.0,
     pitchMin: 0.32,            // never lets the camera sink near the ground
@@ -195,14 +282,18 @@ export const tuning = {
     zoomWheelSpeed: 0.0014,    // mouse wheel zoom (per wheel unit)
     cameraRate: 14,            // camera smoothing (per second) while the player moves it
     glideRate: 4.2,            // camera smoothing while gliding to a house
+    // placing
     ghostLerp: 26,             // ghost preview position smoothing (per second)
     touchLift: 70,             // px the palette-drag ghost floats above a finger
     dragStartPx: 8,            // palette tile drag threshold
     tapMaxPx: 12,              // pointer travel still counted as a tap
     tapMaxMs: 650,
-    wallLowScale: 0.3,         // height of walls in "low walls" view
-    tagHeight: 3.6,            // owner name tag height above the plot
+    wallLowScale: 0.18,        // height of walls in "low walls" view
+    tagHeight: 7,              // owner name tag height above the plot
     undoMergeMs: 4000,         // recolors of one piece within this window share one undo step
+    fineDetailBelow: 2200,     // town bakes drop tiny details (books, keys...) above this many pieces
+    shadowSizeTown: 46,        // half-extent of the sun's shadow box in town view
+    shadowSizeHouse: 18,       // ...and when editing a house
   },
 
   // ── Workshop: squishy ─────────────────────────────────────────────────────
@@ -226,7 +317,11 @@ export const tuning = {
 
   // ── Workshop: slime ───────────────────────────────────────────────────────
   slime: {
-    stretchLimit: 3.2,         // world units the grabbed point can travel (soft rubber-band after ~60 %)
+    // ── base slime ("glossy"); the other types override some of these (see `types` below) ──
+    stretchLimit: 2.2,         // world units the grabbed point can travel (soft rubber-band beyond bandStart)
+    bandStart: 0.75,           // fraction of stretchLimit where the rubber band starts to resist
+    snapWidth: 0.12,           // how far past the band (× stretchLimit) the strand is "at its limit"…
+    snapRate: 4,               // …and how fast tension builds there; a full tension snaps the strand
     snapBackSpeed: 12,         // release spring frequency in rad/s (higher = snappier return)
     viscosity: 0.86,           // 0..1, higher = gooier: more damped, calmer, slower-settling jiggle
     plasticity: 0.12,          // fraction of a pull that stays behind (soft peaks, folds)…
@@ -234,17 +329,19 @@ export const tuning = {
     grabRadius: 0.9,           // world units of slime that follow a fingertip
     pokeDepth: 0.35,           // dent depth of a tap
     glitterDensity: 0.6,       // 0..1 glitter amount (1 = a flake in half the cells)
-    clickDistance: 0.18,       // world units of finger travel per wet click sound
+    clickDistance: 0.18,       // world units of finger travel per wet click at a medium speed
     radius: 1.9,               // blob footprint radius (mesh / tray knobs are read once at startup)
     // mesh / shape
-    domeHeight: 0.6,           // dome height as a fraction of radius
+    domeHeight: 0.46,          // dome height as a fraction of radius
     gridN: 88,                 // mesh is (gridN + 1)² vertices (88 → 7.9k, max 250)
+    flatten: 0,                // >0 spreads the blob lower and wider, <0 puffs it up
     // stretch shaping
     grabReach: 1.25,           // slime within grabRadius × this follows the finger
     thinning: 1.4,             // how quickly a strand thins as it stretches
     bulbRadius: 0.13,          // gooey drop at the end of a strand
     droop: 0.12,               // sag of a sideways strand
     strandLag: 16,             // how fast the strand body trails the fingertip (rad/s, lower = whippier)
+    fiber: 0,                  // 0..1 fibrous fluting along a strand (cloud slime)
     // feel
     followSpeed: 36,           // how tightly the fingertip drags the slime (rad/s)
     followDamping: 0.9,        // 1 = no overshoot when the finger stops
@@ -253,10 +350,24 @@ export const tuning = {
     slipDistance: 1.5,         // sideways pull beyond this drags the strand's root along
     slipRate: 3,
     rippleSpeed: 1.6,          // world units / s that pokes and landings ripple outward
-    rippleDamping: 3.2,        // how fast ripples die
+    rippleDamping: 2.4,        // how fast ripples die (lower = they travel farther)
+    pokeRipple: 1,             // poke / press ripple strength
+    dentDecay: 3.2,            // how fast a poke dent refills (per second)
+    pokeMemory: 0.14,          // fraction of a poke dent that lingers as a dimple
     jiggleFreq: 13,            // whole-blob wobble after a release (rad/s)
     breath: 0.02,              // idle breathing amplitude
     pickRadius: 0.07,          // how close to a surface point a touch must be to grab it
+    // sound rhythm: clicks come every clickDistance × (clickSlow … clickFast) of finger travel
+    clickSlow: 1.5,            // slow drags: sparse clicks
+    clickFast: 0.55,           // fast drags: dense crackle
+    clickMinMs: 38,
+    bigPopChance: 0.05,        // chance a click is a bigger "air" pop (grows with stretch)
+    // air bubbles trapped by folds
+    bubbleMax: 14,
+    bubbleLife: 12,            // seconds before an unpopped bubble pops by itself
+    // dark-studio look
+    ringLight: 0.3,            // extra analytic ring-light catchlight on the surface (the room env has its own; 0 = off)
+    ledRim: 0.3,               // extra pink / cyan LED rim glow on the silhouette (0 = off)
     // tray
     trayMargin: 0.16,
     trayRim: 0.22,
@@ -266,12 +377,41 @@ export const tuning = {
     sprinkleCount: 80,
     starCount: 40,
     pearlCount: 54,
-    extraColors: ['#caff8a', '#8affd9', '#ffa6e7', '#a6b8ff', '#ffe66d', '#ff8a8a', '#d6a2ff', '#7df9ff'],
+    beadCount: 170,            // crunchy beads
+    // colors: vivid, not baby pastel (the fashion palette from tuning.art.palette follows these)
+    defaultColor: '#ff2e88',
+    extraColors: [
+      '#ff2e88', '#ff4d4d', '#ff8a3d', '#ffc93c', '#b6ff3b', '#00e5a0', '#00d4ff', '#2b6bff',
+      '#7c4dff', '#d946ef', '#14b8a6', '#e11d48',
+    ],
+    // per-type overrides of the knobs above (glossy = the base values)
+    types: {
+      glossy: {},
+      butter: {
+        stretchLimit: 1.8, thinning: 0.55, bulbRadius: 0.2, plasticity: 0.5, relaxSpeed: 0.05, viscosity: 1, snapBackSpeed: 7,
+        followSpeed: 30, strandLag: 11, droop: 0.28, jiggleFreq: 9, rippleSpeed: 1.2, rippleDamping: 5.5, dentDecay: 0.7, pokeMemory: 0.55,
+        flatten: 0.16, grabRadius: 1.05, snapRate: 2.5, breath: 0.01, clickSlow: 1.9, clickFast: 0.8,
+      },
+      clear: {
+        stretchLimit: 2.7, thinning: 1.9, bulbRadius: 0.11, plasticity: 0.05, relaxSpeed: 0.4, viscosity: 0.55, snapBackSpeed: 15,
+        strandLag: 20, jiggleFreq: 15, rippleDamping: 1.8, dentDecay: 3.6, pokeRipple: 1.2,
+      },
+      crunchy: {
+        stretchLimit: 1.9, thinning: 0.9, bulbRadius: 0.17, plasticity: 0.25, relaxSpeed: 0.15, viscosity: 0.95, snapBackSpeed: 9,
+        jiggleFreq: 10, rippleDamping: 4.5, dentDecay: 1.6, pokeMemory: 0.3, flatten: 0.08, clickSlow: 1.3, clickFast: 0.5,
+      },
+      cloud: {
+        stretchLimit: 2.4, thinning: 0.9, bulbRadius: 0.2, plasticity: 0.3, relaxSpeed: 0.12, viscosity: 0.5, strandLag: 9, droop: 0.2,
+        jiggleFreq: 9, rippleDamping: 4, flatten: -0.1, fiber: 0.3, dentDecay: 1.3, snapRate: 3, clickSlow: 1.7, clickFast: 0.6,
+      },
+      holo: { jiggleFreq: 14, rippleDamping: 2 },
+      galaxy: { viscosity: 0.9, relaxSpeed: 0.2, jiggleFreq: 12, rippleDamping: 2.2 },
+    } as Record<string, Record<string, number>>,
   },
 
   // ── Workshop: wax cracking ────────────────────────────────────────────────
   wax: {
-    waxColors: ['#ff6f91', '#ffc75f', '#f9f871', '#7be0ad', '#4ec5ff', '#a78bfa', '#ffffff', '#ff9671', '#2d2a4a', '#ffb3d1'],
+    waxColors: ['#ff2e88', '#7c4dff', '#00d4ff', '#b6ff3b', '#ffc93c', '#ff8a3d', '#e23b3b', '#16151c', '#f6f6f4', '#3d6bff', '#00b3a4', '#f6b8c8'],
     maxLayers: 6,
     layerThickness: 0.055,     // world units added per layer
     shellGap: 0.012,

@@ -21,7 +21,7 @@ interface P {
 }
 
 const MAX = 600;
-const CONFETTI_COLORS = ['#ff5d8f', '#ffd166', '#5fd3a5', '#7fd8ff', '#9d8cff', '#ffb38a', '#ffffff'];
+const CONFETTI_COLORS = ['#ff2e88', '#7c4dff', '#00d4ff', '#b6ff3b', '#ffc93c', '#ffffff', '#16151c'];
 
 function starGeometry(): THREE.BufferGeometry {
   // 4-point twinkle star, flat, double-sided billboard-ish (we face it to camera)
@@ -61,7 +61,7 @@ class Fx {
     };
     mk('sparkle', starGeometry(), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, depthWrite: false, toneMapped: false }));
     mk('frost', starGeometry(), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false }));
-    mk('confetti', new THREE.PlaneGeometry(1, 1.6), new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.1 }));
+    mk('confetti', new THREE.PlaneGeometry(1, 1.6), new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: 0.3, metalness: 0.6 }));
     mk('puff', new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, roughness: 1, flatShading: true, depthWrite: false }));
     mk('drop', new THREE.SphereGeometry(1, 10, 8), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.15, clearcoat: 1 }));
   }

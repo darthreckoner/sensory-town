@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toyMatUnique, type Finish } from '../art/materials';
+import { materialSignature } from './mesher';
 
 const TAU = Math.PI * 2;
 
@@ -190,7 +191,7 @@ export function bakeStatic(root: THREE.Object3D): THREE.Group {
     g.clearGroups();
     rel.multiplyMatrices(inv, m.matrixWorld);
     g.applyMatrix4(rel);
-    const key = `${mat.uuid}|${m.castShadow ? 1 : 0}${m.receiveShadow ? 1 : 0}`;
+    const key = `${materialSignature(mat)}|${m.castShadow ? 1 : 0}${m.receiveShadow ? 1 : 0}`;
     let b = buckets.get(key);
     if (!b) buckets.set(key, (b = { mat, cast: m.castShadow, receive: m.receiveShadow, geos: [] }));
     b.geos.push(g);

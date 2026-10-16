@@ -1,52 +1,61 @@
-// Dress-up boutique: a glossy podium on a pastel stage with a mirror, curtains,
-// a clothes rack and string lights. Pick hair / top / bottom / shoes / extras /
-// skin on the left, pick options + colors on the right, spin the character with
-// a drag, pinch or wheel to zoom. Every change pops with sparkles + a pose and
-// autosaves to the active profile.
+// "Style" — a dark photo-studio / runway. A glossy black stage with a light ring,
+// two colored spotlights, LED edge glow, a big mirror, a creator ring light on a
+// tripod and a neon sign with the player's name. Pick hair / top / bottom / shoes /
+// extras / skin on the left, options + colors on the right, spin the character with a
+// drag, pinch or wheel to zoom. Every change pops with sparkles + a pose and autosaves.
+// Extras: Random look, Undo, 4 saved Looks, and a Pose button that ends in a camera flash.
 import * as THREE from 'three';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type OutfitSlot } from '../core/events';
 import { tuning } from '../tuning';
-import { Character, OUTFIT_CATALOG, type CatalogSlot } from '../art/character';
-import { addLights, gradientTexture } from '../art/env';
-import { toyMat, toyMatUnique, mesh, roundedBox } from '../art/materials';
-import { el, button, bindTap, swatches, tabs } from '../ui/ui';
+import { Character, OUTFIT_CATALOG, POSE_ORDER, type CatalogSlot } from '../art/character';
+import { studioLights } from '../art/env';
+import { toyMat, mesh, roundedBox } from '../art/materials';
+import { isUnlocked, lockedToast, rewardFor } from '../core/unlocks';
+import { el, button, bindTap, swatches, tabs, toast } from '../ui/ui';
 import type { Outfit } from '../core/model';
 
-type Category = CatalogSlot | 'skin';
+type Category = CatalogSlot | 'skin' | 'looks';
 
 const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'hair', icon: '💇', label: 'Hair' },
   { id: 'top', icon: '👕', label: 'Top' },
   { id: 'bottom', icon: '👖', label: 'Bottom' },
   { id: 'shoes', icon: '👟', label: 'Shoes' },
-  { id: 'accessory', icon: '🎀', label: 'Extras' },
+  { id: 'accessory', icon: '🕶️', label: 'Extras' },
   { id: 'skin', icon: '🙂', label: 'Skin' },
+  { id: 'looks', icon: '💾', label: 'Looks' },
 ];
 const SLOTS: CatalogSlot[] = ['hair', 'top', 'bottom', 'shoes', 'accessory'];
 
-const PODIUM_TOP = 0.29; // character stands here
 const TAU = Math.PI * 2;
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const smooth = (x: number) => {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 export class DressUpScene extends GameScene {
   readonly name = 'dressup' as const;
 
   private char: Character | null = null;
   private stage = new THREE.Group();
-  private sway: { obj: THREE.Object3D; phase: number; amp: number }[] = [];
-  private bulbMats: THREE.MeshStandardMaterial[] = [];
+  private mirror = new THREE.Group(); // reflection of the character in the glossy floor
   private ray = new THREE.Raycaster();
+  private ledMats: THREE.MeshBasicMaterial[] = [];
+  private recDot!: THREE.MeshBasicMaterial;
+  private neonCanvas!: HTMLCanvasElement;
+  private neonTex!: THREE.CanvasTexture;
 
   // view state
   private rot = 0;
   private spinVel = 0;
   private dist = tuning.dressup.zoomDefault;
   private targetDist = tuning.dressup.zoomDefault;
-  private lookBias = 0;
-  private targetBias = 0;
+  private lookY = tuning.dressup.lookYWide;
+  private focusLook: number | null = null; // category focus height (null = follow the zoom)
   private idle = 0;
   private spinSoundT = 0;
   private viewShift = 0;
@@ -55,8 +64,6 @@ export class DressUpScene extends GameScene {
   private pointers = new Map<number, { x: number; y: number }>();
   private dragging = false;
   private pinchDist = 0;
-  private downX = 0;
-  private downY = 0;
   private downT = 0;
   private moved = 0;
   private lastMoveT = 0;
@@ -66,123 +73,160 @@ export class DressUpScene extends GameScene {
   private panel!: HTMLDivElement;
   private tabSet: ((id: string) => void) | null = null;
   private undoBtn: HTMLButtonElement | null = null;
+  private flashEl: HTMLDivElement | null = null;
+  private vfEl: HTMLDivElement | null = null;
   private history: Outfit[] = [];
   private timers: number[] = [];
+  private poseIdx = 0;
+  private poseLock = 0;
+  private lookSel = 0;
+  private nextOverwrite = 0;
 
   // ── Stage ────────────────────────────────────────────────────────────────
   init(): void {
-    this.fxScale = 1.3;
+    this.fxScale = 1.2;
     this.camera.fov = tuning.dressup.fov;
     this.camera.near = 0.1;
     this.camera.far = 80;
-    this.buildStage();
+    this.buildStudio();
     this.scene.add(this.stage);
   }
 
-  private buildStage(): void {
+  private led(color: string, hdr = 1.8): THREE.MeshBasicMaterial {
+    const m = new THREE.MeshBasicMaterial({ color, toneMapped: false });
+    m.color.multiplyScalar(hdr);
+    return m;
+  }
+
+  private buildStudio(): void {
     const S = this.scene;
     const st = this.stage;
-    S.background = gradientTexture('#ffc9e0', '#f0e2ff', '#ffe8f2');
-    addLights(S, { shadowSize: 4.5, sunPos: new THREE.Vector3(2.8, 6.5, 5.5) });
-    // warm key accent, pink + lilac rims for a "spotlit stage" feel
-    const warm = new THREE.PointLight('#ffd9b3', 14, 0, 2);
-    warm.position.set(1.2, 3.4, 3.2);
-    const rimPink = new THREE.PointLight('#ff9fd0', 9, 0, 2);
-    rimPink.position.set(-2.6, 2.6, -1.4);
-    const rimLilac = new THREE.PointLight('#b9a6ff', 7, 0, 2);
-    rimLilac.position.set(2.8, 2.2, -1.6);
-    S.add(warm, rimPink, rimLilac);
+    studioLights(S, { shadowSize: 3.4 });
+    // soft front fill so faces always read, plus two colored spotlights on the stage
+    const fill = new THREE.DirectionalLight('#dfe6ff', 0.9);
+    fill.position.set(-2, 2.6, 8);
+    S.add(fill);
+    const spotL = new THREE.SpotLight('#ffd6ec', 70, 16, 0.55, 0.85);
+    spotL.position.set(-3.4, 5.6, 3.4);
+    spotL.target.position.set(0, 1.0, 0);
+    const spotR = new THREE.SpotLight('#cdeeff', 70, 16, 0.55, 0.85);
+    spotR.position.set(3.4, 5.6, 3.4);
+    spotR.target.position.set(0, 1.0, 0);
+    S.add(spotL, spotR, spotL.target, spotR.target);
 
-    // ── floor: soft checker + a round rug ──
-    const floorTex = this.canvasTex(128, 128, (g) => {
-      g.fillStyle = '#fff3f8';
-      g.fillRect(0, 0, 128, 128);
-      g.fillStyle = '#ffdce9';
-      g.fillRect(0, 0, 64, 64);
-      g.fillRect(64, 64, 64, 64);
-    });
-    floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-    floorTex.repeat.set(9, 9);
-    const floor = mesh(new THREE.CircleGeometry(12, 64), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.55 }), false, true);
-    floor.rotation.x = -Math.PI / 2;
-    st.add(floor);
-    const rug = mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.03, 64), toyMat('#e6d9ff', 'satin'), false, true);
-    rug.position.y = 0.015;
-    const rugRing = mesh(new THREE.TorusGeometry(2.0, 0.04, 8, 64), toyMat('#ffc2da', 'satin'), false, true);
-    rugRing.rotation.x = Math.PI / 2;
-    rugRing.position.y = 0.04;
-    st.add(rug, rugRing);
-
-    // ── glossy podium ──
-    const podBase = mesh(new THREE.CylinderGeometry(1.08, 1.17, 0.22, 64), toyMat('#ff9ec6', 'gloss'));
-    podBase.position.y = 0.14;
-    const podTop = mesh(new THREE.CylinderGeometry(0.96, 1.0, 0.07, 64), toyMat('#fff6fa', 'gloss'));
-    podTop.position.y = 0.255;
-    const podRing = mesh(new THREE.TorusGeometry(0.98, 0.032, 10, 72), toyMat('#ffd166', 'metal'), false, false);
-    podRing.rotation.x = Math.PI / 2;
-    podRing.position.y = 0.29;
-    st.add(podBase, podTop, podRing);
-
-    // ── curved striped back wall + wainscot ──
-    const wallTex = this.canvasTex(256, 256, (g) => {
-      g.fillStyle = '#ffe7f1';
+    // ── glossy black floor (the reflection is a mirrored copy of the character underneath) ──
+    const floorTex = this.canvasTex(256, 256, (g) => {
+      const gr = g.createRadialGradient(128, 128, 6, 128, 128, 128);
+      gr.addColorStop(0, '#2c2938');
+      gr.addColorStop(0.5, '#15131d');
+      gr.addColorStop(1, '#0b0a10');
+      g.fillStyle = gr;
       g.fillRect(0, 0, 256, 256);
-      g.fillStyle = '#ffd8e7';
-      for (let x = 0; x < 256; x += 128) g.fillRect(x, 0, 64, 256);
-      g.fillStyle = 'rgba(255,255,255,0.55)';
-      for (let y = 20; y < 256; y += 64) for (let x = 32; x < 256; x += 128) {
-        g.beginPath();
-        g.arc(x, y, 5, 0, TAU);
-        g.fill();
-      }
     });
-    wallTex.wrapS = THREE.RepeatWrapping;
-    wallTex.repeat.set(9, 1);
-    const arc = 2.5;
+    const floor = mesh(
+      new THREE.CircleGeometry(11, 72),
+      new THREE.MeshPhysicalMaterial({
+        map: floorTex, color: '#ffffff', roughness: 0.2, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1,
+        transparent: true, opacity: tuning.dressup.studio.floorOpacity, envMapIntensity: 1.3,
+      }),
+      false,
+      true,
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.renderOrder = 1;
+    st.add(floor);
+    this.mirror.scale.y = -1;
+    st.add(this.mirror);
+
+    // light ring around the stage + a drifting LED edge + a colored light pool
+    const ring1 = this.led('#ff2e88', 2.2);
+    const ring2 = this.led('#00d4ff', 1.8);
+    this.ledMats.push(ring1, ring2);
+    const r1 = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.03, 8, 96), ring1);
+    r1.rotation.x = Math.PI / 2;
+    r1.position.y = 0.012;
+    const r2 = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.022, 8, 120), ring2);
+    r2.rotation.x = Math.PI / 2;
+    r2.position.y = 0.01;
+    st.add(r1, r2);
+    const poolTex = this.canvasTex(128, 128, (g) => {
+      const gr = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+      gr.addColorStop(0, 'rgba(255,255,255,0.55)');
+      gr.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 128, 128);
+    });
+    const pool = new THREE.Mesh(
+      new THREE.CircleGeometry(2.2, 48),
+      new THREE.MeshBasicMaterial({ map: poolTex, color: '#ff5fa8', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, opacity: 0.55 }),
+    );
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.y = 0.006;
+    pool.renderOrder = 2;
+    st.add(pool);
+
+    // ── curved dark backdrop with vertical LED strips ──
+    const arc = 2.3;
     const wall = mesh(
-      new THREE.CylinderGeometry(6.2, 6.2, 7, 64, 1, true, Math.PI - arc / 2, arc),
-      new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.9, side: THREE.BackSide }),
+      new THREE.CylinderGeometry(7.4, 7.4, 9, 64, 1, true, Math.PI - arc / 2, arc),
+      new THREE.MeshStandardMaterial({ color: '#13111a', roughness: 0.85, side: THREE.BackSide }),
       false,
       true,
     );
-    wall.position.y = 3.5;
-    const wains = mesh(
-      new THREE.CylinderGeometry(6.17, 6.17, 1.2, 64, 1, true, Math.PI - arc / 2, arc),
-      new THREE.MeshStandardMaterial({ color: '#efe4ff', roughness: 0.6, side: THREE.BackSide }),
-      false,
-      true,
+    wall.position.y = 4.5;
+    st.add(wall);
+    const stripA = this.led('#ff2e88', 2);
+    const stripB = this.led('#00d4ff', 2);
+    this.ledMats.push(stripA, stripB);
+    [[-0.95, stripA], [-0.62, stripB], [0.62, stripA], [0.95, stripB]].forEach(([a, m]) => {
+      const th = Math.PI + (a as number);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 6.2, 0.07), m as THREE.Material);
+      strip.position.set(Math.sin(th) * 7.2, 3.3, Math.cos(th) * 7.2);
+      st.add(strip);
+    });
+
+    // ── big mirror (back right) with a glowing frame ──
+    this.buildMirror(2.1, -5.5);
+    // ── neon sign with the player's name ──
+    this.neonCanvas = document.createElement('canvas');
+    this.neonCanvas.width = 1024;
+    this.neonCanvas.height = 256;
+    this.neonTex = new THREE.CanvasTexture(this.neonCanvas);
+    this.neonTex.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.6, 0.9),
+      new THREE.MeshBasicMaterial({ map: this.neonTex, transparent: true, depthWrite: false, toneMapped: false }),
     );
-    wains.position.y = 0.6;
-    st.add(wall, wains);
+    sign.position.set(-1.7, 3.5, -5.7);
+    sign.rotation.y = 0.12;
+    st.add(sign);
+    // ── creator ring light on a tripod, with a phone "recording" ──
+    this.buildRingLight(-2.9, -1.5);
+    // ── two crossing spotlight beams ──
+    for (const [x, col] of [[-3.4, '#ff8cc6'], [3.4, '#8fdcff']] as [number, string][]) st.add(this.beam(x, col));
+  }
 
-    // ── arched mirror (back, slightly right of the character) ──
-    this.buildMirror(0.7, -4.9);
-    // ── curtains ──
-    this.buildCurtains();
-    // ── clothes rack, plant, string lights ──
-    this.buildRack(-2.0, -2.7);
-    this.buildPlant(2.7, -2.7);
-    this.buildLights();
-
-    // ── faint spotlight cone from above ──
-    const cone = new THREE.CylinderGeometry(0.2, 2.1, 5.4, 40, 1, true);
-    const cpos = cone.attributes.position;
-    const cols = new Float32Array(cpos.count * 3);
-    for (let i = 0; i < cpos.count; i++) {
-      const k = clamp((cpos.getY(i) + 2.7) / 5.4, 0, 1); // 0 bottom → 1 top
-      const v = 0.11 * k * k;
-      cols[i * 3] = v * 1.0;
-      cols[i * 3 + 1] = v * 0.93;
-      cols[i * 3 + 2] = v * 0.82;
+  private beam(x: number, color: string): THREE.Mesh {
+    const g = new THREE.CylinderGeometry(0.15, 1.5, 6.4, 32, 1, true);
+    g.translate(0, -3.2, 0);
+    const p = g.attributes.position;
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const k = clamp(1 + p.getY(i) / 6.4, 0, 1); // 1 at the lamp → 0 at the floor
+      const v = tuning.dressup.studio.beamAlpha * k * k;
+      cols[i * 3] = c.r * v;
+      cols[i * 3 + 1] = c.g * v;
+      cols[i * 3 + 2] = c.b * v;
     }
-    cone.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    const beam = new THREE.Mesh(
-      cone,
-      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
-    );
-    beam.position.set(0, 3.0, 0);
-    beam.renderOrder = 5;
-    st.add(beam);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    m.position.set(x, 5.6, 3.4);
+    m.lookAt(0, 1.0, 0);
+    m.rotateX(-Math.PI / 2); // the cone extends along -y: point it down the lookAt axis
+    m.renderOrder = 5;
+    return m;
   }
 
   /** Small helper: a canvas texture painted by `draw`. */
@@ -193,248 +237,163 @@ export class DressUpScene extends GameScene {
     draw(c.getContext('2d')!);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
     return t;
   }
 
   private buildMirror(x: number, z: number): void {
     const g = new THREE.Group();
     g.position.set(x, 0, z);
-    const w = 2.5, straight = 2.3, r = w / 2, bottom = 0.45;
-    // mirror glass (flat arch) with a soft sky gradient + glints
-    const shape = new THREE.Shape();
-    shape.moveTo(-r, 0);
-    shape.lineTo(r, 0);
-    shape.lineTo(r, straight);
-    shape.absarc(0, straight, r, 0, Math.PI, false);
-    shape.lineTo(-r, 0);
-    const geo = new THREE.ShapeGeometry(shape, 32);
-    const uv = geo.attributes.uv;
-    const pos = geo.attributes.position;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, (pos.getX(i) + r) / w, pos.getY(i) / (straight + r));
-    const tex = this.canvasTex(128, 256, (c) => {
-      const gr = c.createLinearGradient(0, 0, 0, 256);
-      gr.addColorStop(0, '#f4fbff');
-      gr.addColorStop(1, '#cfe3ff');
-      c.fillStyle = gr;
-      c.fillRect(0, 0, 128, 256);
-      c.fillStyle = 'rgba(255,255,255,0.55)';
-      c.beginPath();
-      c.moveTo(20, 256);
-      c.lineTo(52, 256);
-      c.lineTo(110, 0);
-      c.lineTo(78, 0);
-      c.fill();
-      c.fillStyle = 'rgba(255,255,255,0.35)';
-      c.beginPath();
-      c.moveTo(66, 256);
-      c.lineTo(80, 256);
-      c.lineTo(128, 40);
-      c.lineTo(114, 40);
-      c.fill();
-    });
-    const glass = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
-    glass.position.set(0, bottom, 0);
+    g.rotation.y = -0.18;
+    const w = 2.0, h = 3.5;
+    // dark glass that reflects the studio environment (ring light, LED strips)
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshStandardMaterial({ color: '#c9cde0', metalness: 1, roughness: 0.04, envMapIntensity: 1.6 }),
+    );
+    glass.position.y = 0.4 + h / 2;
     g.add(glass);
-    // gold arched frame
-    const gold = toyMat('#ffd166', 'metal');
-    const frameR = r + 0.07;
-    const arch = mesh(new THREE.TorusGeometry(frameR, 0.075, 12, 48, Math.PI), gold, false, false);
-    arch.position.set(0, bottom + straight, 0.02);
-    g.add(arch);
-    for (const s of [-1, 1]) {
-      const post = mesh(new THREE.CapsuleGeometry(0.075, straight, 6, 12), gold, false, false);
-      post.position.set(s * frameR, bottom + straight / 2, 0.02);
-      g.add(post);
-    }
-    const base = mesh(roundedBox(w + 0.5, 0.18, 0.3, 0.08), toyMat('#ffb3d1', 'gloss'), false, true);
-    base.position.set(0, bottom - 0.06, 0.05);
-    g.add(base);
-    this.stage.add(g);
-  }
-
-  private buildCurtains(): void {
-    const mat = toyMatUnique('#d8c4ff', 'fabric');
-    mat.side = THREE.DoubleSide;
-    const rodMat = toyMat('#ffd166', 'metal');
-    const rod = mesh(new THREE.CapsuleGeometry(0.05, 10.6, 6, 12), rodMat, false, false);
-    rod.rotation.z = Math.PI / 2;
-    rod.position.set(0, 5.45, -4.6);
-    this.stage.add(rod);
-    for (const s of [-1, 1]) {
-      const geo = new THREE.PlaneGeometry(1.9, 5.1, 40, 1);
-      const p = geo.attributes.position;
-      for (let i = 0; i < p.count; i++) {
-        const u = p.getX(i) / 1.9 + 0.5;
-        // ruffled folds
-        p.setZ(i, Math.sin(u * Math.PI * 2 * 4) * 0.13);
-      }
-      geo.computeVertexNormals();
-      const c = mesh(geo, mat, false, false);
-      c.position.set(s * 3.55, 2.85, -4.55);
-      this.stage.add(c);
-      // a ribbon tie-back around the folds
-      const tie = mesh(new THREE.TorusGeometry(0.96, 0.05, 8, 40), toyMat('#ffb3d1', 'gloss'), false, false);
-      tie.rotation.x = Math.PI / 2;
-      tie.scale.set(1, 0.17, 1);
-      tie.position.set(s * 3.55, 1.9, -4.55);
-      this.stage.add(tie);
-    }
-    // pelmet along the top
-    const pelmet = mesh(roundedBox(10.8, 0.5, 0.35, 0.16), toyMat('#c9b0ff', 'fabric'), false, false);
-    pelmet.position.set(0, 5.45, -4.5);
-    this.stage.add(pelmet);
-  }
-
-  private buildRack(x: number, z: number): void {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.rotation.y = 0.22;
-    const metal = toyMat('#fff2c4', 'metal');
-    const pink = toyMat('#ff9ec6', 'gloss');
-    for (const s of [-1, 1]) {
-      const post = mesh(new THREE.CapsuleGeometry(0.04, 1.9, 6, 10), metal, true, false);
-      post.position.set(s * 1.0, 1.05, 0);
-      const foot = mesh(new THREE.CapsuleGeometry(0.04, 0.9, 6, 10), metal, true, false);
-      foot.rotation.x = Math.PI / 2;
-      foot.position.set(s * 1.0, 0.12, 0);
-      g.add(post, foot);
-      for (const zz of [-0.45, 0.45]) {
-        const wheel = mesh(new THREE.SphereGeometry(0.07, 12, 10), pink, true, false);
-        wheel.position.set(s * 1.0, 0.07, zz);
-        g.add(wheel);
-      }
-    }
-    const railBar = mesh(new THREE.CapsuleGeometry(0.04, 2.0, 6, 10), pink, true, false);
-    railBar.rotation.z = Math.PI / 2;
-    railBar.position.set(0, 2.0, 0);
-    g.add(railBar);
-    const cols = ['#ff8fb1', '#9d8cff', '#ffd166', '#7fd8ff', '#5fd3a5', '#ffb38a'];
-    for (let i = 0; i < 6; i++) {
-      const piece = this.garment(i % 5, cols[i]);
-      piece.position.set(-0.8 + i * 0.32, 1.98, 0.02 * (i % 2 ? 1 : -1));
-      piece.rotation.y = (i % 2 ? 1 : -1) * 0.25;
-      g.add(piece);
-      this.sway.push({ obj: piece, phase: i * 1.3, amp: 0.035 });
-    }
-    this.stage.add(g);
-  }
-
-  /** A tiny garment on a hanger; the group origin is the hook. */
-  private garment(kind: number, color: string): THREE.Group {
-    const g = new THREE.Group();
-    const fab = toyMat(color, 'fabric');
-    const gold = toyMat('#ffd166', 'metal');
-    const hook = mesh(new THREE.TorusGeometry(0.045, 0.011, 6, 14, Math.PI * 1.6), gold, false, false);
-    hook.position.y = 0.04;
-    const bar = mesh(new THREE.CapsuleGeometry(0.014, 0.28, 4, 8), gold, false, false);
-    bar.rotation.z = Math.PI / 2;
-    bar.position.y = -0.07;
-    g.add(hook, bar);
-    const part = (geo: THREE.BufferGeometry, x: number, y: number, rz = 0) => {
-      const m = mesh(geo, fab, true, false);
-      m.position.set(x, y, 0);
-      m.rotation.z = rz;
+    const frame = toyMat('#0f0e17', 'satin');
+    const mk = (fw: number, fh: number, px: number, py: number) => {
+      const m = mesh(roundedBox(fw, fh, 0.08, 0.02), frame, false, false);
+      m.position.set(px, py, -0.02);
       g.add(m);
     };
-    switch (kind) {
-      case 0: // tee
-      case 3: // hoodie
-        part(roundedBox(0.3, 0.36, 0.07, 0.05), 0, -0.27);
-        part(new THREE.CapsuleGeometry(0.05, 0.1, 4, 8), -0.2, -0.14, 1.0);
-        part(new THREE.CapsuleGeometry(0.05, 0.1, 4, 8), 0.2, -0.14, -1.0);
-        if (kind === 3) part(new THREE.SphereGeometry(0.1, 12, 10), 0, -0.1);
-        break;
-      case 1: { // dress
-        const pts = [[0.001, -0.78], [0.2, -0.78], [0.25, -0.73], [0.2, -0.5], [0.1, -0.24], [0.07, -0.12], [0.001, -0.1]].map(([r, y]) => new THREE.Vector2(r, y));
-        const m = mesh(new THREE.LatheGeometry(pts, 20), fab, true, false);
-        g.add(m);
-        break;
-      }
-      case 2: { // skirt
-        const pts = [[0.001, -0.5], [0.2, -0.5], [0.22, -0.46], [0.15, -0.3], [0.1, -0.15], [0.001, -0.14]].map(([r, y]) => new THREE.Vector2(r, y));
-        g.add(mesh(new THREE.LatheGeometry(pts, 20), fab, true, false));
-        break;
-      }
-      default: // pants
-        part(roundedBox(0.28, 0.12, 0.07, 0.05), 0, -0.16);
-        part(new THREE.CapsuleGeometry(0.065, 0.3, 4, 8), -0.075, -0.4);
-        part(new THREE.CapsuleGeometry(0.065, 0.3, 4, 8), 0.075, -0.4);
-        break;
-    }
-    return g;
-  }
-
-  private buildPlant(x: number, z: number): void {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    const potPts = [[0.001, 0], [0.2, 0], [0.25, 0.04], [0.3, 0.5], [0.33, 0.55], [0.3, 0.58]].map(([r, y]) => new THREE.Vector2(r, y));
-    const pot = mesh(new THREE.LatheGeometry(potPts, 28), toyMat('#9fe8c8', 'gloss'));
-    g.add(pot);
-    const soil = mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.03, 20), toyMat('#8a5a44', 'matte'), false, false);
-    soil.position.y = 0.5;
-    g.add(soil);
-    const leafGeo = new THREE.SphereGeometry(1, 12, 8);
-    const greens = ['#5fd3a5', '#7fe0b4', '#4bc596'];
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * TAU;
-      const lean = 0.35 + (i % 3) * 0.22;
-      const leaf = mesh(leafGeo, toyMat(greens[i % 3], 'gloss'), true, false);
-      leaf.scale.set(0.11, 0.42 + (i % 2) * 0.12, 0.035);
-      const pivot = new THREE.Group();
-      pivot.position.y = 0.52;
-      pivot.rotation.y = a;
-      leaf.position.set(0, 0.36, 0);
-      const tilt = new THREE.Group();
-      tilt.rotation.x = lean;
-      tilt.add(leaf);
-      pivot.add(tilt);
-      g.add(pivot);
-      this.sway.push({ obj: tilt, phase: i * 0.7, amp: 0.04 });
+    mk(w + 0.16, 0.08, 0, 0.4 + h + 0.04);
+    mk(w + 0.16, 0.08, 0, 0.36);
+    mk(0.08, h + 0.1, -w / 2 - 0.04, 0.4 + h / 2);
+    mk(0.08, h + 0.1, w / 2 + 0.04, 0.4 + h / 2);
+    const edge = this.led('#ff2e88', 2.2);
+    this.ledMats.push(edge);
+    for (const sx of [-1, 1]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.03, h, 0.03), edge);
+      bar.position.set(sx * (w / 2 + 0.01), 0.4 + h / 2, 0.01);
+      g.add(bar);
     }
     this.stage.add(g);
   }
 
-  private buildLights(): void {
-    // a sagging string of warm party bulbs across the back
-    const pts: THREE.Vector3[] = [];
-    const span = 5.2;
-    for (let i = 0; i <= 24; i++) {
-      const x = -span + (i / 24) * span * 2;
-      pts.push(new THREE.Vector3(x, 4.85 - 0.55 * (1 - Math.pow(x / span, 2)), -5.2));
+  private buildRingLight(x: number, z: number): void {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = 0.75;
+    const metal = toyMat('#1d1b26', 'metal');
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * TAU;
+      const leg = mesh(new THREE.CapsuleGeometry(0.018, 1.0, 4, 8), metal, true, false);
+      leg.position.set(Math.sin(a) * 0.3, 0.5, Math.cos(a) * 0.3);
+      leg.rotation.set(Math.cos(a) * 0.3, 0, -Math.sin(a) * 0.3);
+      g.add(leg);
     }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    this.stage.add(mesh(new THREE.TubeGeometry(curve, 60, 0.012, 5, false), toyMat('#6b6780', 'matte'), false, false));
-    const colors = ['#fff3a3', '#ffc6e0', '#c9f1ff', '#e0d0ff'];
-    for (const c of colors) this.bulbMats.push(new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.0, roughness: 0.3 }));
-    const geo = new THREE.SphereGeometry(0.1, 14, 10);
-    for (let i = 1; i < 16; i++) {
-      const p = curve.getPoint(i / 16);
-      const b = new THREE.Mesh(geo, this.bulbMats[i % this.bulbMats.length]);
-      b.position.set(p.x, p.y - 0.1, p.z);
-      this.stage.add(b);
+    const pole = mesh(new THREE.CapsuleGeometry(0.014, 0.7, 4, 8), metal, true, false);
+    pole.position.y = 1.35;
+    g.add(pole);
+    const ringMat = this.led('#fff4ea', 2.4);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.038, 10, 48), ringMat);
+    ring.position.y = 1.75;
+    g.add(ring);
+    // phone in the middle, red REC dot
+    const phone = mesh(roundedBox(0.1, 0.2, 0.012, 0.02), toyMat('#0f0e17', 'gloss'), false, false);
+    phone.position.set(0, 1.75, -0.02);
+    g.add(phone);
+    this.recDot = new THREE.MeshBasicMaterial({ color: '#ff2020', toneMapped: false });
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), this.recDot);
+    dot.position.set(0.034, 1.835, 0.005);
+    g.add(dot);
+    this.stage.add(g);
+  }
+
+  /** Draw the player's name as a neon sign. */
+  private drawNeon(name: string): void {
+    const c = this.neonCanvas;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, c.width, c.height);
+    const text = name.toUpperCase().slice(0, 14);
+    let size = 170;
+    g.font = `900 ${size}px ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif`;
+    const w = g.measureText(text).width;
+    if (w > 900) {
+      size = Math.floor((size * 900) / w);
+      g.font = `900 ${size}px ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif`;
     }
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (const [blur, col] of [[60, '#ff2e88'], [30, '#ff2e88'], [12, '#ff6fb1']] as [number, string][]) {
+      g.shadowColor = col;
+      g.shadowBlur = blur;
+      g.fillStyle = col;
+      g.fillText(text, 512, 118);
+    }
+    g.shadowBlur = 8;
+    g.shadowColor = '#ffffff';
+    g.fillStyle = '#ffe9f4';
+    g.fillText(text, 512, 118);
+    g.shadowColor = '#00d4ff';
+    g.shadowBlur = 24;
+    g.fillStyle = '#00d4ff';
+    g.fillRect(512 - 120, 226, 240, 8);
+    this.neonTex.needsUpdate = true;
+  }
+
+  /** Keep the mirrored copy in step with the real character (and rebuild it after outfit changes). */
+  private rebuildMirror(): void {
+    if (!this.char) return;
+    this.mirror.clear();
+    const copy = this.char.group.clone(true);
+    copy.traverse((o) => {
+      o.castShadow = false;
+      o.receiveShadow = false;
+    });
+    this.mirror.add(copy);
+  }
+  private syncMirror(): void {
+    const src = this.char?.group;
+    const dst = this.mirror.children[0];
+    if (!src || !dst) return;
+    const walk = (a: THREE.Object3D, b: THREE.Object3D) => {
+      b.position.copy(a.position);
+      b.quaternion.copy(a.quaternion);
+      b.scale.copy(a.scale);
+      b.visible = a.visible;
+      const n = Math.min(a.children.length, b.children.length);
+      for (let i = 0; i < n; i++) walk(a.children[i], b.children[i]);
+    };
+    walk(src, dst);
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────────────
   enter(): void {
     this.ui.innerHTML = '';
     this.timers = [];
-    const outfit = store.profile.outfit;
+    const prof = store.profile;
+    // wrap styles from older saves into the new catalog
+    const o = prof.outfit;
+    let fixed = false;
+    for (const s of SLOTS) {
+      const n = OUTFIT_CATALOG[s].length;
+      const st = ((Math.floor(o[s].style) % n) + n) % n;
+      if (st !== o[s].style) {
+        o[s].style = st;
+        fixed = true;
+      }
+    }
+    if (fixed) store.update(() => undefined);
     if (!this.char) {
-      this.char = new Character(outfit);
-      this.char.group.position.y = PODIUM_TOP;
+      this.char = new Character(o);
       this.stage.add(this.char.group);
     } else {
-      this.char.setOutfit(outfit);
+      this.char.setOutfit(o);
     }
+    this.rebuildMirror();
+    this.drawNeon(prof.name);
     this.history = [];
     this.rot = 0;
     this.spinVel = 0;
     this.idle = 0;
     this.dist = this.targetDist = tuning.dressup.zoomDefault;
-    this.lookBias = this.targetBias = 0;
+    this.lookY = tuning.dressup.lookYWide;
+    this.focusLook = null;
     this.cat = 'hair';
+    this.lookSel = 0;
     this.pointers.clear();
     this.buildUI();
     this.listenInput();
@@ -444,7 +403,7 @@ export class DressUpScene extends GameScene {
       this.pointers.clear();
     });
     this.resize(window.innerWidth, window.innerHeight);
-    this.later(380, () => this.char?.wave());
+    this.later(420, () => this.char?.wave());
   }
 
   private later(ms: number, fn: () => void): void {
@@ -455,18 +414,20 @@ export class DressUpScene extends GameScene {
     this.rot = 0;
     this.spinVel = 0;
     this.targetDist = tuning.dressup.zoomDefault;
-    this.targetBias = 0;
+    this.focusLook = null;
   }
 
   debugInfo(): Record<string, string | number> {
-    return { dressCat: this.cat, camDist: +this.dist.toFixed(2), rot: +this.rot.toFixed(2) };
+    return { styleCat: this.cat, camDist: +this.dist.toFixed(2), rot: +this.rot.toFixed(2) };
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────
   private buildUI(): void {
     const ui = this.ui;
-    const title = el('div', 'tc title dr-title', ui, `${escapeHtml(store.profile.name)}'s Look ✨`);
-    title.style.pointerEvents = 'none';
+    const head = el('div', 'tc dr-title', ui);
+    el('div', 'title', head, '<span class="hl">STYLE</span>');
+    el('div', 'label', head, escapeHtml(store.profile.name));
+    head.style.pointerEvents = 'none';
 
     // category tabs (left, below the 🏠 button)
     this.tabSet = tabs(ui, CATEGORIES, this.cat, (id) => this.setCategory(id as Category));
@@ -476,16 +437,21 @@ export class DressUpScene extends GameScene {
     this.panel = el('div', 'panel dr-panel', ui) as HTMLDivElement;
     this.renderPanel();
 
-    // bottom bar: zoom out, undo, surprise, zoom in
+    // bottom bar: zoom out · undo · random · pose · zoom in
     const bar = el('div', 'dr-bar', ui);
     button(bar, { icon: '➖', cls: 'round ghost' }, () => this.zoomBy(tuning.dressup.zoomButtonStep));
     this.undoBtn = button(bar, { icon: '↩️', cls: 'round ghost', tap: 'back' }, () => this.undo());
-    button(bar, { icon: '🎲', label: 'Surprise', cls: 'big butter', tap: 'big' }, () => this.surprise());
+    button(bar, { icon: '🎲', label: 'Random', cls: 'big', tap: 'big' }, () => this.randomLook());
+    button(bar, { icon: '📸', label: 'Pose', cls: 'big', tap: 'big' }, () => this.doPose());
     button(bar, { icon: '➕', cls: 'round ghost' }, () => this.zoomBy(1 / tuning.dressup.zoomButtonStep));
     this.updateUndo();
 
-    // let's go!
-    button(ui, { label: "Let's go! 🚗", cls: 'br pink big dr-go', tap: 'big' }, () => void scenes.go('town'));
+    // camera flash + viewfinder overlays for the photo moment
+    this.flashEl = el('div', 'dr-flash', ui) as HTMLDivElement;
+    this.vfEl = el('div', 'dr-vf', ui, '<i></i><i></i><i></i><i></i><b>● REC</b>') as HTMLDivElement;
+
+    // let's ride
+    button(ui, { label: "Let's ride 🚗", cls: 'br pink big dr-go', tap: 'big' }, () => void scenes.go('town'));
   }
 
   private setCategory(c: Category): void {
@@ -494,7 +460,7 @@ export class DressUpScene extends GameScene {
     this.renderPanel();
     if (tuning.dressup.autoFocus) {
       this.targetDist = clamp(tuning.dressup.focusDist[c] ?? tuning.dressup.zoomDefault, tuning.dressup.zoomMin, tuning.dressup.zoomMax);
-      this.targetBias = tuning.dressup.focusLookBias[c] ?? 0;
+      this.focusLook = tuning.dressup.focusLookY[c] ?? null;
     }
   }
 
@@ -509,6 +475,10 @@ export class DressUpScene extends GameScene {
       swatches(p, tuning.art.skinTones, outfit.skin, (c) => this.pickSkin(c), 'dr-skin');
       return;
     }
+    if (this.cat === 'looks') {
+      this.renderLooks(p);
+      return;
+    }
     const slot = this.cat;
     const grid = el('div', 'items dr-items', p);
     const tiles: HTMLElement[] = [];
@@ -516,8 +486,17 @@ export class DressUpScene extends GameScene {
       const b = el('button', 'item', grid);
       el('span', 'ico', b, it.icon);
       el('span', '', b, it.name);
+      const locked = !!it.reward && !isUnlocked(it.reward);
+      if (locked) {
+        b.classList.add('locked');
+        el('span', 'lock-badge', b, `🔒 💎${rewardFor(it.reward!)?.at ?? ''}`);
+      }
       if (outfit[slot].style === i) b.classList.add('on');
       bindTap(b, () => {
+        if (locked) {
+          lockedToast(it.reward!);
+          return;
+        }
         tiles.forEach((t, k) => t.classList.toggle('on', k === i));
         this.pickStyle(slot, i);
         syncHint();
@@ -525,7 +504,7 @@ export class DressUpScene extends GameScene {
       tiles.push(b);
     });
     const colorsBox = el('div', 'dr-colors', p);
-    const hint = el('div', 'label dr-hint', p, 'Pick one to add color ✨');
+    const hint = el('div', 'label dr-hint', p, 'Pick one to add color');
     swatches(colorsBox, tuning.art.palette, outfit[slot].color, (c) => this.pickColor(slot, c));
     const syncHint = () => {
       const none = slot === 'accessory' && store.profile.outfit.accessory.style === 0;
@@ -533,6 +512,112 @@ export class DressUpScene extends GameScene {
       hint.style.display = none ? '' : 'none';
     };
     syncHint();
+  }
+
+  // ── Looks: 4 saved outfits ───────────────────────────────────────────────
+  private renderLooks(p: HTMLElement): void {
+    const looks = store.profile.looks ?? [];
+    const max = tuning.dressup.looksMax;
+    const grid = el('div', 'dr-looks', p);
+    for (let i = 0; i < max; i++) {
+      const look = looks[i];
+      const card = el('div', `look${look ? '' : ' empty'}${i === this.lookSel ? ' on' : ''}`, grid);
+      el('span', 'look-n', card, String(i + 1));
+      if (look) card.appendChild(this.mannequin(look));
+      else el('span', 'look-plus', card, '+');
+      this.bindLook(card, i);
+    }
+    el('div', 'label dr-hint', p, 'Tap to wear · hold to save here');
+    button(p, { icon: '💾', label: 'Save look', cls: 'pink' }, () => this.saveLook());
+  }
+
+  /** Tiny colored mannequin used on the look cards. */
+  private mannequin(o: Outfit): HTMLElement {
+    const m = el('div', 'mini');
+    const part = (cls: string, color: string) => {
+      const d = el('i', cls, m);
+      d.style.background = color;
+    };
+    part('m-hair', o.hair.color);
+    part('m-head', o.skin);
+    part('m-top', o.top.color);
+    part('m-bot', o.bottom.color);
+    part('m-shoe', o.shoes.color);
+    return m;
+  }
+
+  /** Tap = wear / save into an empty card, long-press = save here. */
+  private bindLook(card: HTMLElement, i: number): void {
+    let timer: number | null = null;
+    let fired = false;
+    let down = false;
+    const clear = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
+    card.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      down = true;
+      fired = false;
+      card.classList.add('pressed');
+      timer = window.setTimeout(() => {
+        fired = true;
+        this.saveLook(i);
+      }, tuning.dressup.longPressMs);
+    });
+    card.addEventListener('pointerup', (e) => {
+      e.stopPropagation();
+      card.classList.remove('pressed');
+      clear();
+      if (!down) return;
+      down = false;
+      if (fired) return;
+      bus.emit('uiTap', { kind: 'soft' });
+      const look = store.profile.looks?.[i];
+      this.lookSel = i;
+      if (look) this.wearLook(i);
+      else this.saveLook(i);
+    });
+    const cancel = () => {
+      down = false;
+      card.classList.remove('pressed');
+      clear();
+    };
+    card.addEventListener('pointercancel', cancel);
+    card.addEventListener('pointerleave', cancel);
+  }
+
+  private saveLook(slot?: number): void {
+    const char = this.char;
+    if (!char) return;
+    const max = tuning.dressup.looksMax;
+    const prof = store.profile;
+    const looks = (prof.looks ??= []);
+    let target = slot ?? this.lookSel;
+    if (slot === undefined) {
+      // next empty slot, else round-robin overwrite
+      target = looks.length < max ? looks.length : this.nextOverwrite++ % max;
+    }
+    target = clamp(target, 0, Math.min(looks.length, max - 1));
+    const snap = structuredClone(prof.outfit);
+    store.update(() => {
+      looks[target] = snap;
+    });
+    this.lookSel = target;
+    const pos = char.slotAnchor('top');
+    pos.add(this.camera.position.clone().sub(pos).normalize().multiplyScalar(0.5));
+    bus.emit('creationSaved', { kind: 'look', pos: v3(pos) });
+    toast(`Saved to Look ${target + 1}`);
+    char.pose('hips');
+    if (this.cat === 'looks') this.renderPanel();
+  }
+
+  private wearLook(i: number): void {
+    const look = store.profile.looks?.[i];
+    if (!look) return;
+    this.pushHistory();
+    this.transitionTo(structuredClone(look), 'hips');
+    if (this.cat === 'looks') this.renderPanel();
   }
 
   // ── Changing the outfit ──────────────────────────────────────────────────
@@ -560,6 +645,7 @@ export class DressUpScene extends GameScene {
     const o = store.profile.outfit;
     store.update(() => edit(o));
     char.setOutfit(o, slot);
+    this.rebuildMirror();
     char.pose();
     this.pop(slot);
   }
@@ -570,7 +656,7 @@ export class DressUpScene extends GameScene {
     if (!char) return;
     const anchor = char.slotAnchor(slot);
     // nudge toward the camera so the sparkles aren't hidden inside the body
-    anchor.add(this.camera.position.clone().sub(anchor).normalize().multiplyScalar(0.55));
+    anchor.add(this.camera.position.clone().sub(anchor).normalize().multiplyScalar(0.45));
     bus.emit('outfitChanged', { slot, pos: v3(anchor), object: char.partObject(slot) ?? undefined });
   }
 
@@ -589,21 +675,44 @@ export class DressUpScene extends GameScene {
     const prev = this.history.pop();
     this.updateUndo();
     if (!char || !prev) return;
-    const cur = store.profile.outfit;
-    const changed: OutfitSlot[] = [];
-    if (cur.skin !== prev.skin) changed.push('skin');
-    for (const s of SLOTS) if (cur[s].style !== prev[s].style || cur[s].color !== prev[s].color) changed.push(s);
-    store.update(() => {
-      store.profile.outfit = prev;
-    });
-    char.setOutfit(prev);
-    char.pose('hips');
-    for (const s of changed) this.pop(s);
-    this.renderPanel();
+    this.transitionTo(prev, 'hips', false);
   }
 
-  /** 🎲 a whole new random look, revealed piece by piece. */
-  private surprise(): void {
+  /** Switch to a whole outfit; changed pieces pop in one after another (stagger) or all at once. */
+  private transitionTo(next: Outfit, pose: 'hips' | 'twirl' | null, stagger = true): void {
+    const char = this.char;
+    if (!char) return;
+    const cur = store.profile.outfit;
+    store.update(() => {
+      store.profile.outfit = next;
+    });
+    if (pose) char.pose(pose, undefined, true);
+    const changed: OutfitSlot[] = [];
+    if (cur.skin !== next.skin) changed.push('skin');
+    for (const s of SLOTS) if (cur[s].style !== next[s].style || cur[s].color !== next[s].color) changed.push(s);
+    if (!stagger) {
+      char.setOutfit(next);
+      this.rebuildMirror();
+      for (const s of changed) this.pop(s);
+      this.renderPanel();
+      return;
+    }
+    const shown = structuredClone(cur);
+    changed.forEach((s, i) => {
+      this.later(i * tuning.dressup.surpriseStaggerMs, () => {
+        if (s === 'skin') shown.skin = next.skin;
+        else shown[s] = structuredClone(next[s]);
+        char.setOutfit(shown, s);
+        this.rebuildMirror();
+        this.pop(s);
+        if (i === changed.length - 1) this.renderPanel();
+      });
+    });
+    if (!changed.length) this.renderPanel();
+  }
+
+  /** 🎲 a whole new random look (never uses locked bonus items), revealed piece by piece. */
+  private randomLook(): void {
     const char = this.char;
     if (!char) return;
     this.pushHistory();
@@ -612,27 +721,42 @@ export class DressUpScene extends GameScene {
     const pal = tuning.art.palette;
     const pickColor = () => pal[Math.floor(Math.random() * pal.length)];
     for (const s of SLOTS) {
-      const n = OUTFIT_CATALOG[s].length;
-      let style = Math.floor(Math.random() * n);
-      if (s === 'accessory' && Math.random() < 0.2) style = 0;
-      if (style === cur[s].style) style = (style + 1 + Math.floor(Math.random() * (n - 1))) % n;
+      const items = OUTFIT_CATALOG[s];
+      const ok: number[] = [];
+      items.forEach((it, i) => {
+        if (s === 'accessory' && i === 0) return;
+        if (it.reward && !isUnlocked(it.reward)) return;
+        if (i === cur[s].style) return;
+        ok.push(i);
+      });
+      let style = ok.length ? ok[Math.floor(Math.random() * ok.length)] : cur[s].style;
+      if (s === 'accessory' && Math.random() < 0.25) style = 0;
       next[s].style = style;
       next[s].color = pickColor();
     }
-    if (next.top.color === next.bottom.color) next.bottom.color = pal[(pal.indexOf(next.top.color) + 5) % pal.length];
-    store.update(() => {
-      store.profile.outfit = next;
+    if (next.top.color === next.bottom.color) next.bottom.color = pal[(pal.indexOf(next.top.color) + 7) % pal.length];
+    this.transitionTo(next, 'twirl');
+  }
+
+  /** 📸 strike the next cool pose, then flash. */
+  private doPose(): void {
+    const char = this.char;
+    const now = performance.now();
+    if (!char || now < this.poseLock) return;
+    const hold = tuning.dressup.poseHold;
+    this.poseLock = now + hold * 1000 * 0.7;
+    const kind = POSE_ORDER[this.poseIdx++ % POSE_ORDER.length];
+    char.pose(kind, hold, true);
+    this.vfEl?.classList.add('on');
+    this.later(tuning.dressup.flashDelayMs, () => {
+      this.flashEl?.classList.remove('go');
+      void this.flashEl?.offsetWidth; // restart the animation
+      this.flashEl?.classList.add('go');
+      const pos = char.slotAnchor('top');
+      pos.add(this.camera.position.clone().sub(pos).normalize().multiplyScalar(0.5));
+      bus.emit('photoFlash', { pos: v3(pos) });
     });
-    char.pose('twirl');
-    const shown = structuredClone(cur);
-    SLOTS.forEach((s, i) => {
-      this.later(i * tuning.dressup.surpriseStaggerMs, () => {
-        shown[s] = structuredClone(next[s]);
-        char.setOutfit(shown, s);
-        this.pop(s);
-        if (i === SLOTS.length - 1) this.renderPanel();
-      });
-    });
+    this.later(hold * 1000, () => this.vfEl?.classList.remove('on'));
   }
 
   // ── Input: drag to spin, pinch / wheel / buttons to zoom ─────────────────
@@ -647,7 +771,7 @@ export class DressUpScene extends GameScene {
       'wheel',
       (e) => {
         e.preventDefault();
-        this.targetDist = clamp(this.targetDist * Math.exp(e.deltaY * tuning.dressup.zoomWheel), tuning.dressup.zoomMin, tuning.dressup.zoomMax);
+        this.manualZoom(this.targetDist * Math.exp(e.deltaY * tuning.dressup.zoomWheel));
       },
       { passive: false },
     );
@@ -659,8 +783,13 @@ export class DressUpScene extends GameScene {
     });
   }
 
+  /** The player zooms by hand: stop following the category focus height. */
+  private manualZoom(d: number): void {
+    this.targetDist = clamp(d, tuning.dressup.zoomMin, tuning.dressup.zoomMax);
+    this.focusLook = null;
+  }
   private zoomBy(f: number): void {
-    this.targetDist = clamp(this.targetDist * f, tuning.dressup.zoomMin, tuning.dressup.zoomMax);
+    this.manualZoom(this.targetDist * f);
   }
 
   private onDown(e: PointerEvent): void {
@@ -672,8 +801,6 @@ export class DressUpScene extends GameScene {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 1) {
       this.dragging = true;
-      this.downX = e.clientX;
-      this.downY = e.clientY;
       this.downT = performance.now();
       this.lastMoveT = this.downT;
       this.moved = 0;
@@ -695,7 +822,7 @@ export class DressUpScene extends GameScene {
     this.idle = 0;
     if (this.pointers.size >= 2) {
       const d = this.pointerSpan();
-      if (this.pinchDist > 0 && d > 0) this.targetDist = clamp(this.targetDist * (this.pinchDist / d), tuning.dressup.zoomMin, tuning.dressup.zoomMax);
+      if (this.pinchDist > 0 && d > 0) this.manualZoom(this.targetDist * (this.pinchDist / d));
       this.pinchDist = d;
       return;
     }
@@ -750,7 +877,7 @@ export class DressUpScene extends GameScene {
       this.spinVel *= Math.pow(D.rotateInertia, dt * 60);
       if (Math.abs(this.spinVel) < 0.05) this.spinVel = 0;
     }
-    if (!this.dragging && this.pointers.size === 0 && Math.abs(this.spinVel) < 0.3) {
+    if (!this.dragging && this.pointers.size === 0 && Math.abs(this.spinVel) < 0.3 && !char.posing) {
       this.idle += dt;
       if (this.idle > D.faceFrontDelay) {
         const target = Math.round(this.rot / TAU) * TAU;
@@ -770,27 +897,32 @@ export class DressUpScene extends GameScene {
     } else this.spinSoundT = D.spinSoundEvery * 0.6;
 
     char.update(dt, t);
+    this.syncMirror();
 
-    // camera: glide to the target distance, look at the upper body when close
+    // camera: glide to the target distance + height (focus on the part being styled)
     const k = 1 - Math.exp(-D.zoomSmooth * dt);
     this.dist += (this.targetDist - this.dist) * k;
-    this.lookBias += (this.targetBias - this.lookBias) * k;
-    const close = clamp((D.zoomMax - this.dist) / (D.zoomMax - D.zoomMin), 0, 1);
-    const lookY = lerp(D.lookYWide, D.lookYClose, close * close * (3 - 2 * close)) + this.lookBias * (1 - close * 0.5);
-    this.camera.position.set(0, lookY + 0.2 + this.dist * 0.085, this.dist);
-    this.camera.lookAt(0, lookY, 0);
+    const close = smooth((D.zoomMax - this.dist) / (D.zoomMax - D.zoomMin));
+    const want = this.focusLook ?? lerp(D.lookYWide, D.lookYClose, close);
+    this.lookY += (want - this.lookY) * k;
+    this.camera.position.set(0, this.lookY + 0.22 + this.dist * 0.075, this.dist);
+    this.camera.lookAt(0, this.lookY, 0);
 
-    // living set: swaying garments / leaves, twinkling bulbs
-    for (const s of this.sway) s.obj.rotation.z = Math.sin(t * 1.4 + s.phase) * s.amp;
-    this.bulbMats.forEach((m, i) => (m.emissiveIntensity = 0.75 + 0.35 * Math.sin(t * 2.2 + i * 1.7)));
+    // living studio: drifting LED colors, blinking REC dot
+    const sp2 = D.studio.ledSpeed;
+    this.ledMats.forEach((m, i) => {
+      const h = lerp(0.52, 0.93, 0.5 + 0.5 * Math.sin(t * sp2 * TAU + i * 1.3));
+      m.color.setHSL(h, 1, 0.55).multiplyScalar(2.0);
+    });
+    this.recDot.color.set(Math.sin(t * 3.2) > 0 ? '#ff2020' : '#3a0a0a');
   }
 
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
     // keep the character in the free space between the tab column and the option panel
     const wide = w >= 900 && w / h > 1.1;
-    const panelW = this.panel?.offsetWidth ?? 330;
-    this.viewShift = wide ? Math.round((panelW + 30 - 110) / 2) : 0;
+    const panelW = this.panel?.offsetWidth ?? 400;
+    this.viewShift = wide ? Math.round((panelW + 30 - 116) / 2) : 0;
     if (this.viewShift) this.camera.setViewOffset(w, h, this.viewShift, 0, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();

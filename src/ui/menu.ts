@@ -12,7 +12,7 @@ let menuBtn: HTMLButtonElement;
 
 export function initMenu(): void {
   const root = document.getElementById('ui')!;
-  menuBtn = button(null, { icon: '🏠', cls: 'round tl', tap: 'soft' }, () => openMenu());
+  menuBtn = button(null, { icon: '☰', cls: 'round tl', tap: 'soft' }, () => openMenu());
   menuBtn.style.zIndex = '30';
   menuBtn.id = 'menu-btn';
   root.appendChild(menuBtn);
@@ -22,10 +22,10 @@ export function initMenu(): void {
 }
 
 const NAV: { scene: SceneName; icon: string; label: string; color: string }[] = [
-  { scene: 'town', icon: '🚗', label: 'Drive', color: 'linear-gradient(180deg,#9ad3ff,#5aa9ff)' },
-  { scene: 'build', icon: '🏡', label: 'Build', color: 'linear-gradient(180deg,#ffe08f,#ffbf3a)' },
-  { scene: 'workshop', icon: '🧪', label: 'Workshop', color: 'linear-gradient(180deg,#ffa8c5,#ff7aa6)' },
-  { scene: 'dressup', icon: '👗', label: 'Dress Up', color: 'linear-gradient(180deg,#c0b4ff,#8f7cff)' },
+  { scene: 'town', icon: '🏙️', label: 'Town', color: 'linear-gradient(135deg,#00d4ff,#3d6bff)' },
+  { scene: 'build', icon: '🏠', label: 'Build', color: 'linear-gradient(135deg,#ffc93c,#ff8a3d)' },
+  { scene: 'workshop', icon: '🎬', label: 'Studio', color: 'linear-gradient(135deg,#ff2e88,#7c4dff)' },
+  { scene: 'dressup', icon: '🕶️', label: 'Style', color: 'linear-gradient(135deg,#7c4dff,#3a1fa8)' },
 ];
 
 export function openMenu(): void {
@@ -33,8 +33,8 @@ export function openMenu(): void {
     const head = el('div', 'row', body);
     head.style.justifyContent = 'space-between';
     head.style.marginBottom = '14px';
-    el('h2', '', head, `Hi, ${escapeHtml(store.profile.name)}!`).style.margin = '0';
-    button(head, { icon: '✖️', cls: 'round', tap: 'back' }, close);
+    el('h2', '', head, `Hey, ${escapeHtml(store.profile.name)} 👋`).style.margin = '0';
+    button(head, { icon: '✕', cls: 'round', tap: 'back' }, close);
 
     const grid = el('div', 'grid-nav', body);
     for (const n of NAV) {
@@ -53,29 +53,29 @@ export function openMenu(): void {
     const row = el('div', 'row wrap', body);
     row.style.marginTop = '18px';
     row.style.justifyContent = 'center';
-    button(row, { icon: '👤', label: 'Switch Player', cls: 'lilac' }, () => {
+    button(row, { icon: '👤', label: 'Switch player' }, () => {
       close();
       void scenes.go('picker');
     });
-    button(row, { icon: '🔊', label: 'Sound', cls: 'mint' }, () => {
+    button(row, { icon: '🔊', label: 'Audio' }, () => {
       close();
       openSettings();
     });
-    button(row, { icon: '📤', label: 'Share Town', cls: 'blue' }, async () => {
+    button(row, { icon: '📤', label: 'Share town' }, async () => {
       const r = await exportTown();
-      if (r !== 'cancelled') toast(r === 'shared' ? 'Town shared! 📤' : 'Town saved to Files! 📁');
+      if (r !== 'cancelled') toast(r === 'shared' ? 'Town shared 📤' : 'Town saved to Files 📁');
     });
-    button(row, { icon: '📥', label: 'Get Town', cls: 'peach' }, async () => {
+    button(row, { icon: '📥', label: 'Import town' }, async () => {
       const data = await pickTownFile();
       if (!data) {
-        toast('That file is not a town 🤔');
+        toast("That file isn't a town file");
         return;
       }
       const ok = await confirmDialog('Replace this town with the new one?', 'Yes, replace', 'Keep mine', '🏘️');
       if (!ok) return;
       applyImportedTown(data);
       close();
-      toast('New town loaded! 🎉');
+      toast('New town loaded 🏙️');
       void scenes.go(store.data.activeProfileId ? 'town' : 'picker');
     });
   });
@@ -83,7 +83,7 @@ export function openMenu(): void {
 
 export function openSettings(): void {
   sheet((body, close) => {
-    el('h2', '', body, '🔊 Sound');
+    el('h2', '', body, 'Audio');
     const s = store.data.settings;
     const slider = (label: string, value: number, set: (v: number) => void) => {
       const r = el('div', 'row', body);
@@ -98,19 +98,19 @@ export function openSettings(): void {
       input.addEventListener('input', () => set(parseFloat(input.value)));
       input.addEventListener('change', () => bus.emit('uiTap', { kind: 'soft' }));
     };
-    slider('All sound', s.master, (v) => store.update((d) => (d.settings.master = v)));
+    slider('Master', s.master, (v) => store.update((d) => (d.settings.master = v)));
     slider('Effects', s.sfx, (v) => store.update((d) => (d.settings.sfx = v)));
     slider('Music', s.music, (v) => store.update((d) => (d.settings.music = v)));
     const r = el('div', 'row', body);
     r.style.marginTop = '8px';
-    const tog = button(r, { icon: s.musicInWorkshop ? '✅' : '⬜', label: 'Music in Workshop' }, () => {
+    const tog = button(r, { icon: s.musicInWorkshop ? '✅' : '⬜', label: 'Music in Studio' }, () => {
       store.update((d) => (d.settings.musicInWorkshop = !d.settings.musicInWorkshop));
       tog.querySelector('.ico')!.textContent = store.data.settings.musicInWorkshop ? '✅' : '⬜';
     });
-    el('p', 'label', body, 'Tip: if you hear nothing, flip off the iPad silent switch / check the volume.');
+    el('p', 'label', body, 'No sound? Turn off silent mode on the iPad and turn the volume up.');
     const done = el('div', 'row', body);
     done.style.justifyContent = 'center';
-    button(done, { label: 'Done', cls: 'pink big' }, close);
+    button(done, { label: 'Done', cls: 'primary big' }, close);
   });
 }
 

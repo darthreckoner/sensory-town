@@ -7,15 +7,16 @@
 import * as THREE from 'three';
 import { bus, v3 } from '../core/events';
 import { store } from '../core/store';
-import { uid, SHAPES, type ShapeId } from '../core/model';
+import { uid, type ShapeId } from '../core/model';
 import { tuning } from '../tuning';
 import { tweens, ease } from '../core/tween';
 import { el, button, swatches, bindTap, toast } from '../ui/ui';
 import { toyMat, mesh, roundedBox, blobShadow } from '../art/materials';
 import { SquishyBody } from './squishyBody';
-import { Coating, type Layer } from './wax/coating';
+import { Coating, type Layer, type WaxFinish } from './wax/coating';
 import { Fracture } from './wax/fracture';
-import { SHAPE_ICONS } from './SquishyStation';
+import { shapeTiles } from './SquishyStation';
+import { isUnlocked, rewardFor, lockedToast } from '../core/unlocks';
 import type { Station, StationContext, WPointer } from './station';
 
 type Step = 'pick' | 'coat' | 'crack';
@@ -35,6 +36,8 @@ export class WaxStation implements Station {
   private shape: ShapeId = 'bun';
   private bodyColor = '#ffffff';
   private waxColor = tuning.wax.waxColors[0];
+  private finish: WaxFinish = 'classic';
+  private face = false;
 
   private holder = new THREE.Group();
   private body!: SquishyBody;
@@ -228,25 +231,23 @@ export class WaxStation implements Station {
     if (this.step === 'pick') {
       this.leftPanel.style.display = '';
       this.rightPanel.style.display = '';
-      const items = el('div', 'items', this.leftPanel);
-      for (const s of SHAPES) {
-        const b = el('button', 'item', items);
-        el('span', 'ico', b, SHAPE_ICONS[s].icon);
-        el('span', '', b, SHAPE_ICONS[s].name);
-        if (s === this.shape) b.classList.add('on');
-        bindTap(b, () => {
-          bus.emit('uiTap', { kind: 'soft' });
-          this.pickShape(s);
-          items.querySelectorAll('.item').forEach((x) => x.classList.remove('on'));
-          b.classList.add('on');
-        });
-      }
+      shapeTiles(this.leftPanel, this.shape, (sh) => {
+        bus.emit('uiTap', { kind: 'soft' });
+        this.pickShape(sh);
+      });
+      const faceBtn = button(this.leftPanel, { icon: this.face ? '😊' : '😶', label: 'Face', cls: 'ghost' }, () => {
+        this.face = !this.face;
+        this.body.setFace(this.face);
+        faceBtn.querySelector('.ico')!.textContent = this.face ? '😊' : '😶';
+        faceBtn.classList.toggle('selected', this.face);
+      });
+      faceBtn.classList.toggle('selected', this.face);
       swatches(this.rightPanel, tuning.art.palette, this.bodyColor, (c) => {
         this.bodyColor = c;
         this.body.setColor(c);
       });
-      button(this.actions, { icon: '🫗', label: 'Coat it!', cls: 'pink big' }, () => this.setStep('coat'));
-      this.setHint('Pick a squishy to coat 🧸');
+      button(this.actions, { icon: '🫗', label: 'Coat', cls: 'primary big' }, () => this.setStep('coat'));
+      this.setHint('Pick a squishy');
     } else if (this.step === 'coat') {
       this.leftPanel.style.display = '';
       this.rightPanel.style.display = '';
@@ -261,19 +262,46 @@ export class WaxStation implements Station {
       button(this.leftPanel, { icon: '↶', cls: 'round', tap: 'back' }, () => this.undoLayer());
       el('div', 'label', this.rightPanel, 'Wax color');
       swatches(this.rightPanel, tuning.wax.waxColors, this.waxColor, (c) => this.setWaxColor(c), 'wax-swatches');
+      el('div', 'label', this.rightPanel, 'Finish').style.marginTop = '10px';
+      const fins = el('div', 'items', this.rightPanel);
+      fins.style.gridTemplateColumns = 'repeat(2, 56px)';
+      const FINISHES: { id: WaxFinish; icon: string; name: string; reward?: string }[] = [
+        { id: 'classic', icon: '🕯️', name: 'Classic' },
+        { id: 'glitter', icon: '✨', name: 'Glitter', reward: 'wax.glitter' },
+        { id: 'chrome', icon: '🪞', name: 'Chrome', reward: 'wax.chrome' },
+        { id: 'glow', icon: '🟢', name: 'Glow', reward: 'wax.glow' },
+      ];
+      for (const f of FINISHES) {
+        const b = el('button', 'item', fins);
+        b.style.width = b.style.height = '56px';
+        el('span', 'ico', b, f.icon).style.fontSize = '24px';
+        const locked = f.reward && !isUnlocked(f.reward);
+        if (locked) {
+          b.classList.add('locked');
+          el('span', 'lock-badge', b, `🔒${rewardFor(f.reward!)?.at}`);
+        }
+        if (f.id === this.finish) b.classList.add('on');
+        bindTap(b, () => {
+          if (f.reward && !isUnlocked(f.reward)) return lockedToast(f.reward);
+          bus.emit('uiTap', { kind: 'soft' });
+          this.finish = f.id;
+          fins.querySelectorAll('.item').forEach((x) => x.classList.remove('on'));
+          b.classList.add('on');
+        });
+      }
       this.actions.appendChild(this.coolBtn);
-      button(this.actions, { icon: '💥', label: 'Crack it!', cls: 'pink big' }, () => this.setStep('crack'));
+      button(this.actions, { icon: '💥', label: 'Crack', cls: 'primary big' }, () => this.setStep('crack'));
       this.updateCoolBtn();
-      this.setHint(layers.length ? 'Dip again or pour another color! 🌈' : 'Drag the squishy down into the wax ⬇️  or tilt the jug 🫗');
+      this.setHint(layers.length ? 'Add another layer — dip or pour' : 'Drag it down into the wax ⬇️  or tilt the jug 🫗');
     } else {
       this.leftPanel.style.display = 'none';
       this.rightPanel.style.display = 'none';
       this.actions.appendChild(this.coolBtn);
-      button(this.actions, { icon: '🔁', label: 'Again', cls: 'mint big' }, () => this.crackAgain());
-      button(this.actions, { icon: '✨', label: 'New', cls: 'lilac big' }, () => this.newCoating());
-      button(this.actions, { icon: '💾', cls: 'round pink' }, () => this.save());
+      button(this.actions, { icon: '🔁', label: 'Again', cls: 'big' }, () => this.crackAgain());
+      button(this.actions, { icon: '✨', label: 'New', cls: 'big' }, () => this.newCoating());
+      button(this.actions, { icon: '💾', label: 'Save', cls: 'primary big' }, () => this.save());
       this.updateCoolBtn();
-      this.setHint(this.coating.allHard ? 'Squeeze it! 👆' : 'Wait for the wax to harden… or cool it ❄️');
+      this.setHint(this.coating.allHard ? 'Squeeze to crack 👆' : 'Letting it set… or hit Cool ❄️');
     }
   }
 
@@ -285,7 +313,7 @@ export class WaxStation implements Station {
   // ── steps ──────────────────────────────────────────────────────────────
   private setStep(step: Step, instant = false): void {
     if (step === 'crack' && this.coating.layers.length === 0) {
-      toast('Coat it with wax first! 🫗');
+      toast('Coat it first 🫗');
       bus.emit('placementBlocked', {});
       step = 'coat';
     }
@@ -350,6 +378,7 @@ export class WaxStation implements Station {
     this.shape = s;
     this.body.setShape(s);
     this.body.setColor(this.bodyColor);
+    this.body.setFace(this.face);
     this.body.root.add(this.coating.group, this.fracture.group);
     this.coating.setShape(s);
     this.fracture.clear();
@@ -404,7 +433,7 @@ export class WaxStation implements Station {
     this.body.reset();
     this.buildShell();
     bus.emit('reset', { pos: v3(this.holder.position) });
-    this.setHint('Squeeze it! 👆');
+    this.setHint('Squeeze to crack 👆');
   }
 
   private newCoating(): void {
@@ -419,10 +448,10 @@ export class WaxStation implements Station {
 
   private save(): void {
     if (!this.coating.layers.length) {
-      toast('Coat it first! 🫗');
+      toast('Coat it first 🫗');
       return;
     }
-    store.addCreation({ id: uid('c_'), kind: 'wax', createdAt: Date.now(), color: this.bodyColor, shape: this.shape, layers: this.coating.layers.map((l) => l.color) });
+    store.addCreation({ id: uid('c_'), kind: 'wax', createdAt: Date.now(), color: this.bodyColor, shape: this.shape, face: this.face, finish: this.coating.layers[this.coating.layers.length - 1]?.finish ?? 'classic', layers: this.coating.layers.map((l) => l.color) });
     bus.emit('creationSaved', { kind: 'wax', pos: v3(this.holder.position.clone().add(new THREE.Vector3(0, 1.2, 0))) });
   }
 
@@ -465,7 +494,7 @@ export class WaxStation implements Station {
       const h = this.body.hit(p.ray);
       if (h && this.dipPointer === null) {
         if (this.coating.layers.length >= tuning.wax.maxLayers) {
-          toast('So many layers! Time to crack 💥');
+          toast('Max layers — time to crack 💥');
           bus.emit('placementBlocked', {});
           return;
         }
@@ -482,7 +511,7 @@ export class WaxStation implements Station {
       const hits = pieces.length ? this.ctx.raycast(p, pieces, false) : [];
       if (hits.length) {
         if (!this.coating.allHard) {
-          this.setHint('Still soft! Cool it ❄️');
+          this.setHint('Still soft — hit Cool ❄️');
           bus.emit('placementBlocked', {});
           return;
         }
@@ -493,7 +522,7 @@ export class WaxStation implements Station {
       const h = this.body.hit(p.ray);
       if (h) {
         if (!this.fracture.pieces.length && !this.coating.allHard) {
-          this.setHint('Still soft! Cool it ❄️');
+          this.setHint('Still soft — hit Cool ❄️');
           return;
         }
         this.pressSquishy(p, h);
@@ -603,7 +632,7 @@ export class WaxStation implements Station {
       this.updateCoolBtn();
       if (this.step === 'crack') {
         this.buildShell();
-        this.setHint('Squeeze it! 👆');
+        this.setHint('Squeeze to crack 👆');
       }
     }
     if (this.cooling && Math.random() < dt * 12) bus.emit('waxCool', { pos: v3(this.holder.position) });
@@ -623,7 +652,7 @@ export class WaxStation implements Station {
     if (inWax) {
       if (!this.dipLayer) {
         if (this.coating.layers.length < tuning.wax.maxLayers) {
-          this.dipLayer = this.coating.beginLayer(this.waxColor, 'dip');
+          this.dipLayer = this.coating.beginLayer(this.waxColor, 'dip', this.finish);
           this.cooling = false;
           bus.emit('waxDip', { pos: { x: POT.x, y: surfaceY, z: POT.z }, color: this.waxColor });
           this.splash();
@@ -703,7 +732,7 @@ export class WaxStation implements Station {
     if (onBody && bh) {
       if (!this.pourLayer) {
         if (this.coating.layers.length >= tuning.wax.maxLayers) return;
-        this.pourLayer = this.coating.beginLayer(this.waxColor, 'pour');
+        this.pourLayer = this.coating.beginLayer(this.waxColor, 'pour', this.finish);
         this.cooling = false;
         this.dripSettle = null;
       }
@@ -767,7 +796,7 @@ export class WaxStation implements Station {
       this.clearedAnnounced = true;
       this.fracture.dropAll(toWorld);
       setTimeout(() => bus.emit('shellCleared', { pos: v3(this.holder.position.clone().add(new THREE.Vector3(0, 1, 0))) }), 450);
-      this.setHint('Ta-da! 🎉 Crack again or make a new one');
+      this.setHint('Clean crack! 🔥  Again or New');
     }
   }
 

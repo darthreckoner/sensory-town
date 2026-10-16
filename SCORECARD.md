@@ -64,3 +64,26 @@ Changes: squishy jelly-jiggle spring + volume bulge ring (dents now read as real
 | Profiles + share | 7 | 7 |
 
 **Result: every row ≥ 7. Ship bar met.** Remaining risk is device-only (see STATE.md → Known issues).
+
+---
+
+## v2 RUBRIC — locked 2026-10-16 before any v2 playtest (games-user-research protocol)
+Why a new rubric: v1 graded polish, not audience fit; the designer correctly called it preschool. Every anchor below is observable behavior or evidence, judged from a **cold run** (fresh IndexedDB, real clicks/touch at 1180×820 and 820×1180, no console shortcuts, no granted charms).
+
+| Row | 5 = | 7 = (ship bar) | 9 = |
+|---|---|---|---|
+| **Audience fit 9–11** (new) | Side-by-side with Roblox Dress to Impress / Bloxburg / Coverstar stills, ≥1 area still reads "made for little kids" (pastel world, chibi, baby copy, cutesy sounds). | No area reads preschool next to the references; UI copy, characters, town and sounds all pass the "would an 11-year-old screenshot it for a friend" test. | Screens are indistinguishable in tone from the references; something reads as genuinely *cool* (stunt jump, chrome wax, neon studio). |
+| **Pillar 1 — Make it yours** | Choices exist but don't show up elsewhere. | Outfit, car style, home, and creations each visibly appear in ≥2 other places (town, car, house, shelf); two profiles look clearly different at a glance. | Saved looks, home interiors and creations feel like a personal collection worth showing off; charms unlock things kids want. |
+| **Pillar 2 — Satisfying touch** | Some interactions lack sound or visual. | Juice audit: 100% of taps/drags emit their feedback event + sound + visual; wax/squishy/slime each have one "do it again" moment. | Each activity has ≥2 distinct satisfying moments; variety (types/finishes/shapes) keeps repeats fresh. |
+| **Pillar 3 — Free play** | Any fail state, timer or lost progress. | No fail/timer/score anywhere; charms gate only bonus items; reset/undo everywhere. | Same + every locked item tells you exactly how to get it. |
+| **Exploration** (new, from note 2/3) | Small map, nothing to find, car only. | ≥5 distinct districts reachable; walk + drive; ≥30 charms placed so some need walking/ramps; a first-time player finds ≥3 charms in 10 min. | Players chase charms and stunts voluntarily; secrets reward curiosity. |
+| **Building depth** (new, from note 2/4) | Can't find how to build a home, or only a few pieces. | A first-time player finds "build your home" unaided in ≤60 s from arriving in town, places a starter home, then adds ≥5 furniture items without help; 2 floors + finishes work. | Rooms look Bloxburg-good; players redecorate for fun. |
+| **Art / style** | Inconsistent or placeholder art. | Cohesive v2 look in every scene, nothing flat-2D or placeholder, nothing pastel-candy by default. | Screens are beautiful at golden hour / in the studio. |
+| **Playability** | Dead ends, console errors, confusing nav. | **Zero console errors** across the six-task walkthrough; every activity reachable in ≤3 taps from town (or a door); no dead ends; landscape + portrait usable; frame cost within budget (town ≤ ~400k tris/≤300 calls, adaptive DPR fallback). | Seamless flow; controls feel good on first touch. |
+| **Sound** (new, from note 5) | Any cutesy/music-box sound left in a core moment. | UI and game sounds modern/punchy; ASMR sounds realistic; beat-based music per place; mix balanced (no clipping, nothing inaudible). | Sound alone tells you which place you're in. |
+
+**Six cold-walkthrough tasks (cognitive walkthrough, each step asks: will a 9-year-old know what to do / see the control / understand the feedback?):** T1 pick player → T2 change an outfit → T3 walk or drive to the Studio → T4 crack a wax squishy → T5 build a home → T6 place a creation inside it.
+**Recorded per task:** taps-to-complete, time-to-first-fun, dead ends, console errors, events fired.
+**Grading rule:** every 7+ must survive a written counter-argument ("why an 11-year-old would still call it babyish/boring"); if the counter-argument wins, the grade drops.
+**Designer's 5 notes** (each needs screenshot evidence to count as fixed): (1) preschool tone, (2) exploration/building minimal, (3) walk around + into buildings, (4) can't find home building, (5) sounds: less Animal Crossing, more Roblox.
+**External check (the real one):** 15-min silent session with the kids on the iPads — pass = find + start a home unaided, crack wax ≥3× voluntarily, nobody says "babyish", they ask to keep playing.

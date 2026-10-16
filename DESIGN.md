@@ -3,6 +3,9 @@
 ## Vision (one paragraph)
 A cozy, touch-first 3D toy town for two kids (ages 9 and 11) on iPad. They dress up a character, drive around a small village, snap together houses, and visit a sensory workshop where they make and squish squishies, stretch slime, and coat squishies in wax to crack. All six of their requested activities (dress up, driving, squishies, ASMR, wax cracking, house/village building) live in one shared world instead of six separate mini-games. No scores, no timers, no failing — just making things and playing with them.
 
+## Audience note (v2)
+Built for **9 and 11**, not preschoolers: stylish, "aesthetic", creator-vibe. References they actually use: Roblox Dress to Impress / Bloxburg, TikTok ASMR (Coverstar wax), SuperStylist, Pick Me Up 3D. See docs/ART_DIRECTION.md and docs/V2_PLAN.md.
+
 ## Player fantasy
 "This is my town and my stuff." The kid is a stylish resident who designs their look, builds their own houses, and makes custom sensory toys they can show off. They feel clever when something they made looks good and feels great to play with.
 
@@ -69,6 +72,8 @@ A cozy, touch-first 3D toy town for two kids (ages 9 and 11) on iPad. They dress
 
 ## Anti-goals (must NOT become)
 - Toca Boca style — flat 2D look (the kids specifically dislike it).
+- **Preschool / kawaii-baby look** (v1 mistake): candy pastels everywhere, chibi big-head characters, faces on objects by default, bubbly toddler UI, baby-talk copy. Target is *tween-cool*: see docs/ART_DIRECTION.md.
+- A tiny world with nothing to find. 9–11s want to explore: districts, secrets, stunts, collectibles.
 - Six disconnected mini-games with no shared world.
 - Scores, timers, fail states, ads, or in-app purchases.
 

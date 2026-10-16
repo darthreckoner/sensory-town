@@ -1,16 +1,17 @@
 // Geometry "baking" for the building module.
 //
 // Every house piece / decoration is described as a handful of small primitives
-// (rounded boxes, cylinders, balls...). A Baker transforms those primitives and
-// writes them — with the colour stored per vertex — into a few big merged
-// geometries (one per finish). That keeps a whole town to a handful of draw
-// calls, and recolouring a piece is just "bake it again".
+// (boxes, cylinders, balls...). A Baker transforms those primitives and writes
+// them - with the colour stored per vertex - into a few merged geometries (one
+// per material "fin"). A whole town is therefore a few dozen draw calls, and
+// recolouring a piece is just "bake it again". Pattern fins (brick, wood
+// planks, marble...) get world-space UVs so patterns run on unbroken across
+// neighbouring pieces.
 import * as THREE from 'three';
-import { toyMat } from '../art/materials';
+import { FINS, MAPPED, NO_SHADOW, finMat, type Fin } from './mats';
 
-export type Fin = 'gloss' | 'satin' | 'glass' | 'glow';
+export { ghostify, tickBuildMaterials, type Fin } from './mats';
 export type Baked = Partial<Record<Fin, THREE.BufferGeometry>>;
-const FINS: Fin[] = ['gloss', 'satin', 'glass', 'glow'];
 
 // ── Colour helpers (sRGB '#rrggbb' strings) ─────────────────────────────────
 function hex2rgb(h: string): [number, number, number] {
@@ -33,8 +34,8 @@ export function mix(a: string, b: string, t: number): string {
   return r;
 }
 export const lighten = (c: string, t: number): string => mix(c, '#ffffff', t);
-/** Darken toward a warm plum (keeps the pastel feel instead of going grey). */
-export const darken = (c: string, t: number): string => mix(c, '#4a3552', t);
+/** Darken toward a cool charcoal (keeps colours rich instead of going muddy). */
+export const darken = (c: string, t: number): string => mix(c, '#14131a', t);
 
 const colorCache = new Map<string, THREE.Color>();
 function colorOf(hex: string): THREE.Color {
@@ -44,63 +45,6 @@ function colorOf(hex: string): THREE.Color {
     colorCache.set(hex, c);
   }
   return c;
-}
-
-// ── Shared vertex-colour materials ──────────────────────────────────────────
-let mats: Record<Fin, THREE.Material> | null = null;
-export function finMat(f: Fin): THREE.Material {
-  if (!mats) {
-    const gloss = (toyMat('#ffffff', 'gloss') as THREE.MeshPhysicalMaterial).clone();
-    gloss.vertexColors = true;
-    const satin = (toyMat('#ffffff', 'satin') as THREE.MeshPhysicalMaterial).clone();
-    satin.vertexColors = true;
-    const glass = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, vertexColors: true, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.5, depthWrite: false,
-    });
-    const glow = new THREE.MeshBasicMaterial({ vertexColors: true });
-    mats = { gloss, satin, glass, glow };
-  }
-  return mats[f];
-}
-
-const ghostMats = new Map<string, THREE.Material>();
-function ghostMat(f: Fin, ok: boolean): THREE.Material {
-  const key = `${f}|${ok}`;
-  let m = ghostMats.get(key);
-  if (!m) {
-    m = finMat(f).clone();
-    m.transparent = true;
-    m.depthWrite = false;
-    m.opacity = f === 'glass' ? 0.3 : 0.62;
-    const tint = ok ? '#ffffff' : '#ff6b6b';
-    (m as THREE.MeshPhysicalMaterial).color.set(tint);
-    if (!ok && (m as THREE.MeshPhysicalMaterial).emissive) {
-      (m as THREE.MeshPhysicalMaterial).emissive.set('#ff2d2d');
-      (m as THREE.MeshPhysicalMaterial).emissiveIntensity = 0.3;
-    }
-    ghostMats.set(key, m);
-  }
-  return m;
-}
-
-/** Turn a baked object into a see-through preview (green-ish/normal when ok, red when not). */
-export function ghostify(root: THREE.Object3D, ok: boolean): void {
-  root.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh && m.userData.fin) {
-      m.material = ghostMat(m.userData.fin as Fin, ok);
-      m.castShadow = false;
-      m.receiveShadow = false;
-    }
-  });
-}
-
-/** Free the GPU geometry of every baked mesh below `root`. */
-export function disposeBaked(root: THREE.Object3D): void {
-  root.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh && m.userData.fin) m.geometry.dispose();
-  });
 }
 
 // ── Primitives (cached, shared) ─────────────────────────────────────────────
@@ -117,9 +61,9 @@ const f3 = (n: number) => n.toFixed(3);
 
 /**
  * Soft-edged box with a *smooth* rounded bevel: only 108 triangles, but the
- * normals follow the bevel arc so it shades like a pillowy toy block.
+ * normals follow the bevel arc so it shades like a real chamfered edge.
  */
-export function bevelBox(w: number, h: number, d: number, r = 0.05): THREE.BufferGeometry {
+export function bevelBox(w: number, h: number, d: number, r = 0.03): THREE.BufferGeometry {
   r = Math.max(0.002, Math.min(r, Math.min(w, h, d) * 0.49));
   return cached(`bb|${f3(w)}|${f3(h)}|${f3(d)}|${f3(r)}`, () => {
     const g = new THREE.BoxGeometry(w, h, d, 3, 3, 3);
@@ -149,7 +93,7 @@ export function bevelBox(w: number, h: number, d: number, r = 0.05): THREE.Buffe
   });
 }
 
-/** Plain sharp box (for hidden/flush parts where rounding would only add triangles). */
+/** Plain sharp box (12 triangles). */
 export function boxG(w: number, h: number, d: number): THREE.BufferGeometry {
   return cached(`bx|${f3(w)}|${f3(h)}|${f3(d)}`, () => {
     const g = new THREE.BoxGeometry(w, h, d);
@@ -166,7 +110,22 @@ export function cylG(rt: number, rb: number, h: number, seg = 14): THREE.BufferG
 }
 export function ballG(low = false): THREE.BufferGeometry {
   return cached(low ? 'ballLow' : 'ball', () => {
-    const g = low ? new THREE.SphereGeometry(1, 8, 6) : new THREE.SphereGeometry(1, 12, 8);
+    const g = low ? new THREE.SphereGeometry(1, 8, 6) : new THREE.SphereGeometry(1, 14, 10);
+    g.deleteAttribute('uv');
+    return g;
+  });
+}
+export function torusG(R: number, r: number, seg = 24, tube = 8): THREE.BufferGeometry {
+  return cached(`to|${f3(R)}|${f3(r)}|${seg}|${tube}`, () => {
+    const g = new THREE.TorusGeometry(R, r, tube, seg);
+    g.deleteAttribute('uv');
+    return g;
+  });
+}
+/** Lathe (revolve) a [radius, y] profile around the y axis: pots, shades, bowls... */
+export function latheG(pts: number[][], seg = 18): THREE.BufferGeometry {
+  return cached(`la|${seg}|${pts.map((p) => p[0].toFixed(3) + ',' + p[1].toFixed(3)).join(';')}`, () => {
+    const g = new THREE.LatheGeometry(pts.map((p) => new THREE.Vector2(p[0], p[1])), seg);
     g.deleteAttribute('uv');
     return g;
   });
@@ -199,12 +158,10 @@ export function prismG(profile: [number, number][], t0: number, t1: number): THR
     }
   };
   const P = (i: number, t: number) => new THREE.Vector3(profile[i][0], profile[i][1], t);
-  // caps (fan)
   for (let i = 1; i < profile.length - 1; i++) {
     tri(P(0, t0), P(i, t0), P(i + 1, t0));
     tri(P(0, t1), P(i, t1), P(i + 1, t1));
   }
-  // sides
   for (let i = 0; i < profile.length; i++) {
     const j = (i + 1) % profile.length;
     tri(P(i, t0), P(j, t0), P(j, t1));
@@ -218,7 +175,7 @@ export function prismG(profile: [number, number][], t0: number, t1: number): THR
 
 // ── Matrix helper ───────────────────────────────────────────────────────────
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
-/** translate(x,y,z) · rotate(YXZ: ry, rx, rz) · scale(sx,sy,sz) */
+/** translate(x,y,z) . rotate(YXZ: ry, rx, rz) . scale(sx,sy,sz) */
 export function M(x = 0, y = 0, z = 0, sx = 1, sy = sx, sz = sx, ry = 0, rx = 0, rz = 0): THREE.Matrix4 {
   _e.set(rx, ry, rz, 'YXZ');
   _q.setFromEuler(_e);
@@ -226,32 +183,56 @@ export function M(x = 0, y = 0, z = 0, sx = 1, sy = sx, sz = sx, ry = 0, rx = 0,
 }
 
 // ── Baker ───────────────────────────────────────────────────────────────────
-interface Acc { pos: number[]; nor: number[]; col: number[]; idx: number[]; n: number }
-const newAcc = (): Acc => ({ pos: [], nor: [], col: [], idx: [], n: 0 });
+interface Acc { pos: number[]; nor: number[]; col: number[]; uv: number[]; idx: number[]; n: number }
+const newAcc = (): Acc => ({ pos: [], nor: [], col: [], uv: [], idx: [], n: 0 });
 
 export class Baker {
   /** Prefix transform applied to everything added (e.g. "this piece, in this house"). */
   readonly base = new THREE.Matrix4();
-  private acc: Record<Fin, Acc> = { gloss: newAcc(), satin: newAcc(), glass: newAcc(), glow: newAcc() };
+  /** Maps the baker's frame to the frame pattern UVs are measured in (plot-local/world). */
+  readonly uvBase = new THREE.Matrix4();
+  /** Fine detail (books, knobs...) on? Turned off when baking many houses at once. */
+  fine = true;
+  private acc: Record<string, Acc> = {};
   private m = new THREE.Matrix4();
   private nm = new THREE.Matrix3();
+  private um = new THREE.Matrix3();
   private v = new THREE.Vector3();
+  private n = new THREE.Vector3();
+  private w = new THREE.Vector3();
 
-  add(geo: THREE.BufferGeometry, local: THREE.Matrix4 | null, color: string, fin: Fin = 'gloss'): void {
+  private accFor(f: Fin): Acc {
+    return (this.acc[f] ??= newAcc());
+  }
+
+  add(geo: THREE.BufferGeometry, local: THREE.Matrix4 | null, color: string, fin: Fin = 'paint', uvSwap = false): void {
     const m = local ? this.m.multiplyMatrices(this.base, local) : this.m.copy(this.base);
-    const a = this.acc[fin];
+    const a = this.accFor(fin);
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const nor = geo.getAttribute('normal') as THREE.BufferAttribute;
     this.nm.getNormalMatrix(m);
-    const c = colorOf(fin === 'glow' ? lighten(color, 0.22) : color);
+    const c = colorOf(fin === 'glow' ? lighten(color, 0.18) : color);
     const flip = m.determinant() < 0; // mirrored transforms turn triangles inside-out
-    const v = this.v;
+    const mapped = MAPPED[fin];
+    if (mapped) this.um.setFromMatrix4(this.uvBase);
+    const v = this.v, n = this.n, w = this.w;
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i).applyMatrix4(m);
       a.pos.push(v.x, v.y, v.z);
-      v.fromBufferAttribute(nor, i).applyMatrix3(this.nm).normalize();
-      a.nor.push(v.x, v.y, v.z);
+      n.fromBufferAttribute(nor, i).applyMatrix3(this.nm).normalize();
+      a.nor.push(n.x, n.y, n.z);
       a.col.push(c.r, c.g, c.b);
+      if (mapped) {
+        w.copy(v).applyMatrix4(this.uvBase);
+        n.applyMatrix3(this.um);
+        const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+        let u: number, t: number;
+        if (ax >= ay && ax >= az) { u = w.z; t = w.y; }
+        else if (az >= ay) { u = w.x; t = w.y; }
+        else { u = w.x; t = w.z; }
+        if (uvSwap) { const s = u; u = t; t = s; }
+        a.uv.push(u / mapped.scale, t / mapped.scale);
+      }
     }
     const index = geo.getIndex();
     const o = a.n;
@@ -274,11 +255,12 @@ export class Baker {
     const out: Baked = {};
     for (const f of FINS) {
       const a = this.acc[f];
-      if (!a.n) continue;
+      if (!a || !a.n) continue;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(a.pos, 3));
       g.setAttribute('normal', new THREE.Float32BufferAttribute(a.nor, 3));
       g.setAttribute('color', new THREE.Float32BufferAttribute(a.col, 3));
+      if (a.uv.length) g.setAttribute('uv', new THREE.Float32BufferAttribute(a.uv, 2));
       g.setIndex(a.idx);
       g.computeBoundingSphere();
       g.computeBoundingBox();
@@ -288,43 +270,87 @@ export class Baker {
   }
 }
 
-/** Put baked geometry into meshes (one per finish) inside `into`. */
+/** Put baked geometry into meshes (one per fin) inside `into`. */
 export function bakedToGroup(baked: Baked, into: THREE.Group = new THREE.Group()): THREE.Group {
   for (const f of FINS) {
     const g = baked[f];
     if (!g) continue;
     const m = new THREE.Mesh(g, finMat(f));
     m.userData.fin = f;
-    m.castShadow = f === 'gloss' || f === 'satin';
-    m.receiveShadow = m.castShadow;
+    m.castShadow = !NO_SHADOW.has(f);
+    m.receiveShadow = f !== 'glow' && f !== 'rgb';
     into.add(m);
   }
   return into;
 }
 
+/** Free the GPU geometry of every baked mesh below `root`. */
+export function disposeBaked(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && m.userData.fin) m.geometry.dispose();
+  });
+}
+
 // ── Brush: friendly drawing API on top of a Baker ───────────────────────────
-// All positions are the CENTER of the primitive. Rotations are radians.
+// All positions are the CENTER of the primitive unless noted. Rotations are radians.
 export class Brush {
   constructor(readonly b: Baker) {}
+  get fine(): boolean { return this.b.fine; }
 
   /** Rounded box. */
-  rbox(x: number, y: number, z: number, w: number, h: number, d: number, color: string, r = 0.04, fin: Fin = 'gloss', ry = 0, rx = 0, rz = 0): void {
+  rbox(x: number, y: number, z: number, w: number, h: number, d: number, color: string, r = 0.03, fin: Fin = 'paint', ry = 0, rx = 0, rz = 0): void {
     this.b.add(bevelBox(w, h, d, r), M(x, y, z, 1, 1, 1, ry, rx, rz), color, fin);
   }
   /** Sharp box. */
-  box(x: number, y: number, z: number, w: number, h: number, d: number, color: string, fin: Fin = 'gloss', ry = 0, rx = 0, rz = 0): void {
+  box(x: number, y: number, z: number, w: number, h: number, d: number, color: string, fin: Fin = 'paint', ry = 0, rx = 0, rz = 0): void {
     this.b.add(boxG(w, h, d), M(x, y, z, 1, 1, 1, ry, rx, rz), color, fin);
   }
-  /** Cylinder / truncated cone along y (rotate with rx/rz). */
-  cyl(x: number, y: number, z: number, rt: number, rb: number, h: number, color: string, fin: Fin = 'gloss', seg = 14, rx = 0, rz = 0, ry = 0): void {
+  /** Box from min corner to max corner (handy for furniture); r > 0 rounds it. */
+  blk(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, color: string, fin: Fin = 'paint', r = 0): void {
+    const w = x1 - x0, h = y1 - y0, d = z1 - z0;
+    const g = r > 0 ? bevelBox(w, h, d, r) : boxG(w, h, d);
+    this.b.add(g, M((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), color, fin);
+  }
+  /** Cylinder / truncated cone along y (rotate with rx/rz/ry). */
+  cyl(x: number, y: number, z: number, rt: number, rb: number, h: number, color: string, fin: Fin = 'paint', seg = 14, rx = 0, rz = 0, ry = 0): void {
     this.b.add(cylG(rt, rb, h, seg), M(x, y, z, 1, 1, 1, ry, rx, rz), color, fin);
   }
-  /** Cylinder with a different length than its cached unit (scaled along its own axis). */
-  rod(x: number, y: number, z: number, r: number, len: number, color: string, fin: Fin = 'gloss', seg = 8, rx = 0, rz = 0, ry = 0): void {
+  /** Thin cylinder with arbitrary length (scaled along its own axis). */
+  rod(x: number, y: number, z: number, r: number, len: number, color: string, fin: Fin = 'paint', seg = 8, rx = 0, rz = 0, ry = 0): void {
     this.b.add(cylG(r, r, 1, seg), M(x, y, z, 1, len, 1, ry, rx, rz), color, fin);
   }
+  /** Thin rod from point a to point b. */
+  rodBetween(a: [number, number, number], b: [number, number, number], r: number, color: string, fin: Fin = 'paint', seg = 6): void {
+    const dir = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const len = dir.length();
+    if (len < 1e-5) return;
+    dir.normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const mat = new THREE.Matrix4().compose(
+      new THREE.Vector3((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2),
+      q,
+      new THREE.Vector3(1, len, 1),
+    );
+    this.b.add(cylG(r, r, 1, seg), mat, color, fin);
+  }
   /** Ball / ellipsoid. */
-  ball(x: number, y: number, z: number, r: number, color: string, fin: Fin = 'gloss', sx = 1, sy = 1, sz = 1): void {
-    this.b.add(ballG(r < 0.1), M(x, y, z, r * sx, r * sy, r * sz), color, fin);
+  ball(x: number, y: number, z: number, r: number, color: string, fin: Fin = 'paint', sx = 1, sy = 1, sz = 1): void {
+    this.b.add(ballG(r < 0.08), M(x, y, z, r * sx, r * sy, r * sz), color, fin);
+  }
+  /** Low-poly ellipsoid (foliage clusters): 8x6 segments, forced. */
+  blob(x: number, y: number, z: number, rx: number, ry: number, rz: number, color: string, fin: Fin = 'paint', rotY = 0, rotX = 0, rotZ = 0): void {
+    this.b.add(ballG(true), M(x, y, z, rx, ry, rz, rotY, rotX, rotZ), color, fin);
+  }
+  /** Ellipsoid with radii (rx, ry, rz) and optional rotations. */
+  ell(x: number, y: number, z: number, rx: number, ry: number, rz: number, color: string, fin: Fin = 'paint', rotY = 0, rotX = 0, rotZ = 0): void {
+    this.b.add(ballG(Math.max(rx, ry, rz) < 0.08), M(x, y, z, rx, ry, rz, rotY, rotX, rotZ), color, fin);
+  }
+  torus(x: number, y: number, z: number, R: number, r: number, color: string, fin: Fin = 'paint', rx = Math.PI / 2, seg = 24): void {
+    this.b.add(torusG(R, r, seg, 8), M(x, y, z, 1, 1, 1, 0, rx, 0), color, fin);
+  }
+  /** Revolve a [radius, y] profile (y is local, relative to the given base y). */
+  lathe(x: number, y: number, z: number, pts: number[][], color: string, fin: Fin = 'paint', seg = 18): void {
+    this.b.add(latheG(pts, seg), M(x, y, z), color, fin);
   }
 }

@@ -7,13 +7,16 @@ import { tuning } from '../tuning';
 import { audio } from './audio';
 import { fx } from './fx';
 import { store } from '../core/store';
+import { toast } from '../ui/ui';
 
 export function initJuice(): void {
   scenes.frameHooks.push((dt) => fx.update(dt));
   scenes.sceneHooks.push((s) => {
     fx.attach(s.scene, s.camera, s.fxScale);
     const inWorkshop = s.name === 'workshop';
-    audio.setMusic(tuning.audio.music > 0 && (!inWorkshop || store.data.settings.musicInWorkshop) && s.name !== 'picker');
+    // a beat per place: lobby (picker), town + build, lo-fi studio, runway style
+    audio.setTrack(s.name === 'picker' ? 'lobby' : s.name === 'workshop' ? 'studio' : s.name === 'dressup' ? 'style' : 'town');
+    audio.setMusic(tuning.audio.music > 0 && (!inWorkshop || store.data.settings.musicInWorkshop));
   });
 
   // ── UI ──
@@ -27,7 +30,7 @@ export function initJuice(): void {
   bus.on('profileCreated', () => audio.play('happy'));
   bus.on('creationSaved', ({ pos }) => {
     audio.play('save');
-    if (pos) fx.burst('sparkle', pos, { count: 30, color: ['#ffffff', '#ffd166', '#ff8fb1'] });
+    if (pos) fx.burst('sparkle', pos, { count: 30, color: ['#ffffff', '#ffc93c', '#ff2e88', '#00d4ff'] });
   });
   bus.on('townExported', () => audio.play('chime'));
   bus.on('townImported', () => audio.play('happy'));
@@ -45,10 +48,15 @@ export function initJuice(): void {
   bus.on('outfitChanged', ({ pos, object }) => {
     audio.play('swish');
     audio.play('sparkle', { vol: 0.7 });
-    if (pos) fx.burst('sparkle', pos, { count: tuning.dressup.sparkleCount, color: ['#ffffff', '#fff3a3', '#ffc6e0', '#c9f1ff'] });
+    if (pos) fx.burst('sparkle', pos, { count: tuning.dressup.sparkleCount, color: ['#ffffff', '#ff2e88', '#7c4dff', '#00d4ff'] });
     if (object) popScale(object, 0.4, 0.12);
   });
   bus.on('colorPicked', () => audio.play('pop', { pitch: 1.4, vol: 0.6 }));
+  bus.on('photoFlash', ({ pos }) => {
+    audio.play('snap', { pitch: 1.6, vol: 0.8 });
+    audio.play('sparkle', { vol: 0.6, pitch: 1.2 });
+    if (pos) fx.burst('sparkle', pos, { count: 18, color: ['#ffffff', '#ff2e88', '#00d4ff'], size: 1.1 });
+  });
   bus.on('characterSpin', ({ speed }) => audio.play('swish', { pitch: 0.85 + Math.min(0.5, speed * 0.05), vol: Math.min(0.55, 0.14 + speed * 0.03) }));
 
   // ── Building ──
@@ -95,20 +103,69 @@ export function initJuice(): void {
   });
 
   // ── Slime ──
-  bus.on('slimeGrab', () => audio.play('slimeClick'));
-  bus.on('slimeStretch', ({ speed }) => {
-    audio.play('slimeClick', { vol: 0.5 + Math.min(0.5, speed * 0.2) });
-    if (speed > 2 && Math.random() < 0.3) audio.play('slimeStretch');
+  // Slime sounds vary per type (`kind`): butter is thick and low, clear is bright, crunchy pops beads,
+  // cloud is light and drizzly. Strand clicks rise in pitch as the strand thins.
+  bus.on('slimeGrab', ({ kind }) => {
+    if (kind === 'butter') audio.play('poke', { pitch: 0.65, vol: 0.55 });
+    else if (kind === 'crunchy') audio.play('slimeClick', { pitch: 0.85, vol: 0.6 });
+    else if (kind === 'cloud') audio.play('flake', { pitch: 0.8, vol: 0.45 });
+    else audio.play('slimeClick', { pitch: kind === 'clear' ? 1.2 : 1 });
   });
-  bus.on('slimeRelease', ({ amount }) => {
-    audio.play('slimeStretch', { pitch: 0.8 });
+  bus.on('slimeStretch', ({ amount, speed, kind, big }) => {
+    const pitch = 0.85 + 0.45 * amount;
+    const vol = 0.4 + Math.min(0.5, speed * 0.15);
+    if (kind === 'butter') {
+      audio.play('slimeClick', { pitch: pitch * 0.62, vol: vol * 0.8 });
+      if (Math.random() < 0.15) audio.play('squelch', { pitch: 0.6, vol: 0.4 });
+    } else if (kind === 'cloud') {
+      audio.play('flake', { pitch: pitch * 1.1, vol: vol * 0.55 });
+      if (Math.random() < 0.25) audio.play('swish', { pitch: 1.5 + Math.random() * 0.5, vol: 0.18 });
+    } else if (kind === 'crunchy') {
+      audio.play('flake', { pitch: pitch * 0.9, vol: vol * 0.7 });
+      audio.play('slimeClick', { pitch: pitch * 0.8, vol: vol * 0.5 });
+    } else if (kind === 'clear') {
+      audio.play('slimeClick', { pitch: pitch * 1.25, vol });
+    } else {
+      audio.play('slimeClick', { pitch: kind === 'galaxy' ? pitch * 0.85 : pitch, vol });
+    }
+    if (big) {
+      audio.play('pop', { pitch: 0.9 + Math.random() * 0.5, vol: 0.5 });
+      if (kind === 'holo') audio.play('sparkle', { vol: 0.3 });
+      else if (kind === 'galaxy') audio.play('chime', { pitch: 1.5, vol: 0.2 });
+    } else if (speed > 2.2 && Math.random() < 0.25) audio.play('slimeStretch', { pitch });
+  });
+  bus.on('slimeRelease', ({ amount, kind }) => {
+    audio.play('slimeStretch', { pitch: kind === 'butter' ? 0.6 : 0.8 });
     if (amount > 0.6) audio.play('pop', { pitch: 0.7, vol: 0.6 });
   });
-  bus.on('slimePoke', () => audio.play('poke'));
-  bus.on('slimeFold', () => audio.play('squelch', { pitch: 0.8 }));
+  bus.on('slimePoke', ({ kind }) => audio.play('poke', { pitch: kind === 'butter' ? 0.7 : kind === 'clear' ? 1.2 : 1 }));
+  bus.on('slimeFold', ({ kind }) => {
+    audio.play('squelch', { pitch: kind === 'butter' ? 0.65 : 0.8 });
+    audio.play('slimeStretch', { pitch: 0.7, vol: 0.5 });
+  });
   bus.on('slimeAddin', ({ pos }) => {
     audio.play('sparkle');
     if (pos) fx.burst('sparkle', pos, { count: 18 });
+  });
+  bus.on('slimeCrunch', ({ strength }) => {
+    audio.play('crunch', { vol: 0.3 + 0.3 * strength, pitch: 1.1 + Math.random() * 0.4 });
+    audio.play('flake', { pitch: 0.9 + Math.random() * 0.5, vol: 0.5 });
+  });
+  bus.on('slimeSnap', ({ pos, color }) => {
+    audio.play('snap');
+    audio.play('slimeStretch', { pitch: 1.2 });
+    audio.play('pop', { pitch: 0.6, vol: 0.7 });
+    fx.burst('drop', pos, { count: 10, color, speed: 0.9, floorY: 0.1 });
+  });
+  bus.on('slimeBubble', () => audio.play('pop', { pitch: 1.9, vol: 0.18 }));
+  bus.on('slimeBubblePop', ({ pos, size, color }) => {
+    audio.play('pop', { pitch: 1.4 + (0.12 - size) * 6, vol: 0.55 });
+    audio.play('flake', { pitch: 1.2, vol: 0.35 });
+    fx.burst('drop', pos, { count: 5, color, speed: 0.5, size: 0.5, floorY: 0.1 });
+  });
+  bus.on('slimeType', ({ pos }) => {
+    audio.play('pop', { pitch: 1.2 });
+    if (pos) fx.burst('sparkle', pos, { count: 12, size: 0.8 });
   });
 
   // ── Wax ──
@@ -160,6 +217,22 @@ export function initJuice(): void {
     audio.play('confetti');
     fx.burst('confetti', pos, { count: 70 });
   });
+  bus.on('charmCollected', ({ pos }) => {
+    audio.play('collect');
+    fx.burst('sparkle', pos, { count: 40, color: ['#ffffff', '#00d4ff', '#ff2e88', '#ffc93c'] });
+  });
+  bus.on('rewardUnlocked', ({ label, icon }) => {
+    audio.play('levelup');
+    toast(`${icon} Unlocked: ${label}`);
+  });
+  bus.on('carJump', () => audio.play('swish', { pitch: 0.7 }));
+  bus.on('carLand', ({ pos, strength }) => {
+    audio.play('bump', { vol: Math.min(1, 0.4 + strength * 0.3), pitch: 0.8 });
+    fx.burst('puff', pos, { count: 10, speed: 1 + strength });
+  });
+  bus.on('carBoost', () => audio.play('boost'));
+  bus.on('carSkid', ({ strength }) => audio.play('skid', { vol: Math.min(1, 0.35 + strength * 0.5) }));
+  bus.on('footstep', ({ run }) => audio.play('step', { vol: run ? 0.8 : 0.55, pitch: 0.92 + Math.random() * 0.16 }));
   bus.on('arriveWorkshop', () => audio.play('chime'));
   bus.on('arriveBuild', () => audio.play('chime'));
 }

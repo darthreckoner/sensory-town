@@ -8,8 +8,10 @@ export interface PalItem {
   id: string;
   icon: string;
   label: string;
-  dot?: string;     // small colour dot (default colour of the piece)
-  data: unknown;    // whatever the scene needs to start a brush from this tile
+  dot?: string;                  // small colour dot (default colour of the piece)
+  data: unknown;                 // whatever the scene needs to start a brush from this tile
+  lock?: string;                 // locked bonus item: badge text ("💎 12")
+  dim?: boolean;                 // not usable right now (e.g. ground floor only)
 }
 
 export type DragPhase = 'start' | 'move' | 'end' | 'cancel';
@@ -17,17 +19,26 @@ export type DragPhase = 'start' | 'move' | 'end' | 'cancel';
 export interface TileHandlers {
   onTap(item: PalItem, tile: HTMLElement): void;
   onDrag(item: PalItem, x: number, y: number, phase: DragPhase, touch: boolean): void;
+  /** Tapped a locked or dimmed tile. */
+  onBlocked?(item: PalItem): void;
 }
 
 export function paletteTile(parent: HTMLElement, item: PalItem, h: TileHandlers): HTMLButtonElement {
   const t = el('button', 'item ptile', parent) as HTMLButtonElement;
   t.dataset.id = item.id;
   el('span', 'ico', t, item.icon);
-  el('span', '', t, item.label);
-  if (item.dot) {
+  el('span', 'lbl', t, item.label);
+  if (item.dot && !item.lock) {
     const d = el('span', 'pdot', t);
     d.style.background = item.dot;
   }
+  if (item.lock) {
+    t.classList.add('locked');
+    el('span', 'lock-badge', t, `🔒 ${item.lock}`);
+  }
+  if (item.dim) t.classList.add('dim');
+  const blocked = !!item.lock || !!item.dim;
+
   let pid: number | null = null;
   let sx = 0, sy = 0;
   let dragging = false;
@@ -53,7 +64,7 @@ export function paletteTile(parent: HTMLElement, item: PalItem, h: TileHandlers)
     }
   });
   t.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== pid) return;
+    if (e.pointerId !== pid || blocked) return;
     const touch = e.pointerType !== 'mouse';
     if (!dragging) {
       if (Math.hypot(e.clientX - sx, e.clientY - sy) > tuning.build.dragStartPx) {
@@ -70,6 +81,7 @@ export function paletteTile(parent: HTMLElement, item: PalItem, h: TileHandlers)
     const was = dragging;
     finish();
     if (was) h.onDrag(item, e.clientX, e.clientY, 'end', touch);
+    else if (blocked) h.onBlocked?.(item);
     else {
       bus.emit('uiTap', { kind: 'soft' });
       h.onTap(item, t);

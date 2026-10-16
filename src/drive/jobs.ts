@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { bus } from '../core/events';
 import { tuning } from '../tuning';
 import { JOB_SPOTS, type Spot } from '../world/townLayout';
+import { groundHeight } from '../world/heightfield';
 import { Character, OUTFIT_CATALOG } from '../art/character';
 import type { Outfit } from '../core/model';
 import type { Car } from '../art/car';
@@ -170,7 +171,8 @@ export class JobManager {
     bus.emit('passengerWave', { pos: { x: s.x, y: 1.6, z: s.z } });
   }
 
-  update(dt: number, t: number, cx: number, cz: number): void {
+  /** cx, cz = where the player is (car or feet); canTrigger = in the car (a ride needs the car). */
+  update(dt: number, t: number, cx: number, cz: number, canTrigger = true): void {
     const d = tuning.drive;
     this.pickupBeacon?.update(t);
     this.destBeacon?.update(t);
@@ -199,7 +201,7 @@ export class JobManager {
           this.nearTimer = d.jobWaveEverySeconds;
           bus.emit('passengerWave', { pos: { x: s.x, y: 1.6, z: s.z } });
         }
-        if (dist < d.jobTriggerRadius) this.startBoarding(cx, cz);
+        if (canTrigger && dist < d.jobTriggerRadius) this.startBoarding(cx, cz);
         break;
       }
 
@@ -226,7 +228,7 @@ export class JobManager {
           this.pickupBeacon = null;
           if (this.dest) {
             this.destBeacon = new Beacon('#ffc844', this.dest.icon, 14);
-            this.destBeacon.group.position.set(this.dest.x, 0, this.dest.z);
+            this.destBeacon.group.position.set(this.dest.x, groundHeight(this.dest.x, this.dest.z), this.dest.z);
             this.parent.add(this.destBeacon.group);
           }
         }
@@ -240,7 +242,7 @@ export class JobManager {
           this.waveTimer = 3 + Math.random() * 2;
         }
         const s = this.dest!;
-        if (Math.hypot(cx - s.x, cz - s.z) < d.jobTriggerRadius) this.startAlighting(cx, cz);
+        if (canTrigger && Math.hypot(cx - s.x, cz - s.z) < d.jobTriggerRadius) this.startAlighting(cx, cz);
         break;
       }
 
@@ -254,17 +256,19 @@ export class JobManager {
   private spawn(cx: number, cz: number): void {
     const d = tuning.drive;
     // A pickup spot that is not right on top of the car, and not the last one.
-    const far = JOB_SPOTS.filter((s) => s !== this.lastSpot && Math.hypot(s.x - cx, s.z - cz) > 24);
-    const spot = pick(far.length ? far : JOB_SPOTS.filter((s) => s !== this.lastSpot));
+    const dist = (s: Spot): number => Math.hypot(s.x - cx, s.z - cz);
+    const mid = JOB_SPOTS.filter((s) => s !== this.lastSpot && dist(s) > 24 && dist(s) < 130);
+    const far = JOB_SPOTS.filter((s) => s !== this.lastSpot && dist(s) > 24);
+    const spot = pick(mid.length ? mid : far.length ? far : JOB_SPOTS.filter((s) => s !== this.lastSpot));
     // A destination well away from the pickup.
-    const ride = JOB_SPOTS.filter((s) => s !== spot && Math.hypot(s.x - spot.x, s.z - spot.z) >= d.jobMinDistance);
+    const ride = JOB_SPOTS.filter((s) => s !== spot && Math.hypot(s.x - spot.x, s.z - spot.z) >= d.jobMinDistance && Math.hypot(s.x - spot.x, s.z - spot.z) < 200);
     const dest = pick(ride.length ? ride : JOB_SPOTS.filter((s) => s !== spot));
     this.spot = spot;
     this.dest = dest;
     this.lastSpot = spot;
     this.outfit = randomOutfit();
     const npc = new Character(this.outfit);
-    npc.group.position.set(spot.x, 0, spot.z);
+    npc.group.position.set(spot.x, groundHeight(spot.x, spot.z, true), spot.z);
     npc.group.rotation.y = Math.atan2(-spot.x, -spot.z);
     npc.group.scale.setScalar(0.01);
     this.parent.add(npc.group);
@@ -272,7 +276,7 @@ export class JobManager {
     npc.wave();
     this.standing = npc;
     this.pickupBeacon = new Beacon('#ff6fa5');
-    this.pickupBeacon.group.position.set(spot.x, 0, spot.z);
+    this.pickupBeacon.group.position.set(spot.x, groundHeight(spot.x, spot.z), spot.z);
     this.parent.add(this.pickupBeacon.group);
     this.waveTimer = 1.2;
     this.nearTimer = 0;
@@ -282,7 +286,7 @@ export class JobManager {
   private startBoarding(cx: number, cz: number): void {
     const npc = this.standing!;
     bus.emit('passengerPickup', { pos: { x: cx, y: 1.6, z: cz } });
-    this.seated = new Character(this.outfit!, { seated: true });
+    this.seated = new Character(this.outfit!, { seated: true, shadows: false });
     this.hopFrom.copy(npc.group.position);
     this.hopT = 0;
     npc.hop();
@@ -301,7 +305,8 @@ export class JobManager {
     npc.hop();
     // Land on the spot itself, a little beside where the car stopped.
     const s = this.dest!;
-    this.hopTo.set(s.x + (cx < s.x ? 1 : -1) * 1.2, 0, s.z + (cz < s.z ? 1 : -1) * 1.2);
+    const hx = s.x + (cx < s.x ? 1 : -1) * 1.2, hz = s.z + (cz < s.z ? 1 : -1) * 1.2;
+    this.hopTo.set(hx, groundHeight(hx, hz, true), hz);
     this.destBeacon?.dispose();
     this.destBeacon = null;
     this.hopT = 0;
@@ -341,7 +346,7 @@ export class JobManager {
       this.hopT += dt / 0.4;
       const k = clamp(this.hopT, 0, 1);
       npc.group.scale.setScalar(Math.max(0.001, 1 - ease.inOutCubic(k)));
-      npc.group.position.y = Math.sin(Math.PI * k) * 0.5;
+      npc.group.position.y = this.hopTo.y + Math.sin(Math.PI * k) * 0.5;
       if (k >= 1) {
         npc.group.removeFromParent();
         this.standing = null;

@@ -1,105 +1,165 @@
-// The cozy edge of the world: a ring of soft rounded hills and puffy clouds
-// that drift slowly around the town.
+// Golden-hour sky: a gradient dome with a low sun (and its glow), warm
+// clouds drifting around the viewer, and a haze of far mountains.
+// Everything follows the viewer so the sky never has parallax.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { seeded } from '../world/townLayout';
 import { tuning } from '../tuning';
+import { sunDirection } from '../art/env';
+import { PAL } from './palette';
 
-function hillGeometry(rng: () => number, ring: number): THREE.BufferGeometry[] {
-  const out: THREE.BufferGeometry[] = [];
-  const palettes = ring === 0
-    ? ['#a7e3a0', '#9bdca4', '#b4eaa8', '#8fd6b0', '#c3ee9f']
-    : ['#a9d9c4', '#b7cdf0', '#c5b8f5', '#a5dcc8', '#bfe0e8'];
-  const count = ring === 0 ? 20 : 15;
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + (rng() - 0.5) * (ring === 0 ? 0.22 : 0.3);
-    const dist = ring === 0 ? 96 + rng() * 26 : 150 + rng() * 40;
-    const rad = ring === 0 ? 18 + rng() * 14 : 30 + rng() * 22;
-    const hgt = ring === 0 ? 7 + rng() * 8 : 16 + rng() * 16;
-    const g = new THREE.SphereGeometry(1, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2 + 0.25);
-    const pos = g.attributes.position as THREE.BufferAttribute;
-    const base = new THREE.Color(palettes[(rng() * palettes.length) | 0]);
-    const top = base.clone().lerp(new THREE.Color('#ffffff'), 0.28);
-    const col = new Float32Array(pos.count * 3);
-    const c = new THREE.Color();
-    for (let k = 0; k < pos.count; k++) {
-      const y = pos.getY(k);
-      c.copy(base).lerp(top, Math.max(0, y));
-      col[k * 3] = c.r;
-      col[k * 3 + 1] = c.g;
-      col[k * 3 + 2] = c.b;
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.scale(rad, hgt, rad * (0.8 + rng() * 0.4));
-    g.rotateY(rng() * Math.PI * 2);
-    g.translate(Math.cos(a) * dist, -hgt * 0.12, Math.sin(a) * dist);
-    // Merge needs identical attributes: drop uvs, keep position/normal/color.
-    g.deleteAttribute('uv');
-    out.push(g);
+/** Direction TO the sun (the same low golden-hour sun art/env.ts lights every outdoor scene with). */
+export const SUN_DIR = sunDirection();
+
+const DOME_R = 520;
+
+function skyTexture(): THREE.CanvasTexture {
+  const W = 1024, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const x = c.getContext('2d')!;
+  const g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, PAL.skyTop);
+  g.addColorStop(0.3, '#6d8fdc');
+  g.addColorStop(0.44, '#f0b9a6');
+  g.addColorStop(0.5, PAL.skyHorizon);
+  g.addColorStop(0.53, PAL.fogColor);
+  g.addColorStop(1, PAL.fogColor);
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, H);
+  // sun glow where the sun is (equirect position of SUN_DIR on a three.js sphere)
+  const theta = Math.acos(SUN_DIR.y);
+  const phi = Math.atan2(SUN_DIR.z, -SUN_DIR.x);
+  const sx = ((phi / (Math.PI * 2) + 1) % 1) * W, sy = (theta / Math.PI) * H;
+  for (const [r, a, col] of [[220, 0.42, '255,196,140'], [110, 0.5, '255,222,170'], [46, 0.9, '255,244,220']] as const) {
+    const rg = x.createRadialGradient(sx, sy, 0, sx, sy, r);
+    rg.addColorStop(0, `rgba(${col},${a})`);
+    rg.addColorStop(1, `rgba(${col},0)`);
+    x.fillStyle = rg;
+    x.fillRect(sx - r, sy - r, r * 2, r * 2);
+    // wrap around the seam
+    if (sx - r < 0) x.fillRect(sx - r + W, sy - r, r * 2, r * 2);
+    if (sx + r > W) x.fillRect(sx - r - W, sy - r, r * 2, r * 2);
   }
-  return out;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
-function buildHills(): THREE.Mesh {
-  const rng = seeded(404);
-  const geos = [...hillGeometry(rng, 1), ...hillGeometry(rng, 0)];
+function sunSprite(): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d')!;
+  const rg = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  rg.addColorStop(0, 'rgba(255,255,240,1)');
+  rg.addColorStop(0.18, 'rgba(255,246,210,1)');
+  rg.addColorStop(0.3, 'rgba(255,214,150,0.55)');
+  rg.addColorStop(1, 'rgba(255,190,120,0)');
+  x.fillStyle = rg;
+  x.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false }));
+  s.scale.set(150, 150, 1);
+  s.renderOrder = -5;
+  return s;
+}
+
+function cloudMesh(): THREE.Mesh {
+  const rng = seeded(909);
+  const geos: THREE.BufferGeometry[] = [];
+  const top = new THREE.Color('#fff4e6'), bottom = new THREE.Color('#ffa77a'), c = new THREE.Color();
+  for (let i = 0; i < 14; i++) {
+    const ang = (i / 14) * Math.PI * 2 + rng() * 0.4;
+    const dist = 240 + rng() * 170;
+    const alt = 70 + rng() * 80;
+    const parts = 4 + ((rng() * 3) | 0);
+    for (let k = 0; k < parts; k++) {
+      const r = 9 + rng() * 14;
+      const g = new THREE.SphereGeometry(r, 9, 6);
+      g.scale(2.1, 0.5, 1);
+      g.translate((k - parts / 2) * 18 + rng() * 6, (rng() - 0.4) * 4, (rng() - 0.5) * 12);
+      g.rotateY(ang + Math.PI / 2);
+      g.translate(Math.cos(ang) * dist, alt, Math.sin(ang) * dist);
+      const pos = g.attributes.position as THREE.BufferAttribute;
+      const col = new Float32Array(pos.count * 3);
+      for (let v = 0; v < pos.count; v++) {
+        const t = THREE.MathUtils.clamp((pos.getY(v) - alt + 6) / 12, 0, 1);
+        c.copy(bottom).lerp(top, t);
+        col.set([c.r, c.g, c.b], v * 3);
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      g.deleteAttribute('uv');
+      geos.push(g);
+    }
+  }
   const m = new THREE.Mesh(
     mergeGeometries(geos, false),
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: false }),
+    new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.92, fog: false, depthWrite: false }),
   );
-  m.castShadow = false;
-  m.receiveShadow = false;
+  m.renderOrder = -4;
+  m.frustumCulled = false;
   return m;
 }
 
-interface CloudPivot {
-  pivot: THREE.Group;
-  speed: number;
-}
-
-function buildClouds(): { group: THREE.Group; pivots: CloudPivot[] } {
-  const rng = seeded(909);
-  const group = new THREE.Group();
-  const pivots: CloudPivot[] = [];
-  const mat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#fff7fb', emissiveIntensity: 0.55, roughness: 1, fog: true });
-  const n = 9;
-  for (let i = 0; i < n; i++) {
-    const puffs: THREE.BufferGeometry[] = [];
-    const parts = 4 + ((rng() * 3) | 0);
-    for (let k = 0; k < parts; k++) {
-      const r = 3.2 + rng() * 3.2;
-      const g = new THREE.SphereGeometry(r, 14, 10);
-      g.scale(1.25, 0.78, 1);
-      g.translate((k - parts / 2) * 4.4 + rng() * 1.5, (rng() - 0.3) * 2, (rng() - 0.5) * 3.2);
-      g.deleteAttribute('uv');
-      puffs.push(g);
+/** A ring of hazy mountains on the horizon (never fogged away: they ARE the haze). */
+function mountainRing(): THREE.Mesh {
+  const rng = seeded(404);
+  const geos: THREE.BufferGeometry[] = [];
+  const base = new THREE.Color('#e7b590'), top = new THREE.Color('#7f86b4'), c = new THREE.Color();
+  for (let i = 0; i < 40; i++) {
+    const ang = (i / 40) * Math.PI * 2 + rng() * 0.12;
+    const r = 120 + rng() * 150, h = 45 + rng() * 85;
+    const g = new THREE.ConeGeometry(r * 0.5, h, 7, 1);
+    g.translate(0, h / 2 - 6, 0);
+    g.rotateY(rng() * 3);
+    g.translate(Math.cos(ang) * (400 + rng() * 40), 0, Math.sin(ang) * (400 + rng() * 40));
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const col = new Float32Array(pos.count * 3);
+    for (let v = 0; v < pos.count; v++) {
+      c.copy(base).lerp(top, THREE.MathUtils.clamp((pos.getY(v) + 6) / h, 0, 1));
+      col.set([c.r, c.g, c.b], v * 3);
     }
-    const cloud = new THREE.Mesh(mergeGeometries(puffs, false), mat);
-    const radius = 85 + rng() * 70;
-    const ang = (i / n) * Math.PI * 2 + rng() * 0.5;
-    cloud.position.set(Math.cos(ang) * radius, 20 + rng() * 22, Math.sin(ang) * radius);
-    cloud.rotation.y = -ang + Math.PI / 2 + (rng() - 0.5) * 0.6;
-    const s = 0.9 + rng() * 0.8;
-    cloud.scale.setScalar(s);
-    const pivot = new THREE.Group();
-    pivot.add(cloud);
-    group.add(pivot);
-    pivots.push({ pivot, speed: 0.7 + rng() * 0.8 });
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.deleteAttribute('uv');
+    geos.push(g);
   }
-  return { group, pivots };
+  const m = new THREE.Mesh(mergeGeometries(geos, false), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  m.renderOrder = -6;
+  m.frustumCulled = false;
+  return m;
 }
 
-export function buildSky(): { group: THREE.Group; update(dt: number): void } {
+export interface Sky {
+  group: THREE.Group;
+  /** Keep the sky centred on the viewer. */
+  follow(x: number, y: number, z: number): void;
+  update(dt: number): void;
+}
+
+export function buildSky(): Sky {
   const group = new THREE.Group();
   group.name = 'sky';
-  group.add(buildHills());
-  const clouds = buildClouds();
-  group.add(clouds.group);
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(DOME_R, 32, 18),
+    new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false }),
+  );
+  dome.renderOrder = -10;
+  dome.frustumCulled = false;
+  const sun = sunSprite();
+  sun.position.copy(SUN_DIR).multiplyScalar(DOME_R * 0.9);
+  const clouds = cloudMesh();
+  const mountains = mountainRing();
+  group.add(dome, sun, mountains, clouds);
   return {
     group,
-    update(dt: number) {
-      const sp = tuning.drive.cloudSpeed;
-      for (const c of clouds.pivots) c.pivot.rotation.y += sp * c.speed * dt;
+    follow(x, y, z) {
+      group.position.set(x, 0, z);
+      void y;
+    },
+    update(dt) {
+      clouds.rotation.y += tuning.drive.cloudSpeed * dt;
     },
   };
 }

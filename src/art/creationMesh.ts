@@ -23,7 +23,7 @@ const slimeMats = new Map<string, THREE.Material>();
 export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
   const g = new THREE.Group();
   if (c.kind === 'slime') {
-    const blob = mesh(geo.blob, slimeMat(c.color, (c.glitter ?? 0) > 0 || (c.addins?.length ?? 0) > 0));
+    const blob = mesh(geo.blob, slimeMat(c.color, (c.glitter ?? 0) > 0 || (c.addins?.length ?? 0) > 0, c.slimeType ?? 'glossy'));
     blob.scale.set(1.15, 0.5, 1.15);
     blob.position.y = 0.24;
     g.add(blob);
@@ -44,6 +44,13 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
     if (c.addins?.includes('pearls')) {
       for (let i = 0; i < 8; i++) onDome(mesh(geo.pearl, toyMat('#fff8f0', 'gloss'), false, false));
     }
+    if (c.slimeType === 'crunchy') {
+      const cols = ['#ff2e88', '#00d4ff', '#b6ff3b', '#ffc93c', '#ffffff'];
+      for (let i = 0; i < 16; i++) onDome(mesh(geo.pearl, toyMat(cols[i % cols.length], 'gloss'), false, false));
+    }
+    if (c.slimeType === 'galaxy') {
+      for (let i = 0; i < 22; i++) onDome(mesh(geo.glint, toyMat(i % 3 ? '#ffffff' : '#9fd8ff', 'emissive'), false, false));
+    }
     if ((c.glitter ?? 0) > 0) {
       for (let i = 0; i < 18; i++) onDome(mesh(geo.glint, toyMat('#ffffff', 'emissive'), false, false));
     }
@@ -53,11 +60,21 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
     g.add(jar);
   } else {
     const shape = c.shape ?? 'bun';
-    const body = mesh(makeShapeGeometry(shape, 12), faceMaterial(c.color, shape), true, false);
+    const body = mesh(makeShapeGeometry(shape, 12), faceMaterial(c.color, shape, { face: c.face ?? false }), true, false);
     g.add(body);
     if (c.kind === 'wax' && c.layers && c.layers.length) {
       const outer = c.layers[c.layers.length - 1];
-      const shell = mesh(makeShapeGeometry(shape, 12, 0.06 * Math.min(c.layers.length, 4)), new THREE.MeshPhysicalMaterial({ color: outer, roughness: 0.55, clearcoat: 0.3 }), true, false);
+      const fin = c.finish ?? 'classic';
+      const shellMat = new THREE.MeshPhysicalMaterial({
+        color: outer,
+        roughness: fin === 'chrome' ? 0.14 : 0.55,
+        metalness: fin === 'chrome' ? 1 : 0,
+        clearcoat: fin === 'chrome' ? 1 : 0.3,
+        emissive: fin === 'glow' ? new THREE.Color(outer) : new THREE.Color('#000000'),
+        emissiveIntensity: fin === 'glow' ? 0.8 : 0,
+        iridescence: fin === 'glitter' ? 0.8 : 0,
+      });
+      const shell = mesh(makeShapeGeometry(shape, 12, 0.06 * Math.min(c.layers.length, 4)), shellMat, true, false);
       g.add(shell);
       // drippy rim using the second-to-last layer for a hint of layering
       if (c.layers.length > 1) {
@@ -81,19 +98,27 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
   return wrap;
 }
 
-function slimeMat(color: string, glitter: boolean): THREE.Material {
-  const key = color + glitter;
+function slimeMat(color: string, glitter: boolean, type: string): THREE.Material {
+  const key = `${color}|${glitter}|${type}`;
   const hit = slimeMats.get(key);
   if (hit) return hit;
-  const m = new THREE.MeshPhysicalMaterial({
-    color,
+  // a small preview of each slime type's look (the station has the full shaders)
+  const base = new THREE.Color(color);
+  const p: THREE.MeshPhysicalMaterialParameters = {
+    color: base,
     roughness: 0.12,
     clearcoat: 1,
     clearcoatRoughness: 0.05,
     iridescence: glitter ? 0.6 : 0.15,
     sheen: 0.4,
     sheenColor: new THREE.Color('#ffffff'),
-  });
+  };
+  if (type === 'butter') Object.assign(p, { roughness: 0.75, clearcoat: 0.1, iridescence: 0, sheen: 0.8 });
+  if (type === 'cloud') Object.assign(p, { roughness: 0.95, clearcoat: 0, iridescence: 0, sheen: 1, color: base.clone().lerp(new THREE.Color('#ffffff'), 0.35) });
+  if (type === 'clear') Object.assign(p, { transparent: true, opacity: 0.62, roughness: 0.04, iridescence: 0.2 });
+  if (type === 'holo') Object.assign(p, { iridescence: 1, iridescenceIOR: 1.8, roughness: 0.18, metalness: 0.3 });
+  if (type === 'galaxy') Object.assign(p, { color: base.clone().multiplyScalar(0.25).lerp(new THREE.Color('#120a2a'), 0.6), roughness: 0.1, iridescence: 0.3 });
+  const m = new THREE.MeshPhysicalMaterial(p);
   slimeMats.set(key, m);
   return m;
 }

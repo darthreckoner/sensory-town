@@ -21,6 +21,8 @@
 import type { Tuning } from '../../tuning';
 
 export type SlimeTuning = Tuning['slime'];
+/** Per-type overrides of the numeric slime knobs. */
+export type SlimeOverrides = Record<string, number>;
 
 export const MAX_GRABS = 4;
 /** Lip width of the tray rim (shared with the tray mesh). */
@@ -62,6 +64,10 @@ export class SlimeGrab {
   landed = true;
   startX = 0;
   startZ = 0;
+  /** 0..1 how close the strand is to snapping (builds while held past the rubber band) */
+  tension = 0;
+  /** the strand snapped off the finger (the finger may still be down) */
+  snapped = false;
 }
 
 export class SlimeSim {
@@ -118,10 +124,21 @@ export class SlimeSim {
   private maxMem = 0;
   private maxVel = 0;
 
+  /** live tuning.slime */
+  private base: SlimeTuning;
+  /** effective tuning = base + the current slime type's overrides (refreshed every frame) */
   private tn: SlimeTuning;
+  private over: SlimeOverrides = {};
+  /** set when a strand snapped this frame (slot index), cleared by takeSnap() */
+  private snapSlot = -1;
+  /** set when a long strand landed back on the blob, cleared by takeLanding() */
+  private landX = 0;
+  private landZ = 0;
+  private landAmount = 0;
 
   constructor(tn: SlimeTuning) {
-    this.tn = tn;
+    this.base = tn;
+    this.tn = { ...tn };
     const N = Math.min(250, Math.max(8, tn.gridN | 0)); // 16-bit indices: (N+1)² must stay below 65536
     const W = N + 1;
     const n = W * W;
@@ -318,6 +335,8 @@ export class SlimeSim {
     g.landed = true;
     g.startX = g.gx;
     g.startZ = g.gz;
+    g.tension = 0;
+    g.snapped = false;
     return slot;
   }
 
@@ -341,7 +360,9 @@ export class SlimeSim {
     this.rip.fill(0); this.ripV.fill(0); this.thin.fill(0);
     this.ripLive = false;
     this.awake = true;
-    for (const g of this.grabs) { g.active = false; g.down = false; }
+    this.snapSlot = -1;
+    this.landAmount = 0;
+    for (const g of this.grabs) { g.active = false; g.down = false; g.tension = 0; g.snapped = false; }
     this.jh = this.jhv = this.jx = this.jxv = this.jz = this.jzv = 0;
     this.pos.set(this.rest);
     this.nrm.set(this.restN);
@@ -388,11 +409,11 @@ export class SlimeSim {
       for (let c = 0; c < 3; c++) {
         const nn = rn[3 * i + c];
         dent[3 * i + c] -= nn * depth * 0.95 * g;
-        mem[3 * i + c] -= nn * depth * 0.14 * g;
+        mem[3 * i + c] -= nn * depth * this.tn.pokeMemory * g;
       }
     }
     this.awake = true;
-    this.ripple(x, z, -depth * 4.2, 0.3);
+    this.ripple(x, z, -depth * 6.4 * this.tn.pokeRipple, 0.3);
     this.kick(0, -depth * 1.6);
   }
 
@@ -417,17 +438,41 @@ export class SlimeSim {
     this.kick(0, -1.4);
   }
 
+  /** Switch slime type: overrides of the numeric knobs (see tuning.slime.types). */
+  setType(over: SlimeOverrides): void {
+    this.over = over;
+    this.awake = true;
+  }
+
+  /** Slot of a strand that snapped since the last call (or -1). */
+  takeSnap(): number {
+    const s = this.snapSlot;
+    this.snapSlot = -1;
+    return s;
+  }
+
+  /** A long strand landed back on the blob since the last call: { x, z, amount } in rest space, else null. */
+  takeLanding(out: { x: number; z: number; amount: number }): boolean {
+    if (this.landAmount <= 0) return false;
+    out.x = this.landX;
+    out.z = this.landZ;
+    out.amount = this.landAmount;
+    this.landAmount = 0;
+    return true;
+  }
+
   // ── the frame ──────────────────────────────────────────────────────────────
   update(dtIn: number, time: number): void {
     const dt = clamp(dtIn, 1e-4, 1 / 30);
     const tn = this.tn;
+    Object.assign(tn, this.base, this.over);
     if (this.awake) {
       this.reach = tn.grabRadius * tn.grabReach;
       let held = false;
       for (let k = 0; k < MAX_GRABS; k++) {
         if (this.grabs[k].active) {
           held = true;
-          this.stepGrab(this.grabs[k], dt);
+          this.stepGrab(this.grabs[k], dt, k);
         }
       }
       this.computeTargets(dt);
@@ -448,7 +493,7 @@ export class SlimeSim {
   }
 
   // ── grabs ──────────────────────────────────────────────────────────────────
-  private stepGrab(g: SlimeGrab, dt: number): void {
+  private stepGrab(g: SlimeGrab, dt: number, slot: number): void {
     const tn = this.tn;
     g.age += dt;
     let fx = g.gx, fy = g.gy, fz = g.gz; // where the tip wants to be
@@ -478,19 +523,32 @@ export class SlimeSim {
       if (g.gy + dy < minY) dy = minY - g.gy;
       // 3. soft rubber band toward the stretch limit
       const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const b = tn.stretchLimit, a = b * tn.bandStart;
       if (L > 1e-5) {
-        const a = tn.stretchLimit * 0.6, b = tn.stretchLimit;
         const Ls = L <= a ? L : a + (b - a) * (1 - Math.exp(-(L - a) / (b - a)));
         const k = Ls / L;
         dx *= k; dy *= k; dz *= k;
       }
+      // 4. tension: hold the strand past the band and it tightens, quivers, then snaps back
+      if (L > a) {
+        const x = Math.min(2, (L - a) / (tn.snapWidth * b));
+        g.tension = Math.min(1, g.tension + dt * tn.snapRate * x);
+      } else {
+        g.tension = Math.max(0, g.tension - dt * 3);
+      }
       fx = g.gx + dx; fy = g.gy + dy; fz = g.gz + dz;
+      if (g.tension > 0.3) {
+        const q = 0.016 * g.tension * g.tension;
+        fx += q * Math.sin(g.age * 71);
+        fz += q * Math.cos(g.age * 83);
+        fy += q * 0.5 * Math.sin(g.age * 59);
+      }
       w = tn.followSpeed;
       z = tn.followDamping;
     } else {
       g.relAge += dt;
-      w = tn.snapBackSpeed;
-      z = 0.42 + 0.26 * clamp(tn.viscosity, 0, 1);
+      w = g.snapped ? tn.snapBackSpeed * 1.5 : tn.snapBackSpeed;
+      z = g.snapped ? 0.3 : 0.42 + 0.26 * clamp(tn.viscosity, 0, 1);
     }
 
     // tip spring (semi-implicit, two substeps)
@@ -519,15 +577,36 @@ export class SlimeSim {
     if (g.stretch > g.peak) g.peak = g.stretch;
     g.ex = clamp(g.stretch / 0.4, 0, 1);
 
+    if (g.down && g.tension >= 1) {
+      // snap: the strand lets go of the finger and whips back
+      g.snapped = true;
+      g.down = false;
+      g.relAge = 0;
+      g.relStretch = g.stretch;
+      g.landed = false;
+      const inv = 7 / Math.max(g.stretch, 0.05);
+      g.vx = (g.gx - g.tx) * inv;
+      g.vy = (g.gy - g.ty) * inv;
+      g.vz = (g.gz - g.tz) * inv;
+      this.snapSlot = slot;
+      this.kick(0.04, -4.2);
+      this.sway((g.gx - g.tx) * 0.2, (g.gz - g.tz) * 0.2);
+    }
+
     if (!g.down) {
       // landing: the retracted strand slaps back onto the blob → jiggle + ripple
       if (!g.landed && g.stretch < 0.3 * g.relStretch + 0.08) {
         g.landed = true;
-        const a = clamp(g.relStretch / Math.max(0.5, tn.stretchLimit * 0.6), 0, 1.2);
+        const a = clamp(g.relStretch / Math.max(0.5, tn.stretchLimit * tn.bandStart), 0, 1.2);
         this.kick(0, -3.4 * a);
         const dx = g.tx - g.gx, dz = g.tz - g.gz;
         this.sway(dx * 0.3, dz * 0.3);
         this.ripple(g.gx, g.gz, -1.1 * a, 0.32);
+        if (a > 0.35) {
+          this.landX = g.gx;
+          this.landZ = g.gz;
+          this.landAmount = a;
+        }
       }
       const speed = Math.hypot(g.vx, g.vy, g.vz);
       if (g.relAge > 0.15 && g.stretch < 0.02 && speed < 0.12) g.active = false;
@@ -543,7 +622,7 @@ export class SlimeSim {
     const s = Math.sqrt(Dx * Dx + Dy * Dy + Dz * Dz);
     if (s < 1e-3) return false;
     const lam = 1 - Math.exp(-s * 4); // fades the horn in from a soft mound
-    const gn = 1 / (1 + tn.thinning * s);
+    const gn = 1 / (1 + tn.thinning * s * (1 + 0.5 * g.tension));
     const rn = Math.max(0.035, reach * 0.35 * gn);
     // the drop at the tip is never narrower than the neck (no undercut on short pulls)
     const rcap = Math.min(Math.max(tn.bulbRadius, rn), reach * 0.5);
@@ -637,6 +716,7 @@ export class SlimeSim {
     const lam = 1 - Math.exp(-s * 4);
     const gx = g.gx, gy = g.gy, gz = g.gz;
     const ex = g.ex;
+    const fib = this.tn.fiber;
     const n = this.n;
     for (let i = 0; i < n; i++) {
       const ix = 3 * i;
@@ -666,7 +746,13 @@ export class SlimeSim {
       // lateral offset on the horn (keeps its azimuth), blended with the rest offset at small stretch
       let lx = qx, lz = qz;
       if (qh > 1e-6) {
-        const sc = rho / qh;
+        let rhoE = rho;
+        if (fib > 0) {
+          // fibrous slime: the strand's cross-section is fluted, the flutes spiralling along its length
+          const amp = fib * lam * smooth(0.04, 0.25, t) * (1 - smooth(0.55, 0.95, t));
+          rhoE = rho * (1 + amp * Math.sin(5 * Math.atan2(qz, qx) + 11 * t));
+        }
+        const sc = rhoE / qh;
         lx = qx + (qx * sc - qx) * lam;
         lz = qz + (qz * sc - qz) * lam;
       }
@@ -706,7 +792,7 @@ export class SlimeSim {
     const kb = 1 - Math.exp(-5 * dt);
     const decay = Math.exp(-tn.relaxSpeed * dt);
     const dent = this.dent;
-    const dd = Math.exp(-3.2 * dt);
+    const dd = Math.exp(-tn.dentDecay * dt);
     let maxMem = 0;
     for (let i = 0; i < n; i++) {
       const ix = 3 * i;
@@ -817,6 +903,7 @@ export class SlimeSim {
     const sx = this.jx + 0.5 * tn.breath * Math.sin(time * 0.7);
     const sz = this.jz + 0.4 * tn.breath * Math.cos(time * 0.9);
     const ripOn = this.ripLive;
+    const flat = tn.flatten;
     for (let i = 0; i < n; i++) {
       const ix = 3 * i;
       const r = ripOn ? rip[i] : 0;
@@ -825,8 +912,8 @@ export class SlimeSim {
       let z = rest[ix + 2] + off[ix + 2] + rn[ix + 2] * r;
       // whole-blob squash + sway, strongest on the dome, fading out up a strand
       const fade = 1 - smooth(0.7, 1.5, y);
-      const ky = 1 + sq * fade;
-      const kxz = 1 - 0.5 * sq * fade;
+      const ky = (1 + sq * fade) * (1 - flat * fade);
+      const kxz = (1 - 0.5 * sq * fade) * (1 + 0.5 * flat * fade);
       y *= ky;
       x = x * kxz + sx * y * fade;
       z = z * kxz + sz * y * fade;

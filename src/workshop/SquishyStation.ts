@@ -7,17 +7,55 @@ import { uid, SHAPES, type ShapeId } from '../core/model';
 import { tuning } from '../tuning';
 import { tweens, ease } from '../core/tween';
 import { el, button, swatches, bindTap } from '../ui/ui';
+import { isUnlocked, rewardFor, lockedToast } from '../core/unlocks';
 import { blobShadow } from '../art/materials';
 import { SquishyBody } from './squishyBody';
 import type { Station, StationContext, WPointer } from './station';
 
-export const SHAPE_ICONS: Record<ShapeId, { icon: string; name: string }> = {
-  bun: { icon: '🍞', name: 'Bun' },
-  cat: { icon: '🐱', name: 'Cat' },
+export const SHAPE_ICONS: Record<ShapeId, { icon: string; name: string; reward?: string }> = {
+  bun: { icon: '🫓', name: 'Bun' },
+  heart: { icon: '🩷', name: 'Heart' },
   star: { icon: '⭐', name: 'Star' },
-  peach: { icon: '🍑', name: 'Peach' },
   cube: { icon: '🧊', name: 'Cube' },
+  cloud: { icon: '☁️', name: 'Cloud' },
+  cat: { icon: '🐱', name: 'Cat' },
+  bear: { icon: '🐻', name: 'Bear' },
+  peach: { icon: '🍑', name: 'Peach' },
+  strawberry: { icon: '🍓', name: 'Berry' },
+  dragon: { icon: '🐉', name: 'Dragon', reward: 'squishy.dragon' },
 };
+
+/** Shape tiles (2 columns) with 🔒 bonus shapes. Shared by the Squishy and Wax stations. */
+export function shapeTiles(parent: HTMLElement, current: ShapeId, onPick: (s: ShapeId) => void): (s: ShapeId) => void {
+  const items = el('div', 'items', parent);
+  items.style.gridTemplateColumns = 'repeat(2, 76px)';
+  const btns = new Map<ShapeId, HTMLElement>();
+  for (const s of SHAPES) {
+    const info = SHAPE_ICONS[s];
+    const b = el('button', 'item', items);
+    b.style.width = b.style.height = '76px';
+    el('span', 'ico', b, info.icon);
+    el('span', '', b, info.name);
+    const locked = info.reward && !isUnlocked(info.reward);
+    if (locked) {
+      b.classList.add('locked');
+      el('span', 'lock-badge', b, `🔒 ${rewardFor(info.reward!)?.at ?? ''}💎`);
+    }
+    bindTap(b, () => {
+      if (info.reward && !isUnlocked(info.reward)) {
+        lockedToast(info.reward);
+        return;
+      }
+      onPick(s);
+    });
+    btns.set(s, b);
+  }
+  const mark = (cur: ShapeId) => {
+    for (const [k, b] of btns) b.classList.toggle('on', k === cur);
+  };
+  mark(current);
+  return mark;
+}
 
 export class SquishyStation implements Station {
   readonly id = 'squishy' as const;
@@ -27,9 +65,10 @@ export class SquishyStation implements Station {
   private body!: SquishyBody;
   private holder = new THREE.Group();
   private shape: ShapeId = 'bun';
-  private color = '#ff8fb1';
+  private color = '#ff2e88';
   private last = new Map<number, { x: number; y: number; t: number }>();
-  private shapeBtns = new Map<ShapeId, HTMLElement>();
+  private markShapeTile: (s: ShapeId) => void = () => {};
+  private face = false;
 
   init(ctx: StationContext): void {
     this.ctx = ctx;
@@ -51,15 +90,14 @@ export class SquishyStation implements Station {
     this.ui.className = 'passthrough';
     const left = el('div', 'panel lc col interactive', this.ui);
     left.style.gap = '10px';
-    const items = el('div', 'items', left);
-    items.style.gridTemplateColumns = 'repeat(1, 84px)';
-    for (const s of SHAPES) {
-      const b = el('button', 'item', items);
-      el('span', 'ico', b, SHAPE_ICONS[s].icon);
-      el('span', '', b, SHAPE_ICONS[s].name);
-      bindTap(b, () => this.pickShape(s));
-      this.shapeBtns.set(s, b);
-    }
+    this.markShapeTile = shapeTiles(left, this.shape, (sh) => this.pickShape(sh));
+    const faceBtn = button(left, { icon: '😶', label: 'Face', cls: 'ghost' }, () => {
+      this.face = !this.face;
+      this.body.setFace(this.face);
+      faceBtn.querySelector('.ico')!.textContent = this.face ? '😊' : '😶';
+      faceBtn.classList.toggle('selected', this.face);
+      bus.emit('optionPicked', { pos: v3(this.holder.position) });
+    });
     const right = el('div', 'panel rc interactive', this.ui);
     swatches(right, tuning.art.palette, this.color, (c) => {
       this.color = c;
@@ -67,21 +105,18 @@ export class SquishyStation implements Station {
     }, '');
     const br = el('div', 'br row interactive', this.ui);
     button(br, { icon: '↺', cls: 'round', tap: 'back' }, () => this.reset());
-    button(br, { icon: '💾', label: 'Keep it!', cls: 'pink big' }, () => this.save());
-    this.markShape();
+    button(br, { icon: '💾', label: 'Save', cls: 'primary big' }, () => this.save());
   }
 
-  private markShape(): void {
-    for (const [s, b] of this.shapeBtns) b.classList.toggle('on', s === this.shape);
-  }
 
   private pickShape(s: ShapeId): void {
     bus.emit('uiTap', { kind: 'soft' });
     this.shape = s;
     this.body.setShape(s);
     this.body.setColor(this.color);
+    this.body.setFace(this.face);
     this.placeBody();
-    this.markShape();
+    this.markShapeTile(s);
     this.popIn();
     bus.emit('optionPicked', { pos: v3(this.holder.position) });
   }
@@ -92,7 +127,7 @@ export class SquishyStation implements Station {
   }
 
   private save(): void {
-    store.addCreation({ id: uid('c_'), kind: 'squishy', createdAt: Date.now(), color: this.color, shape: this.shape });
+    store.addCreation({ id: uid('c_'), kind: 'squishy', createdAt: Date.now(), color: this.color, shape: this.shape, face: this.face });
     bus.emit('creationSaved', { kind: 'squishy', pos: v3(this.holder.position.clone().add(new THREE.Vector3(0, 1.2, 0))) });
   }
 

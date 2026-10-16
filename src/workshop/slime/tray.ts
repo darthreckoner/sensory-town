@@ -1,13 +1,36 @@
-// The shallow round tray the slime sits in: a glossy pastel dish with a
-// rounded lip. Local origin = top of the tray floor (the slime's y = 0); the
-// bottom sits `trayFloor` below that, on the table. The profile matches
-// SlimeSim.groundY so slime drapes over the same rim it collides with.
+// The slime tray for the dark creator studio: a glossy black acrylic dish with a rounded lip and a
+// glowing LED ring just inside the wall (it takes on the slime's color), plus a soft colored
+// underglow on the desk. Local origin = top of the tray floor (the slime's y = 0); the bottom sits
+// `trayFloor` below that, on the table. The profile matches SlimeSim.groundY so slime drapes over
+// the same rim it collides with.
 import * as THREE from 'three';
 import { tuning } from '../../tuning';
-import { mesh, toyMat } from '../../art/materials';
 import { TRAY_LIP } from './slimeSim';
 
-export function buildTray(): THREE.Mesh {
+export interface SlimeTray {
+  root: THREE.Group;
+  /** tint the LED ring + underglow */
+  setGlow(c: THREE.ColorRepresentation): void;
+}
+
+let glowTex: THREE.Texture | null = null;
+function glowTexture(): THREE.Texture {
+  if (!glowTex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const x = c.getContext('2d')!;
+    const g = x.createRadialGradient(64, 64, 6, 64, 64, 62);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, 128, 128);
+    glowTex = new THREE.CanvasTexture(c);
+  }
+  return glowTex;
+}
+
+export function buildTray(): SlimeTray {
   const t = tuning.slime;
   const rin = t.radius + t.trayMargin; // inner wall
   const lip = TRAY_LIP;
@@ -35,5 +58,40 @@ export function buildTray(): THREE.Mesh {
   arc(rin - fil, fil, fil, 0, -Math.PI / 2, 10);
   add(0, 0);
   const geo = new THREE.LatheGeometry(pts, 96);
-  return mesh(geo, toyMat('#cfe3ff', 'gloss'), true, true);
+  const dish = new THREE.Mesh(
+    geo,
+    new THREE.MeshPhysicalMaterial({ color: '#15131c', roughness: 0.3, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.12, envMapIntensity: 1.2 }),
+  );
+  dish.castShadow = true;
+  dish.receiveShadow = true;
+
+  const root = new THREE.Group();
+  root.add(dish);
+
+  // LED ring hugging the inside of the wall
+  const ledMat = new THREE.MeshBasicMaterial({ color: '#ff2e88', toneMapped: false });
+  const led = new THREE.Mesh(new THREE.TorusGeometry(rin - 0.02, 0.012, 8, 120), ledMat);
+  led.rotation.x = Math.PI / 2;
+  led.position.y = 0.12;
+  root.add(led);
+
+  // colored underglow on the desk
+  const glowMat = new THREE.MeshBasicMaterial({
+    map: glowTexture(), color: '#ff2e88', transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry((rout + 0.9) * 2, (rout + 0.9) * 2), glowMat);
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = bot + 0.004;
+  glow.renderOrder = -1;
+  root.add(glow);
+
+  const col = new THREE.Color();
+  return {
+    root,
+    setGlow(c) {
+      col.set(c);
+      ledMat.color.copy(col);
+      glowMat.color.copy(col);
+    },
+  };
 }

@@ -1,28 +1,63 @@
-// The hub: cruise around the shared town in a toy convertible. Drive onto the
-// glowing pads to enter the workshop or the build yard, give passengers rides
-// (optional, no timer), and repaint the car with the 🎨 button.
+// The hub (v2): a whole little town to explore. Cruise in a roadster, hop out
+// and walk, collect 💎 charms, boost off ramps, ride passengers around, and walk
+// (or drive) onto glowing mats to enter the Studio, the STYLE boutique, the
+// builder's office, or your own front door. Empty lots in Home Hills have
+// FOR SALE · BUILD HERE signs.
 import * as THREE from 'three';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus } from '../core/events';
 import { tuning } from '../tuning';
-import { addLights, skyBackground } from '../art/env';
-import { Car, type CarMotion } from '../art/car';
-import { buildTownEnvironment, type Collider, type TownEnv } from '../world/townEnv';
-import { buildTownContent } from '../world/houseMesh';
-import { BUILD_YARD, SPAWN, WORKSHOP } from '../world/townLayout';
-import { disposeBaked } from '../world/houseMesh';
-import { el, button, sheet, swatches } from '../ui/ui';
-import { CarPhysics, type CarInput } from '../drive/physics';
+import { goldenHour } from '../art/env';
+import { Car, DEFAULT_STYLE, type CarMotion } from '../art/car';
+import { Character } from '../art/character';
+import { buildTownEnvironment, type TownEnv } from '../world/townEnv';
+import { buildTownContent, disposeBaked, tickBuildMaterials } from '../world/houseMesh';
+import { BUILD_YARD, PLOTS, SPAWN, WORKSHOP, plotFront } from '../world/townLayout';
+import { groundHeight } from '../world/heightfield';
+import { button, el, toast } from '../ui/ui';
+import { popScale } from '../core/tween';
+import { nextReward } from '../core/unlocks';
+import { CarPhysics, ColliderGrid, NO_INPUT, pushOut, res, type CarInput } from '../drive/physics';
+import { FootPhysics } from '../drive/foot';
 import { DriveControls } from '../drive/controls';
-import { JobBubble, Minimap, NameTags } from '../drive/hud';
+import { Minimap, NameTags, TopHud } from '../drive/hud';
 import { JobManager } from '../drive/jobs';
-import { clamp, lerpAngle, wrapAngle } from '../drive/envUtils';
-import { groundHeight } from '../drive/terrain';
+import { Charms } from '../drive/charms';
+import { DoorLayer, buildPlotLayer, type PlotLayer } from '../drive/doors';
+import { makePad, type Pad } from '../drive/pads';
+import { Particles, SkidMarks, SpeedLines } from '../drive/effects';
+import { openPaintSheet } from '../drive/paint';
+import { SUN_DIR } from '../drive/sky';
+import { PAL } from '../drive/palette';
+import { emojiSprite, clamp, lerpAngle, wrapAngle } from '../drive/envUtils';
+import type { DoorDef } from '../drive/types';
 
-/** Where the sun sits relative to the shadow focus (the light follows the car). */
-const SUN_OFFSET = new THREE.Vector3(22, 40, 16);
-const BRAKING: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: true };
+// ── what survives leaving the town scene (Studio, Style, Build...) ──────────
+interface Pose { x: number; z: number; heading: number }
+interface Exit extends Pose { mode: 'car' | 'foot' }
+const session = {
+  profileId: '',
+  mode: 'car' as 'car' | 'foot',
+  car: { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading } as Pose,
+  foot: { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading } as Pose,
+  /** set when we leave through a door: where to appear when we come back */
+  exit: null as Exit | null,
+  /** profile that already got the "build your home" nudge this session */
+  homeNudgeFor: '',
+};
+
+/** Where a car lands when it returns from the Studio pad / the builder pad. */
+const STUDIO_EXIT: Pose = { x: WORKSHOP.pad.x - 8, z: 2.6, heading: Math.PI / 2 };
+const BUILD_EXIT: Pose = { x: BUILD_YARD.pad.x + 4, z: 2.6, heading: Math.PI / 2 };
+
+interface Trigger {
+  def: DoorDef;
+  armed: boolean;
+  exit?: Pose;
+}
+
+const SPARKLE_COLORS = ['#ff2e88', '#00d4ff', '#ffc93c', '#b6ff3b', '#ffffff', '#7c4dff'];
 
 export class DriveScene extends GameScene {
   readonly name = 'town' as const;
@@ -32,20 +67,38 @@ export class DriveScene extends GameScene {
   // world
   private env!: TownEnv;
   private content: THREE.Group | null = null;
-  private colliders: Collider[] = [];
-  private boxes: Extract<Collider, { kind: 'box' }>[] = [];
+  private grid!: ColliderGrid;
   private car!: Car;
+  private walker!: Character;
   private readonly phys = new CarPhysics();
+  private readonly foot = new FootPhysics();
   private jobs!: JobManager;
+  private charms!: Charms;
+  private doorLayer!: DoorLayer;
+  private plotLayer: PlotLayer | null = null;
+  private pads: Pad[] = [];
+  private triggers: Trigger[] = [];
+  private skid!: SkidMarks;
+  private fx!: Particles;
+  private lines!: SpeedLines;
+  private carMarker!: THREE.Sprite;
   private sun!: THREE.DirectionalLight;
   private readonly lightX = new THREE.Vector3();
   private readonly lightY = new THREE.Vector3();
+
+  // mode
+  private mode: 'car' | 'foot' = 'car';
 
   // camera
   private readonly camPos = new THREE.Vector3();
   private readonly camWant = new THREE.Vector3();
   private readonly camDir = new THREE.Vector3();
   private camHeading = 0;
+  private camYaw = 0;
+  private camPitch = 0.12;
+  private camBaseY = 0;
+  private lookTmp = { yaw: 0, pitch: 0 };
+  private dragIdle = 0;
   private occl = 1;
   private fovScale = 1;
   private fovNow = 0;
@@ -53,64 +106,134 @@ export class DriveScene extends GameScene {
   // hud / input
   private controls!: DriveControls;
   private minimap!: Minimap;
-  private bubble!: JobBubble;
+  private top!: TopHud;
   private tags!: NameTags;
+  private modeBtn!: HTMLButtonElement;
   private winW = 1;
   private winH = 1;
   private mapAcc = 0;
+  private homeAcc = 99;
+  private homeTarget: { x: number; z: number } | null = null;
+  private emptyPlots: typeof PLOTS = [];
+  private ownsHouse = false;
+  private nudgeIn = -1;
   private touchSeen = false;
   private openSheets = 0;
+  private readonly nearCharms: { x: number; z: number }[] = [];
+  private mx = 0;
+  private mz = 0;
 
   // state
   private leaving = false;
   private leaveT = 0;
-  private surface = 0;   // current ride height (road / curb)
-  private surfaceKind = 0;
-  private armed = { workshop: true, build: true };
   private lastHorn = 0;
   private lastHit = 0;
-  private readonly motion: CarMotion = { speed: 0, speed01: 0, steer: 0, accel: 0, lateral: 0 };
+  private lastSkid = 0;
+  private trailAcc = 0;
+  private smokeAcc = 0;
+  private flameAcc = 0;
+  private boostMeter = 1;
+  private boostOn = false;
+  private boostLevel = 0;
+  private pitch = 0;
+  private roll = 0;
+  private readonly motion: CarMotion = { speed: 0, speed01: 0, steer: 0, accel: 0, lateral: 0, braking: false, boost: 0, airborne: false, slip: 0 };
   private readonly carUpdate = { speed01: 0, throttle: 0 };
+  private readonly carCircle = { kind: 'circle' as const, x: 0, z: 0, r: 1.05 };
 
   // ─────────────────────────────────────────────────────────────────────────
   init(): void {
     const d = tuning.drive;
-    skyBackground(this.scene);
-    const fog = new THREE.Color(tuning.art.skyTop).lerp(new THREE.Color(tuning.art.skyBottom), 0.62);
-    this.scene.fog = new THREE.Fog(fog, tuning.art.fogNear, tuning.art.fogFar);
     this.camera.near = 0.5;
-    this.camera.far = 420;
+    this.camera.far = 700;
     this.camera.fov = d.cameraFov;
     this.camera.updateProjectionMatrix();
+    this.scene.add(this.camera);
 
-    // One sun with a small shadow box that follows the car.
-    const rig = addLights(this.scene, { shadowSize: d.shadowSize, sunPos: SUN_OFFSET.clone() });
+    // Golden hour: low warm sun with a small shadow box that follows the player.
+    const rig = goldenHour(this.scene, { shadowSize: d.shadowSize, distance: 120, fog: false });
     this.sun = rig.sun;
-    const zAxis = SUN_OFFSET.clone().normalize();
-    this.lightX.crossVectors(new THREE.Vector3(0, 1, 0), zAxis).normalize();
-    this.lightY.crossVectors(zAxis, this.lightX).normalize();
+    if (this.sun.shadow.mapSize.x !== d.shadowMap) this.sun.shadow.mapSize.set(d.shadowMap, d.shadowMap);
+    this.scene.fog = new THREE.Fog(tuning.art.fogColor, d.fogNear, d.fogFar);
+    this.lightX.crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
+    this.lightY.crossVectors(SUN_DIR, this.lightX).normalize();
 
     this.env = buildTownEnvironment();
     this.scene.add(this.env.group);
 
-    this.car = new Car(store.profile.carColor, store.profile.outfit);
+    const prof = store.profile;
+    this.car = new Car(prof.carColor, prof.outfit, { ...DEFAULT_STYLE, ...(prof.carStyle as object | undefined) });
     this.scene.add(this.car.group);
+    this.walker = new Character(prof.outfit);
+    this.walker.onStep = () => {
+      bus.emit('footstep', { pos: { x: this.foot.x, y: this.foot.y, z: this.foot.z }, run: this.foot.move01 > 0.7 });
+    };
+    this.scene.add(this.walker.group);
     this.jobs = new JobManager(this.scene, this.car);
+    this.charms = new Charms();
+    this.scene.add(this.charms.group);
+    this.doorLayer = new DoorLayer();
+    this.scene.add(this.doorLayer.group);
+    this.pads = [
+      makePad(WORKSHOP.pad.x, WORKSHOP.pad.z, PAL.pink, '🧪'),
+      makePad(BUILD_YARD.pad.x, BUILD_YARD.pad.z, PAL.gold, '🔨'),
+    ];
+    for (const p of this.pads) this.scene.add(p.group);
+    this.skid = new SkidMarks();
+    this.scene.add(this.skid.mesh);
+    this.fx = new Particles();
+    this.scene.add(this.fx.group);
+    this.lines = new SpeedLines();
+    this.camera.add(this.lines.group);
+    this.carMarker = emojiSprite('🚗', 2.2);
+    this.carMarker.renderOrder = 8;
+    this.carMarker.visible = false;
+    this.scene.add(this.carMarker);
 
     // ── HUD ──
     const hud = el('div', 'drive-hud passthrough', this.ui);
     hud.style.setProperty('--drive-map', `${d.minimapSize}px`);
     this.tags = new NameTags(hud);
     this.minimap = new Minimap(hud);
-    this.bubble = new JobBubble(hud);
-    button(hud, { icon: '🎨', cls: 'round drive-paint' }, () => this.openPaint());
-    this.controls = new DriveControls(hud, () => this.honk());
+    this.top = new TopHud(hud);
+    const side = el('div', 'drive-side passthrough', hud);
+    button(side, { icon: '🎨', cls: 'round' }, () => this.openPaint());
+    this.modeBtn = button(side, { icon: '🚶', cls: 'round drive-mode' }, () => this.toggleMode());
+    this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode() });
   }
 
-  enter(params?: { from?: 'workshop' | 'build' | string }): void {
+  enter(params?: { from?: 'workshop' | 'build' | 'dressup' | string }): void {
+    const d = tuning.drive;
     this.pixelRatioCap = tuning.app.townPixelRatio;
     this.camera.near = 0.5;
-    this.camera.far = 420;
+    this.camera.far = 700;
+    const prof = store.profile;
+
+    // ── where to appear ──
+    if (session.profileId !== prof.id) {
+      session.profileId = prof.id;
+      session.mode = 'car';
+      session.car = { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
+      session.foot = { ...session.car };
+      session.exit = null;
+    }
+    let mode = session.mode;
+    let carPose: Pose = { ...session.car };
+    let footPose: Pose = { ...session.foot };
+    const ex = session.exit;
+    session.exit = null;
+    if (ex) {
+      if (ex.mode === 'car') {
+        carPose = { x: ex.x, z: ex.z, heading: ex.heading };
+        mode = 'car';
+      } else {
+        footPose = { x: ex.x, z: ex.z, heading: ex.heading };
+        mode = 'foot';
+      }
+    } else if (params?.from === 'workshop' || params?.from === 'build') {
+      carPose = { ...(params.from === 'workshop' ? STUDIO_EXIT : BUILD_EXIT) };
+      mode = 'car';
+    }
 
     // Houses and decorations change in build mode, so rebuild them every time.
     if (this.content) {
@@ -120,43 +243,63 @@ export class DriveScene extends GameScene {
     const built = buildTownContent(store.data.town);
     this.content = built.group;
     this.scene.add(this.content);
-    this.colliders = [...this.env.colliders, ...built.colliders];
-    this.boxes = this.colliders.filter((c): c is Extract<Collider, { kind: 'box' }> => c.kind === 'box');
+    this.plotLayer?.group.removeFromParent();
+    this.plotLayer = buildPlotLayer();
+    this.scene.add(this.plotLayer.group);
+    this.grid = new ColliderGrid([...this.env.colliders, ...built.colliders, ...this.plotLayer.colliders]);
 
-    // My car, my outfit.
-    const prof = store.profile;
+    // doors (visual mats for walkers; the pads are drawn separately)
+    const doors = [...(this.env.doors ?? []), ...this.plotLayer.doors];
+    this.doorLayer.setDoors(doors);
+    this.triggers = doors.map((def) => ({ def, armed: true }));
+    this.triggers.push(
+      {
+        def: { id: 'pad-studio', x: WORKSHOP.pad.x, z: WORKSHOP.pad.z, nx: 0, nz: 1, icon: '🧪', label: 'Studio', scene: 'workshop', radius: d.doorTriggerRadius, carSpeed: d.doorPadCarSpeed, carOnly: true, glow: PAL.pink },
+        armed: true,
+        exit: STUDIO_EXIT,
+      },
+      {
+        def: { id: 'pad-build', x: BUILD_YARD.pad.x, z: BUILD_YARD.pad.z, nx: 0, nz: 1, icon: '🔨', label: 'Build', scene: 'build', radius: d.doorTriggerRadius, carSpeed: d.doorPadCarSpeed, carOnly: true, glow: PAL.gold },
+        armed: true,
+        exit: BUILD_EXIT,
+      },
+    );
+
+    // ── me, my car, my outfit ──
     this.car.setColor(prof.carColor);
+    this.car.setStyle({ ...DEFAULT_STYLE, ...(prof.carStyle as object | undefined) });
     this.car.setOutfit(prof.outfit);
-
-    // Spawn: at SPAWN, or on the pad we just came out of (facing away from it).
-    let x = SPAWN.x, z = SPAWN.z, heading = SPAWN.heading;
-    this.armed = { workshop: true, build: true };
-    // Coming back out: park on the cross street just past the driveway, facing into town,
-    // so the chase camera starts on open road (not inside the building behind the pad).
-    if (params?.from === 'workshop') {
-      x = WORKSHOP.pad.x - 3;
-      z = 1.5;
-      heading = -Math.PI / 2; // west, towards the town centre
-      this.armed.workshop = false;
-    } else if (params?.from === 'build') {
-      x = BUILD_YARD.pad.x + 3;
-      z = -1.5;
-      heading = Math.PI / 2; // east, along the cross street
-      this.armed.build = false;
-    }
-    this.phys.reset(x, z, heading);
+    this.walker.setOutfit(prof.outfit);
+    this.phys.reset(carPose.x, carPose.z, carPose.heading);
+    this.foot.reset(footPose.x, footPose.z, footPose.heading);
     this.leaving = false;
     this.leaveT = 0;
-    this.motion.speed = this.motion.speed01 = this.motion.steer = this.motion.accel = this.motion.lateral = 0;
-    this.surface = this.surfaceKind = groundHeight(x, z);
-    this.car.setPose(x, z, heading);
-    this.car.group.position.y = this.surface;
-    this.camHeading = heading;
+    this.boostMeter = 1;
+    this.boostOn = false;
+    this.boostLevel = 0;
+    this.pitch = this.roll = 0;
+    this.motion.speed = this.motion.speed01 = this.motion.steer = this.motion.accel = this.motion.lateral = this.motion.boost = this.motion.slip = 0;
+    this.motion.braking = false;
+    this.motion.airborne = false;
+    this.applyCarPose(0, true);
+    this.camHeading = carPose.heading;
+    this.camYaw = footPose.heading;
+    this.camPitch = 0.12;
+    this.setMode(mode, true);
+    this.updateMover();
+    this.camBaseY = mode === 'car' ? this.phys.y : this.foot.y;
     this.occl = 1;
     this.placeCamera(0, true);
+    this.env.setViewer?.(this.camera.position.x, this.camera.position.y, this.camera.position.z);
     this.updateSun();
+    // do not re-trigger the door we just came out of
+    for (const tr of this.triggers) if (Math.hypot(this.mx - tr.def.x, this.mz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
 
-    // HUD + controls
+    // ── charms, jobs, fx, HUD ──
+    this.charms.refresh();
+    this.skid.clear();
+    this.fx.clear();
+    this.jobs.reset();
     this.controls.releaseAll();
     this.controls.applySizes();
     this.openSheets = 0;
@@ -165,8 +308,13 @@ export class DriveScene extends GameScene {
     this.controls.showTouch(coarse || this.touchSeen);
     this.minimap.rebuild();
     this.tags.rebuild(store.data.town.houses);
-    this.bubble.hide();
-    this.jobs.reset();
+    this.top.job.hide();
+    this.top.setCharms(this.charms.collected, this.charms.total, nextReward());
+    this.ownsHouse = store.data.town.houses.some((h) => h.ownerId === prof.id);
+    this.emptyPlots = PLOTS.filter((p) => this.plotLayer!.empty.includes(p.index));
+    this.homeAcc = 99;
+    this.top.home.setMode(this.ownsHouse ? 'own' : this.emptyPlots.length ? 'build' : 'off');
+    this.nudgeIn = !this.ownsHouse && this.emptyPlots.length && session.homeNudgeFor !== prof.id ? 1.8 : -1;
 
     this.listen(window, 'keydown', (e) => this.controls.onKeyDown(e));
     this.listen(window, 'keyup', (e) => this.controls.onKeyUp(e));
@@ -182,20 +330,34 @@ export class DriveScene extends GameScene {
       },
       { capture: true },
     );
+    // Drag the 3D view to look around while walking.
+    this.listen(scenes.canvas, 'pointerdown', (e) => this.controls.dragDown(e));
+    this.listen(window, 'pointermove', (e) => this.controls.dragMove(e));
+    this.listen(window, 'pointerup', (e) => this.controls.dragUp(e));
+    this.listen(window, 'pointercancel', (e) => this.controls.dragUp(e));
     // Sheets (paint, the 🏠 menu) pause the steering so the car just rolls to a stop.
     this.onExit(bus.on('uiOpen', () => { this.openSheets++; this.controls.suspended = true; }));
     this.onExit(bus.on('uiClose', () => { this.openSheets = Math.max(0, this.openSheets - 1); this.controls.suspended = this.openSheets > 0; }));
+    this.onExit(bus.on('charmCollected', () => this.top.setCharms(this.charms.collected, this.charms.total, nextReward())));
 
-    bus.emit('driveStart', {});
+    if (this.mode === 'car') bus.emit('driveStart', {});
   }
 
   exit(): void {
     bus.emit('driveStop', {});
+    // remember where everything is
+    session.mode = this.mode;
+    session.car = { x: this.phys.x, z: this.phys.z, heading: this.phys.heading };
+    session.foot = { x: this.foot.x, z: this.foot.z, heading: this.foot.heading };
     this.controls.releaseAll();
     this.controls.suspended = false;
     this.openSheets = 0;
     this.jobs.clear();
     this.tags.clear();
+    this.skid.clear();
+    this.fx.clear();
+    this.plotLayer?.group.removeFromParent();
+    this.plotLayer = null;
     if (this.content) {
       this.scene.remove(this.content);
       disposeBaked(this.content); // free the merged town meshes (rebuilt on every visit)
@@ -204,17 +366,26 @@ export class DriveScene extends GameScene {
   }
 
   resetStation(): void {
+    this.leaving = false;
     this.phys.reset(SPAWN.x, SPAWN.z, SPAWN.heading);
+    this.foot.reset(SPAWN.x, SPAWN.z + 3, SPAWN.heading);
+    this.setMode('car', false);
     this.camHeading = SPAWN.heading;
+    this.applyCarPose(0, true);
+    this.updateMover();
+    this.camBaseY = this.phys.y;
     this.placeCamera(0, true);
   }
 
   debugInfo(): Record<string, string | number> {
     return {
+      mode: this.mode,
       speed: this.phys.fwdSpeed.toFixed(1),
-      pos: `${this.phys.x.toFixed(0)},${this.phys.z.toFixed(0)}`,
+      pos: `${this.mx.toFixed(0)},${this.mz.toFixed(0)}`,
+      y: (this.mode === 'car' ? this.phys.y : this.foot.y).toFixed(1),
       job: this.jobs.state,
-      colls: this.colliders.length,
+      charms: `${this.charms.collected}/${this.charms.total}`,
+      colls: this.grid ? this.grid.list.length : 0,
     };
   }
 
@@ -230,15 +401,79 @@ export class DriveScene extends GameScene {
 
   // ─────────────────────────────────────────────────────────────────────────
   update(dt: number, t: number): void {
-    const p = this.phys;
+    if (this.mode === 'car') this.updateCar(dt, t);
+    else this.updateFoot(dt, t);
+    this.updateMover();
 
-    // ── input → physics (small fixed sub-steps so thin colliders never tunnel) ──
-    const input = this.leaving || this.controls.suspended ? BRAKING : this.controls.read();
+    this.placeCamera(dt, false);
+    this.env.setViewer?.(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+    this.env.update(dt, t);
+    tickBuildMaterials(t);
+
+    const car = this.mode === 'car';
+    const chestY = (car ? this.phys.y : this.foot.y) + (car ? 0.9 : 1.0);
+    this.jobs.update(dt, t, this.mx, this.mz, car && !this.leaving);
+    this.charms.update(dt, t, this.mx, chestY, this.mz, !this.leaving);
+    this.doorLayer.update(t, this.mx, this.mz);
+    for (const p of this.pads) p.update(t, this.mx, this.mz, !car);
+    this.fx.update(dt, this.camera.quaternion);
+    this.lines.update(dt, car ? this.boostLevel : 0);
+    this.checkTriggers(dt);
+    this.updateSun();
+    this.updateHud(dt, t);
+  }
+
+  /** Where the player is right now (car or feet). */
+  private updateMover(): void {
+    if (this.mode === 'car') {
+      this.mx = this.phys.x;
+      this.mz = this.phys.z;
+    } else {
+      this.mx = this.foot.x;
+      this.mz = this.foot.z;
+    }
+  }
+
+  // ── driving ───────────────────────────────────────────────────────────────
+  private updateCar(dt: number, t: number): void {
+    const d = tuning.drive;
+    const p = this.phys;
+    const raw: CarInput = this.leaving || this.controls.suspended ? NO_INPUT : this.controls.readCar();
+
+    // the ⚡ meter: a tap fires a burst that lasts while the meter drains
+    if (!this.boostOn && raw.boost && this.boostMeter >= 0.6 && p.grounded && !this.leaving) {
+      this.boostOn = true;
+      bus.emit('carBoost', { pos: { x: p.x, y: p.y + 1, z: p.z } });
+    }
+    if (this.boostOn) {
+      this.boostMeter -= dt / d.boostSeconds;
+      if (this.boostMeter <= 0) {
+        this.boostMeter = 0;
+        this.boostOn = false;
+      }
+    } else this.boostMeter = Math.min(1, this.boostMeter + dt / d.boostCooldown);
+    this.boostLevel += ((this.boostOn ? 1 : 0) - this.boostLevel) * (1 - Math.exp(-7 * dt));
+    this.controls.setBoostMeter(this.boostMeter, this.boostMeter >= 0.6 && !this.boostOn, this.boostOn);
+
+    const input: CarInput = this.leaving || this.controls.suspended
+      ? { steer: 0, gas: 0, brake: 0, handbrake: true, boost: false }
+      : { steer: raw.steer, gas: raw.gas, brake: raw.brake, handbrake: raw.handbrake, boost: this.boostOn };
+
+    // small fixed sub-steps so thin colliders never tunnel
     const steps = Math.max(1, Math.ceil(dt / (1 / 90)));
     const h = dt / steps;
-    let hit = 0;
-    for (let i = 0; i < steps; i++) hit = Math.max(hit, p.step(h, input, this.colliders));
+    let hit = 0, jumped = 0, landed = 0;
+    for (let i = 0; i < steps; i++) {
+      hit = Math.max(hit, p.step(h, input, this.grid));
+      jumped = Math.max(jumped, p.jumped);
+      landed = Math.max(landed, p.landed);
+    }
     if (hit > 0) this.onImpact(hit);
+    if (jumped > 0) bus.emit('carJump', { pos: { x: p.x, y: p.y + 1, z: p.z }, strength: clamp(jumped / 8, 0.3, 2.5) });
+    if (landed > 0) {
+      bus.emit('carLand', { pos: { x: p.x, y: p.y + 0.3, z: p.z }, strength: clamp(landed / 8, 0.3, 3) });
+      this.car.bump(landed * 0.9);
+    }
 
     // ── the car's body ──
     const m = this.motion;
@@ -247,29 +482,227 @@ export class DriveScene extends GameScene {
     m.steer = p.steer;
     m.accel = p.accel;
     m.lateral = p.yawRate * p.fwdSpeed;
-    // Ride on the road / hop up the curb.
-    const gy = groundHeight(p.x, p.z);
-    if (gy !== this.surfaceKind) {
-      if (p.speed01 > 0.15 && Math.abs(gy - this.surfaceKind) > 0.08) this.car.bump(3 + p.speed01 * 4);
-      this.surfaceKind = gy;
-    }
-    this.surface += (gy - this.surface) * (1 - Math.exp(-20 * dt));
-    this.car.setPose(p.x, p.z, p.heading);
-    this.car.group.position.y = this.surface;
+    m.braking = (input.brake > 0.05 && p.fwdSpeed > 0.5) || input.handbrake;
+    m.boost = this.boostLevel;
+    m.airborne = !p.grounded;
+    m.slip = p.latSpeed;
+    this.applyCarPose(dt, false);
     this.car.update(dt, t, m);
-
-    this.env.update(dt, t);
-    this.jobs.update(dt, t, p.x, p.z);
-    this.checkPads(dt);
+    this.driveEffects(dt, input);
 
     // The engine hum follows the car (juice listens).
     this.carUpdate.speed01 = p.speed01;
     this.carUpdate.throttle = p.throttle;
     bus.emit('carUpdate', this.carUpdate);
+  }
 
-    this.placeCamera(dt, false);
-    this.updateSun();
-    this.updateHud(dt, t);
+  /** Put the car mesh on the physics pose, tilted to the ground (or the air). */
+  private applyCarPose(dt: number, snap: boolean): void {
+    const p = this.phys;
+    const sh = Math.sin(p.heading), ch = Math.cos(p.heading);
+    const fx = sh, fz = -ch, rx = ch, rz = sh;
+    let pitchT: number, rollT: number, k: number;
+    if (p.grounded) {
+      const gF = groundHeight(p.x + fx * 1.6, p.z + fz * 1.6), gR = groundHeight(p.x - fx * 1.5, p.z - fz * 1.5);
+      const gRt = groundHeight(p.x + rx * 0.8, p.z + rz * 0.8), gLt = groundHeight(p.x - rx * 0.8, p.z - rz * 0.8);
+      pitchT = clamp(Math.atan2(gF - gR, 3.1), -0.55, 0.55);
+      rollT = clamp(Math.atan2(gRt - gLt, 1.6), -0.4, 0.4);
+      k = snap ? 1 : 1 - Math.exp(-14 * dt);
+    } else {
+      pitchT = clamp(p.vy * 0.022, -0.45, 0.45);
+      rollT = 0;
+      k = 1 - Math.exp(-3.5 * dt);
+    }
+    this.pitch += (pitchT - this.pitch) * k;
+    this.roll += (rollT - this.roll) * k;
+    this.car.setPose(p.x, p.y, p.z, p.heading, this.pitch, this.roll);
+  }
+
+  /** Skid marks, tyre smoke, boost flames, sparkle trail. */
+  private driveEffects(dt: number, input: CarInput): void {
+    const d = tuning.drive;
+    const p = this.phys;
+    const sh = Math.sin(p.heading), ch = Math.cos(p.heading);
+    const fx = sh, fz = -ch, rx = ch, rz = sh;
+    const slip = Math.abs(p.latSpeed);
+    const skidding = p.grounded && Math.abs(p.fwdSpeed) > 3 && (p.drifting || slip > d.skidSlip || (input.handbrake && p.fwdSpeed > 12));
+    for (let w = 0; w < 2; w++) {
+      const s = w === 0 ? -1 : 1;
+      const wx = p.x - fx * 1.3 + rx * 0.8 * s, wz = p.z - fz * 1.3 + rz * 0.8 * s;
+      this.skid.stamp(w, wx, p.y, wz, skidding);
+      if (skidding) {
+        this.smokeAcc += dt;
+        if (this.smokeAcc > 0.045) {
+          this.smokeAcc = 0;
+          this.fx.puff(wx, p.y + 0.15, wz, -p.vx, -p.vz);
+        }
+      }
+    }
+    if (skidding) {
+      const now = performance.now();
+      if (now - this.lastSkid > 650) {
+        this.lastSkid = now;
+        bus.emit('carSkid', { pos: { x: p.x, y: p.y, z: p.z }, strength: clamp(slip / 8 + (p.drifting ? 0.4 : 0), 0.3, 1) });
+      }
+    } else this.lastSkid = 0;
+    // boost flames from the exhausts
+    if (this.boostOn && this.boostLevel > 0.3) {
+      this.flameAcc += dt;
+      if (this.flameAcc > 0.02) {
+        this.flameAcc = 0;
+        for (const s of [-1, 1]) this.fx.flames(p.x - fx * 2.1 + rx * 0.45 * s, p.y + 0.5, p.z - fz * 2.1 + rz * 0.45 * s, -fx, -fz, s < 0 ? '#ffb347' : '#00d4ff');
+      }
+    }
+    // sparkle trail (a bonus paint option)
+    if (this.car.currentStyle.trail && Math.abs(p.fwdSpeed) > 2.5) {
+      this.trailAcc += dt;
+      while (this.trailAcc > 0.022) {
+        this.trailAcc -= 0.022;
+        this.fx.sparkle(p.x - fx * (2.2 + Math.random()) + (Math.random() - 0.5) * 1.4, p.y + 0.4 + Math.random() * 0.5, p.z - fz * (2.2 + Math.random()) + (Math.random() - 0.5) * 1.4, SPARKLE_COLORS[(Math.random() * SPARKLE_COLORS.length) | 0]);
+      }
+    }
+  }
+
+  // ── walking ───────────────────────────────────────────────────────────────
+  private updateFoot(dt: number, t: number): void {
+    const f = this.foot;
+
+    // look around: drag, and gently swing behind you when you walk off to the side
+    this.controls.takeLook(this.lookTmp);
+    if (this.lookTmp.yaw !== 0 || this.lookTmp.pitch !== 0) this.dragIdle = 0;
+    else this.dragIdle += dt;
+    this.camYaw += this.lookTmp.yaw;
+    this.camPitch = clamp(this.camPitch + this.lookTmp.pitch, -0.12, 0.75);
+    const inp = this.controls.readFoot(this.camYaw);
+    if (!this.controls.dragging && this.dragIdle > 0.8 && inp.mag > 0.15 && f.speed > 1.2) {
+      const diff = wrapAngle(f.heading - this.camYaw);
+      if (Math.abs(diff) < 2.3) this.camYaw += diff * Math.min(1, dt * 1.5) * inp.mag;
+    }
+
+    const steps = Math.max(1, Math.ceil(dt / (1 / 90)));
+    const h = dt / steps;
+    let jumped = false, landed = 0;
+    const run = inp.run;
+    for (let i = 0; i < steps; i++) {
+      f.step(h, inp.dx, inp.dz, inp.mag, run, inp.jump, this.grid);
+      this.pushFromCar();
+      jumped = jumped || f.jumped;
+      landed = Math.max(landed, f.landed);
+    }
+    const w = this.walker;
+    w.group.position.set(f.x, f.y, f.z);
+    w.group.rotation.y = Math.PI - f.heading;
+    w.setMove(f.move01, f.grounded);
+    if (jumped) w.jump();
+    if (landed > 5) bus.emit('footstep', { pos: { x: f.x, y: f.y, z: f.z }, run: true });
+    w.update(dt, t);
+
+    // the parked car just sits there
+    this.car.update(dt, t, this.motion);
+  }
+
+  /** The parked car is solid for walkers. */
+  private pushFromCar(): void {
+    const p = this.phys, f = this.foot;
+    if (Math.abs(f.y - p.y) > 1.5) return;
+    const sh = Math.sin(p.heading), ch = Math.cos(p.heading);
+    const r = tuning.drive.footRadius;
+    for (const o of [-1.4, 0, 1.4]) {
+      this.carCircle.x = p.x + sh * o;
+      this.carCircle.z = p.z - ch * o;
+      if (!pushOut(this.carCircle, f.x, f.z, r)) continue;
+      f.x += res.nx * res.pen;
+      f.z += res.nz * res.pen;
+    }
+  }
+
+  // ── hopping out / in ──────────────────────────────────────────────────────
+  private toggleMode(): void {
+    if (this.leaving || this.controls.suspended) return;
+    if (this.mode === 'car') this.getOut();
+    else this.getIn();
+  }
+
+  private footFree(x: number, z: number, refY: number): boolean {
+    const d = tuning.drive;
+    const gy = groundHeight(x, z, true);
+    if (gy < d.waterWade + 0.05 || Math.abs(gy - refY) > d.stepUp + 0.4) return false;
+    const cols = this.grid.near(x, z, d.footRadius + 1);
+    for (let i = 0; i < cols.length; i++) {
+      const c = cols[i];
+      if (c.only === 'car') continue;
+      if (c.h !== undefined && refY > c.h - 0.4) continue;
+      if (pushOut(c, x, z, d.footRadius + 0.1)) return false;
+    }
+    return true;
+  }
+
+  private getOut(): void {
+    const d = tuning.drive;
+    const p = this.phys;
+    if (!p.grounded || Math.abs(p.fwdSpeed) > d.getOutMaxSpeed) {
+      toast('Slow down to hop out 🚗');
+      return;
+    }
+    const sh = Math.sin(p.heading), ch = Math.cos(p.heading);
+    const fx = sh, fz = -ch, rx = ch, rz = sh;
+    const tries: [number, number, number][] = [[-rx, -rz, 2.2], [rx, rz, 2.2], [-fx, -fz, 3.6], [fx, fz, 3.8], [-rx, -rz, 3.4], [rx, rz, 3.4]];
+    let sx = p.x - rx * 2.2, sz = p.z - rz * 2.2;
+    for (const [dx, dz, dist] of tries) {
+      const x = p.x + dx * dist, z = p.z + dz * dist;
+      if (this.footFree(x, z, p.y)) {
+        sx = x;
+        sz = z;
+        break;
+      }
+    }
+    p.vx = p.vz = p.fwdSpeed = 0;
+    this.boostOn = false;
+    this.foot.reset(sx, sz, p.heading);
+    this.camYaw = p.heading;
+    this.camPitch = 0.12;
+    this.dragIdle = 0;
+    this.setMode('foot', false);
+    this.walker.hop();
+    bus.emit('optionPicked', { pos: { x: p.x, y: p.y + 1.4, z: p.z } });
+  }
+
+  private getIn(): void {
+    const d = tuning.drive;
+    const p = this.phys, f = this.foot;
+    if (Math.hypot(f.x - p.x, f.z - p.z) > d.getInRadius) {
+      toast('Walk up to your car to hop in 🚗');
+      return;
+    }
+    this.setMode('car', false);
+    this.camHeading = p.heading;
+    popScale(this.car.driver.group, 0.3, 0.16);
+    this.car.bump(4);
+    bus.emit('optionPicked', { pos: { x: p.x, y: p.y + 1.4, z: p.z } });
+  }
+
+  private setMode(mode: 'car' | 'foot', initial: boolean): void {
+    const was = this.mode;
+    this.mode = mode;
+    const car = mode === 'car';
+    this.walker.group.visible = !car;
+    this.car.setDriverVisible(car);
+    this.controls.setMode(mode);
+    const ico = this.modeBtn.querySelector('.ico');
+    if (ico) ico.textContent = car ? '🚶' : '🚗';
+    this.modeBtn.title = car ? 'Get out (E)' : 'Get in (E)';
+    if (!car) {
+      this.boostOn = false;
+      this.boostLevel = 0;
+      this.motion.boost = 0;
+      this.skid.stamp(0, 0, 0, 0, false);
+      this.skid.stamp(1, 0, 0, 0, false);
+      this.occl = 1;
+      this.camBaseY = this.foot.y;
+    } else this.camBaseY = this.phys.y;
+    if (!initial && was !== mode) bus.emit(car ? 'driveStart' : 'driveStop', {});
+    // the parked car stops humming, and its driver sits out
+    this.carMarker.visible = false;
   }
 
   // ── events from the car ───────────────────────────────────────────────────
@@ -279,85 +712,82 @@ export class DriveScene extends GameScene {
     const now = performance.now();
     if (now - this.lastHit < d.collideCooldownMs) return;
     this.lastHit = now;
-    bus.emit('carCollide', { pos: { x: this.phys.impactX, y: 0.8, z: this.phys.impactZ }, speed });
+    bus.emit('carCollide', { pos: { x: this.phys.impactX, y: this.phys.y + 0.8, z: this.phys.impactZ }, speed });
     this.car.bump(speed);
   }
 
   private honk(): void {
     const now = performance.now();
-    if (now - this.lastHorn < tuning.drive.hornCooldownMs || this.leaving) return;
+    if (now - this.lastHorn < tuning.drive.hornCooldownMs || this.leaving || this.mode !== 'car') return;
     this.lastHorn = now;
-    bus.emit('horn', { pos: { x: this.phys.x, y: 1.4, z: this.phys.z } });
+    bus.emit('horn', { pos: { x: this.phys.x, y: this.phys.y + 1.4, z: this.phys.z } });
     this.car.honk();
     this.jobs.onHorn(this.phys.x, this.phys.z);
   }
 
-  // ── pads: workshop door and the build yard ────────────────────────────────
-  private checkPads(dt: number): void {
-    const p = this.phys;
-    const R = tuning.drive.doorTriggerRadius;
+  // ── doors, pads, mats ─────────────────────────────────────────────────────
+  private checkTriggers(dt: number): void {
     if (this.leaving) {
       // If the scene change was refused (another one in flight), try again shortly.
       this.leaveT += dt;
       if (this.leaveT > 1.4) this.leaving = false;
       return;
     }
-    const dw = Math.hypot(p.x - WORKSHOP.pad.x, p.z - WORKSHOP.pad.z);
-    const db = Math.hypot(p.x - BUILD_YARD.pad.x, p.z - BUILD_YARD.pad.z);
-    // After coming back out of a place the pad stays asleep until the car has left it.
-    if (!this.armed.workshop && dw > R + 0.8) this.armed.workshop = true;
-    if (!this.armed.build && db > R + 0.8) this.armed.build = true;
-    if (this.armed.workshop && dw < R) this.enterPlace('workshop');
-    else if (this.armed.build && db < R) this.enterPlace('build');
+    const onFoot = this.mode === 'foot';
+    const speed = this.phys.fwdSpeed;
+    for (const tr of this.triggers) {
+      const def = tr.def;
+      const dist = Math.hypot(this.mx - def.x, this.mz - def.z);
+      const R = (def.radius ?? 1.5) + (onFoot ? 0 : 0.9);
+      // after coming back out of a place (or a visit toast) the mat stays asleep until you step off it
+      if (!tr.armed) {
+        if (dist > R + 0.8) tr.armed = true;
+        continue;
+      }
+      if (dist >= R) continue;
+      if (onFoot ? def.carOnly : def.carSpeed === undefined || Math.abs(speed) > def.carSpeed) continue;
+      if (!this.phys.grounded && !onFoot) continue;
+      if (def.scene === null) {
+        tr.armed = false;
+        toast(`${def.visitor ?? 'Someone'}'s house 🏠`);
+        bus.emit('uiTap', { kind: 'soft' });
+        continue;
+      }
+      this.enterPlace(tr, onFoot);
+      return;
+    }
   }
 
-  private enterPlace(where: 'workshop' | 'build'): void {
+  private enterPlace(tr: Trigger, onFoot: boolean): void {
+    const def = tr.def;
     this.leaving = true;
     this.leaveT = 0;
-    const pos = { x: this.phys.x, y: 1, z: this.phys.z };
-    bus.emit(where === 'workshop' ? 'arriveWorkshop' : 'arriveBuild', { pos });
-    void scenes.go(where);
+    // where to appear when we come back
+    if (tr.exit) session.exit = { mode: onFoot ? 'foot' : 'car', ...tr.exit };
+    else if (onFoot) session.exit = { mode: 'foot', x: def.x + def.nx * 2.6, z: def.z + def.nz * 2.6, heading: Math.atan2(def.nx, -def.nz) };
+    else session.exit = { mode: 'car', x: this.phys.x, z: this.phys.z, heading: this.phys.heading };
+    // exiting on foot from a pad that has a street exit: keep the car where it is
+    const pos = { x: this.mx, y: 1, z: this.mz };
+    if (def.scene === 'workshop') bus.emit('arriveWorkshop', { pos });
+    else if (def.scene === 'build') bus.emit('arriveBuild', { pos });
+    else bus.emit('uiTap', { kind: 'big' });
+    void scenes.go(def.scene as 'workshop' | 'dressup' | 'build', def.params);
   }
 
-  // ── chase camera ──────────────────────────────────────────────────────────
+  // ── camera ────────────────────────────────────────────────────────────────
   private placeCamera(dt: number, snap: boolean): void {
     const d = tuning.drive;
-    const p = this.phys;
-    const k = snap ? 1 : 1 - Math.exp(-d.cameraLag * dt);
-    this.camHeading = lerpAngle(this.camHeading, p.heading, k);
-    const bx = -Math.sin(this.camHeading), bz = Math.cos(this.camHeading); // unit vector behind the camera heading
+    if (this.mode === 'car') this.placeChaseCamera(dt, snap);
+    else this.placeFootCamera(dt, snap);
 
-    // Never inside a building: shorten the arm when a box is in the way.
-    const dist = d.cameraFollowDistance;
-    const tx = p.x + bx * dist, tz = p.z + bz * dist;
-    const free = this.freeFraction(p.x, p.z, tx, tz);
-    const minFrac = clamp(d.cameraMinDistance / dist, 0.1, 1);
-    const target = Math.max(minFrac, free);
-    if (snap) this.occl = target;
-    else if (target < this.occl) this.occl += (target - this.occl) * (1 - Math.exp(-16 * dt));
-    else this.occl += (target - this.occl) * (1 - Math.exp(-2.5 * dt));
-    const f = this.occl;
-    this.camWant.set(p.x + bx * dist * f, d.cameraHeight + (1 - f) * 4, p.z + bz * dist * f);
-
-    const kp = snap ? 1 : 1 - Math.exp(-d.cameraLag * d.cameraPosLag * dt);
-    this.camPos.lerp(this.camWant, kp);
-    if (snap) this.camPos.copy(this.camWant);
-    // last line of defence: keep the lens outside every box (lagging around corners)
-    for (const b of this.boxes) {
-      const ox = b.hw + 0.8 - Math.abs(this.camPos.x - b.x), oz = b.hd + 0.8 - Math.abs(this.camPos.z - b.z);
-      if (ox > 0 && oz > 0 && this.camPos.y < 12) {
-        if (ox < oz) this.camPos.x += (this.camPos.x >= b.x ? 1 : -1) * ox;
-        else this.camPos.z += (this.camPos.z >= b.z ? 1 : -1) * oz;
-      }
-    }
-    this.camPos.y = Math.max(2.2, this.camPos.y);
+    // never inside the ground
+    const gy = groundHeight(this.camPos.x, this.camPos.z);
+    if (this.camPos.y < gy + 1.4) this.camPos.y = gy + 1.4;
     this.camera.position.copy(this.camPos);
 
-    const fx = Math.sin(p.heading), fz = -Math.cos(p.heading);
-    this.camera.lookAt(p.x + fx * d.cameraLookAhead, d.cameraLookHeight, p.z + fz * d.cameraLookAhead);
-
-    // A touch wider at speed.
-    const fov = (d.cameraFov + d.cameraFovBoost * p.speed01) * this.fovScale;
+    // FOV: a touch wider at speed, a big kick on boost
+    const base = this.mode === 'car' ? d.cameraFov + d.cameraFovBoost * this.phys.speed01 + d.boostFov * this.boostLevel : d.cameraFov + 4;
+    const fov = base * this.fovScale;
     if (Math.abs(fov - this.fovNow) > 0.05) {
       this.fovNow = fov;
       this.camera.fov = fov;
@@ -365,11 +795,90 @@ export class DriveScene extends GameScene {
     }
   }
 
+  private placeChaseCamera(dt: number, snap: boolean): void {
+    const d = tuning.drive;
+    const p = this.phys;
+    const k = snap ? 1 : 1 - Math.exp(-d.cameraLag * dt);
+    this.camHeading = lerpAngle(this.camHeading, p.heading, k);
+    this.camBaseY += (p.y - this.camBaseY) * (snap ? 1 : 1 - Math.exp(-(p.grounded ? 5 : 2) * dt));
+    const bx = -Math.sin(this.camHeading), bz = Math.cos(this.camHeading); // unit vector behind the camera heading
+
+    // Never inside a building: shorten the arm when a box is in the way.
+    const dist = d.cameraFollowDistance * (1 + this.boostLevel * 0.1);
+    const tx = p.x + bx * dist, tz = p.z + bz * dist;
+    const free = this.freeFraction(p.x, p.z, tx, tz, this.camBaseY + d.cameraHeight);
+    const minFrac = clamp(d.cameraMinDistance / dist, 0.1, 1);
+    const target = Math.max(minFrac, free);
+    if (snap) this.occl = target;
+    else if (target < this.occl) this.occl += (target - this.occl) * (1 - Math.exp(-16 * dt));
+    else this.occl += (target - this.occl) * (1 - Math.exp(-2.5 * dt));
+    const f = this.occl;
+    this.camWant.set(p.x + bx * dist * f, this.camBaseY + d.cameraHeight - this.boostLevel * 0.7 + (1 - f) * 4, p.z + bz * dist * f);
+
+    const kp = snap ? 1 : 1 - Math.exp(-d.cameraLag * d.cameraPosLag * dt);
+    this.camPos.lerp(this.camWant, kp);
+    if (snap) this.camPos.copy(this.camWant);
+    this.keepOutOfBoxes();
+    // a little rumble when boosting
+    const shake = this.boostLevel * 0.05;
+    if (shake > 0.002) this.camPos.y += (Math.random() - 0.5) * shake;
+
+    this.camera.position.copy(this.camPos);
+    const fx = Math.sin(p.heading), fz = -Math.cos(p.heading);
+    const lookY = this.camBaseY * 0.55 + p.y * 0.45 + d.cameraLookHeight;
+    this.camera.lookAt(p.x + fx * d.cameraLookAhead, lookY, p.z + fz * d.cameraLookAhead);
+  }
+
+  private placeFootCamera(dt: number, snap: boolean): void {
+    const d = tuning.drive;
+    const f = this.foot;
+    this.camBaseY += (f.y - this.camBaseY) * (snap ? 1 : 1 - Math.exp(-6 * dt));
+    const bx = -Math.sin(this.camYaw), bz = Math.cos(this.camYaw);
+    const dist = d.footCamDistance * (1 + this.camPitch * 0.25);
+    const wantY = this.camBaseY + d.footCamHeight + this.camPitch * 4.2;
+    const free = this.freeFraction(f.x, f.z, f.x + bx * dist, f.z + bz * dist, wantY);
+    const target = Math.max(0.28, free);
+    if (snap) this.occl = target;
+    else if (target < this.occl) this.occl += (target - this.occl) * (1 - Math.exp(-18 * dt));
+    else this.occl += (target - this.occl) * (1 - Math.exp(-3 * dt));
+    const fr = this.occl;
+    // squeezed in (a corridor, a doorway): come in close and rise above it, looking down
+    this.camWant.set(f.x + bx * dist * fr, wantY + (1 - fr) * 4.2, f.z + bz * dist * fr);
+    const kp = snap ? 1 : 1 - Math.exp(-d.footCamLag * dt);
+    this.camPos.lerp(this.camWant, kp);
+    if (snap) this.camPos.copy(this.camWant);
+    this.keepOutOfBoxes();
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(f.x, this.camBaseY * 0.4 + f.y * 0.6 + d.footCamLook, f.z);
+  }
+
+  /** Last line of defence: keep the lens outside every building box (lagging around corners). */
+  private keepOutOfBoxes(): void {
+    const cols = this.grid.near(this.camPos.x, this.camPos.z, 6);
+    for (let i = 0; i < cols.length; i++) {
+      const b = cols[i];
+      if (b.kind !== 'box' || b.only === 'foot') continue;
+      const ox = b.hw + 0.8 - Math.abs(this.camPos.x - b.x), oz = b.hd + 0.8 - Math.abs(this.camPos.z - b.z);
+      if (ox <= 0 || oz <= 0) continue;
+      if (b.h !== undefined) {
+        // a low wall or hedge: rise over it instead of sliding into the next corridor
+        if (this.camPos.y < b.h + 0.4) this.camPos.y = b.h + 0.4;
+      } else if (this.camPos.y < 14) {
+        if (ox < oz) this.camPos.x += (this.camPos.x >= b.x ? 1 : -1) * ox;
+        else this.camPos.z += (this.camPos.z >= b.z ? 1 : -1) * oz;
+      }
+    }
+  }
+
   /** Fraction (0..1) of the segment a→b that is free of boxes (padded by the camera's radius). */
-  private freeFraction(ax: number, az: number, bx: number, bz: number): number {
+  private freeFraction(ax: number, az: number, bx: number, bz: number, yLevel: number): number {
     let best = 1;
     const dx = bx - ax, dz = bz - az;
-    for (const b of this.boxes) {
+    const cols = this.grid.near((ax + bx) / 2, (az + bz) / 2, Math.hypot(dx, dz) / 2 + 2);
+    for (let i = 0; i < cols.length; i++) {
+      const b = cols[i];
+      if (b.kind !== 'box' || b.only === 'foot') continue;
+      if (b.h !== undefined && yLevel > b.h + 0.5) continue;
       const pad = 0.8;
       let t0 = 0, t1 = 1;
       // slab test on x and z
@@ -396,13 +905,14 @@ export class DriveScene extends GameScene {
     return best;
   }
 
-  // ── the sun follows the car (snapped to shadow texels so nothing shimmers) ─
+  // ── the sun follows the player (snapped to shadow texels so nothing shimmers) ─
   private updateSun(): void {
     const d = tuning.drive;
-    const p = this.phys;
-    let fx = p.x + Math.sin(this.camHeading) * d.shadowAhead;
-    let fz = p.z - Math.cos(this.camHeading) * d.shadowAhead;
-    const texel = (d.shadowSize * 2) / tuning.art.shadowMapSize;
+    const heading = this.mode === 'car' ? this.camHeading : this.camYaw;
+    const ahead = this.mode === 'car' ? d.shadowAhead : d.shadowAhead * 0.5;
+    let fx = this.mx + Math.sin(heading) * ahead;
+    let fz = this.mz - Math.cos(heading) * ahead;
+    const texel = (d.shadowSize * 2) / this.sun.shadow.mapSize.x;
     // snap the focus point in light space
     const a = fx * this.lightX.x + fz * this.lightX.z;
     const b = fx * this.lightY.x + fz * this.lightY.z;
@@ -410,8 +920,9 @@ export class DriveScene extends GameScene {
     const sb = Math.round(b / texel) * texel - b;
     fx += sa * this.lightX.x + sb * this.lightY.x;
     fz += sa * this.lightX.z + sb * this.lightY.z;
-    this.sun.target.position.set(fx, 0, fz);
-    this.sun.position.set(fx + SUN_OFFSET.x, SUN_OFFSET.y, fz + SUN_OFFSET.z);
+    const fy = this.mode === 'car' ? this.phys.y : this.foot.y;
+    this.sun.target.position.set(fx, fy, fz);
+    this.sun.position.set(fx + SUN_DIR.x * 120, fy + SUN_DIR.y * 120, fz + SUN_DIR.z * 120);
     const s = this.sun.shadow.camera;
     if (Math.abs(s.right - d.shadowSize) > 0.01) {
       s.left = -d.shadowSize;
@@ -424,46 +935,94 @@ export class DriveScene extends GameScene {
 
   // ── HUD ───────────────────────────────────────────────────────────────────
   private updateHud(dt: number, t: number): void {
-    const p = this.phys;
-    const target = this.jobs.target;
+    const d = tuning.drive;
+    const car = this.mode === 'car';
+    this.camera.getWorldDirection(this.camDir);
+    const camHeading = Math.atan2(this.camDir.x, -this.camDir.z);
+    const bearing = (x: number, z: number): number => wrapAngle(Math.atan2(x - this.mx, -(z - this.mz)) - camHeading);
 
+    // 💎 counter
+    this.top.setCharms(this.charms.collected, this.charms.total, nextReward());
+
+    // the job bubble
+    const target = this.jobs.target;
+    if (target) this.top.job.show(target.icon, `${target.name}!`, target.kind, bearing(target.x, target.z));
+    else this.top.job.hide();
+
+    // the home guide: nearest empty lot until you own a house, then a button to find it
+    this.homeAcc += dt;
+    if (this.homeAcc > 0.4) {
+      this.homeAcc = 0;
+      this.homeTarget = null;
+      if (this.ownsHouse) {
+        const own = store.data.town.houses.find((h) => h.ownerId === store.profile.id);
+        const plot = own ? PLOTS[own.plot] : undefined;
+        if (plot) {
+          const fr = plotFront(plot);
+          this.homeTarget = { x: fr.x, z: fr.z };
+        }
+      } else {
+        let best = Infinity;
+        for (const pl of this.emptyPlots) {
+          const fr = plotFront(pl);
+          const dd = Math.hypot(fr.x - this.mx, fr.z - this.mz);
+          if (dd < best) {
+            best = dd;
+            this.homeTarget = { x: fr.x, z: fr.z };
+          }
+        }
+      }
+    }
+    if (this.homeTarget) this.top.home.point(bearing(this.homeTarget.x, this.homeTarget.z), Math.hypot(this.homeTarget.x - this.mx, this.homeTarget.z - this.mz));
+    if (this.nudgeIn > 0) {
+      this.nudgeIn -= dt;
+      if (this.nudgeIn <= 0) {
+        this.nudgeIn = -1;
+        session.homeNudgeFor = store.profile.id;
+        toast('Pick a lot in Home Hills and build your home! 🏠');
+      }
+    }
+
+    // minimap (30 Hz)
     this.mapAcc += dt;
     if (this.mapAcc >= 1 / 30) {
       this.mapAcc = 0;
-      this.minimap.draw(p.x, p.z, p.heading, store.profile.carColor, target, t);
+      this.charms.nearby(this.mx, this.mz, d.charmMapRange, this.nearCharms);
+      this.minimap.draw({
+        x: this.mx,
+        z: this.mz,
+        heading: car ? this.phys.heading : this.foot.heading,
+        color: store.profile.carColor,
+        car: car ? null : { x: this.phys.x, z: this.phys.z },
+        target,
+        charms: this.nearCharms,
+        emptyPlots: this.ownsHouse ? null : this.emptyPlots,
+        home: this.top.home.showsArrowToHome ? this.homeTarget : null,
+        t,
+      });
     }
 
-    if (target) {
-      this.camera.getWorldDirection(this.camDir);
-      const camHeading = Math.atan2(this.camDir.x, -this.camDir.z);
-      const bearing = Math.atan2(target.x - p.x, -(target.z - p.z));
-      this.bubble.show(target.icon, `${target.name}!`, target.kind, wrapAngle(bearing - camHeading));
-    } else this.bubble.hide();
+    // the parked car marker + the get-in button glow
+    if (!car) {
+      const dc = Math.hypot(this.foot.x - this.phys.x, this.foot.z - this.phys.z);
+      this.carMarker.visible = dc > 9;
+      if (this.carMarker.visible) {
+        this.carMarker.position.set(this.phys.x, this.phys.y + 3.6 + Math.sin(t * 2.4) * 0.25, this.phys.z);
+        const s = 2.2 + Math.min(1.6, dc / 60);
+        this.carMarker.scale.set(s, s, 1);
+      }
+      this.modeBtn.classList.toggle('near', dc <= d.getInRadius);
+    } else {
+      this.carMarker.visible = false;
+      this.modeBtn.classList.remove('near');
+    }
 
-    this.tags.update(this.camera, p.x, p.z, this.winW, this.winH);
+    this.tags.update(this.camera, this.mx, this.mz, this.winW, this.winH);
   }
 
-  // ── 🎨 repaint ────────────────────────────────────────────────────────────
+  // ── 🎨 paint shop ─────────────────────────────────────────────────────────
   private openPaint(): void {
-    sheet((body, close) => {
-      el('h2', '', body, '🎨 Paint your car');
-      swatches(
-        body,
-        tuning.art.palette,
-        store.profile.carColor,
-        (c) => {
-          store.update(() => {
-            store.profile.carColor = c;
-          });
-          this.car.setColor(c);
-          bus.emit('optionPicked', { pos: { x: this.phys.x, y: 1.6, z: this.phys.z } });
-        },
-        'wide',
-      );
-      const row = el('div', 'row', body);
-      row.style.justifyContent = 'center';
-      row.style.marginTop = '18px';
-      button(row, { label: 'Done', cls: 'pink big' }, close);
-    });
+    openPaintSheet(this.car, { x: this.phys.x, y: this.phys.y + 1.6, z: this.phys.z });
   }
 }
+

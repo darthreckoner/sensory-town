@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { tuning } from '../../tuning';
 import { bus, v3 } from '../../core/events';
-import type { Coating } from './coating';
+import { FINISH_GLSL, FINISH_ID, type Coating } from './coating';
 
 type PieceState = 'attached' | 'peeling' | 'falling' | 'resting' | 'gone';
 
@@ -58,14 +58,16 @@ export class Fracture {
       sh.uniforms.uCrack = uCrack;
       sh.uniforms.uSeed = uSeed;
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec3 aBody;\nattribute float aSurf;\nvarying vec3 vBody;\nvarying float vSurf;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBody = aBody;\nvSurf = aSurf;');
+        .replace('#include <common>', '#include <common>\nattribute vec3 aBody;\nattribute float aSurf;\nattribute float aFinish;\nvarying vec3 vBody;\nvarying float vSurf;\nvarying float vFinish;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBody = aBody;\nvSurf = aSurf;\nvFinish = aFinish;');
       sh.fragmentShader = sh.fragmentShader
         .replace(
           '#include <common>',
           `#include <common>
 varying vec3 vBody;
 varying float vSurf;
+varying float vFinish;
+${FINISH_GLSL}
 uniform vec4 uCrack[${SLOTS}];
 uniform float uSeed[${SLOTS}];`,
         )
@@ -122,9 +124,17 @@ if (vSurf > 0.5) {
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.98, 0.96), halo * 0.6);
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.25, core * 0.85);
 }`,
+        )
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vFinish > 1.5 && vFinish < 2.5) roughnessFactor = 0.14;')
+        .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nif (vFinish > 1.5 && vFinish < 2.5) metalnessFactor = 1.0;')
+        .replace(
+          '#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+if (vFinish > 2.5) totalEmissiveRadiance += diffuseColor.rgb * 0.9;
+if (vFinish > 0.5 && vFinish < 1.5) totalEmissiveRadiance += vec3(1.0, 0.97, 0.9) * waxGlitter(vBody, normal, normalize(vViewPosition));`,
         );
     };
-    this.material.customProgramCacheKey = () => 'wax-shell';
+    this.material.customProgramCacheKey = () => 'wax-shell-v2';
   }
 
   clear(): void {
@@ -160,7 +170,8 @@ if (vSurf > 0.5) {
       stacks[i] = s;
     }
     // match the look of hardened layers (cooled wax is a touch paler)
-    const colors = layers.map((l) => new THREE.Color(l.color).lerp(new THREE.Color('#ffffff'), 0.12));
+    const colors = layers.map((l) => (l.finish === 'chrome' ? new THREE.Color(l.color) : new THREE.Color(l.color).lerp(new THREE.Color('#ffffff'), 0.12)));
+    const finishes = layers.map((l) => FINISH_ID[l.finish] ?? 0);
 
     // seeds: jittered fibonacci sphere, random rotation each build
     const K = Math.max(6, Math.round(t.pieceCount));
@@ -209,7 +220,7 @@ if (vSurf > 0.5) {
     for (let k = 0; k < K; k++) {
       const tris = pieceTris[k];
       if (!tris.length) continue;
-      const pos: number[] = [], nor: number[] = [], col: number[] = [], body: number[] = [], surf: number[] = [];
+      const pos: number[] = [], nor: number[] = [], col: number[] = [], body: number[] = [], surf: number[] = [], fin: number[] = [];
       const vset = new Set<number>();
       const edgeCount = new Map<number, { a: number; b: number; n: number }>();
       const center = new THREE.Vector3();
@@ -222,9 +233,11 @@ if (vSurf > 0.5) {
           const r = outerR(i);
           P(i, r, pos);
           nor.push(baseN[i * 3], baseN[i * 3 + 1], baseN[i * 3 + 2]);
-          const top = colors[stacks[i][stacks[i].length - 1]];
+          const topIdx = stacks[i][stacks[i].length - 1];
+          const top = colors[topIdx];
           col.push(top.r, top.g, top.b);
           surf.push(1);
+          fin.push(finishes[topIdx]);
           vset.add(i);
         }
         pa.fromArray(pos, pos.length - 9);
@@ -240,6 +253,7 @@ if (vSurf > 0.5) {
           const inn = colors[stacks[i][0]];
           col.push(inn.r * 0.82, inn.g * 0.82, inn.b * 0.82);
           surf.push(0);
+          fin.push(finishes[stacks[i][0]]);
         }
         // edges (a→b in winding order)
         for (let e = 0; e < 3; e++) {
@@ -278,6 +292,7 @@ if (vSurf > 0.5) {
             nor.push(fn.x, fn.y, fn.z);
             col.push(lc.r * shade, lc.g * shade, lc.b * shade);
             surf.push(0);
+            fin.push(finishes[layerIdx]);
           }
         }
       }
@@ -295,6 +310,7 @@ if (vSurf > 0.5) {
       geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       geo.setAttribute('aBody', new THREE.Float32BufferAttribute(body, 3));
       geo.setAttribute('aSurf', new THREE.Float32BufferAttribute(surf, 1));
+      geo.setAttribute('aFinish', new THREE.Float32BufferAttribute(fin, 1));
       geo.computeBoundingSphere();
       const mesh = new THREE.Mesh(geo, this.material);
       mesh.position.copy(center);
