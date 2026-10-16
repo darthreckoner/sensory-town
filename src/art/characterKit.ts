@@ -337,7 +337,7 @@ export function contrastColor(base: string, palette: readonly string[], seed = 0
 export function lipColor(skin: string): string {
   const c = new THREE.Color(skin);
   const d = lum(skin);
-  c.lerp(new THREE.Color(d > 0.4 ? '#c25a68' : '#80343f'), 0.38);
+  c.lerp(new THREE.Color(d > 0.4 ? '#c25a68' : '#80343f'), 0.46);
   return `#${c.getHexString()}`;
 }
 /** Mouth-line color: a warm dark brown that still reads on every skin tone. */

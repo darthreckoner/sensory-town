@@ -11,8 +11,9 @@ const Q = new URLSearchParams(location.search);
 const W = +(Q.get('w') ?? 1280), H = +(Q.get('h') ?? 613);
 const zoom = Q.get('z') ?? 'full';
 const views = (Q.get('views') ?? '0,0.7,1.57,3.14').split(',').map(Number);
+const poseList = Q.has('poses') ? Q.get('poses')!.split(',') : null; // one character per panel, each in its own pose
 const pose = Q.get('pose') ?? 'idle';
-const n = +(Q.get('n') ?? 1);
+const n = poseList ? poseList.length : +(Q.get('n') ?? 1);
 const ZR: Record<string, [number, number]> = { full: [0, 1.95], upper: [0.85, 1.95], head: [1.4, 1.92], legs: [0, 1.0], hands: [0.7, 1.2] };
 const yr: [number, number] = Q.has('y0') ? [+Q.get('y0')!, +Q.get('y1')!] : ZR[zoom] ?? ZR.full;
 
@@ -44,6 +45,7 @@ scene.add(floor);
 const skins = tuning.art.skinTones;
 const chars: Character[] = [];
 const pivots: THREE.Group[] = [];
+const poseOf = (i: number): string => (poseList ? poseList[i] : pose);
 const handKinds = Q.has('hands') ? Q.get('hands')!.split(',') : null; // per panel: relax|open|grip|peace|heart
 for (let i = 0; i < n; i++) {
   const o: Outfit = {
@@ -54,30 +56,33 @@ for (let i = 0; i < n; i++) {
     shoes: { style: +(Q.get('shoes') ?? 0), color: Q.get('sc') ?? '#f6f6f4' },
     accessory: { style: +(Q.get('acc') ?? 0), color: Q.get('ac') ?? '#ff2e88' },
   };
-  const c = new Character(o, { seated: pose === 'sit' });
+  const c = new Character(o, { seated: poseOf(i) === 'sit' });
   // the pivot (rotated per view) sits at the look-at point: hx/hz pick a body part (a hand: hx=0.2) to orbit around
-  c.group.position.set((i - (n - 1) / 2) * 0.9 - +(Q.get('hx') ?? 0), 0, -+(Q.get('hz') ?? 0));
+  c.group.position.set((poseList ? 0 : (i - (n - 1) / 2) * 0.9) - +(Q.get('hx') ?? 0), 0, -+(Q.get('hz') ?? 0));
   const pv = new THREE.Group();
   pv.add(c.group);
   scene.add(pv);
   pivots.push(pv);
   chars.push(c);
 }
-const speed = pose === 'walk' ? 0.45 : pose === 'run' ? 1 : 0;
+const speedOf = (i: number) => (poseOf(i) === 'walk' ? 0.45 : poseOf(i) === 'run' ? 1 : 0);
 let t = 0;
 function step(dt: number): void {
   t += dt;
-  for (const c of chars) {
-    c.setMove(speed, true);
+  chars.forEach((c, i) => {
+    c.setMove(speedOf(i), true);
     c.update(dt, t);
-  }
+  });
 }
-if (pose === 'wave') chars.forEach((c) => c.wave());
-if (pose === 'swim') chars.forEach((c) => c.setSwim(1));
-if (pose === 'glide') chars.forEach((c) => c.setGliding(true));
-if (pose === 'skydive') chars.forEach((c) => c.setSkydive(true));
-if (pose === 'slide') chars.forEach((c) => c.setSlide(true));
-if (!['idle', 'walk', 'run', 'sit', 'wave', 'swim', 'glide', 'skydive', 'slide'].includes(pose)) chars.forEach((c) => c.playEmote(pose));
+chars.forEach((c, i) => {
+  const ps = poseOf(i);
+  if (ps === 'wave') c.wave();
+  else if (ps === 'swim') c.setSwim(1);
+  else if (ps === 'glide') c.setGliding(true);
+  else if (ps === 'skydive') c.setSkydive(true);
+  else if (ps === 'slide') c.setSlide(true);
+  else if (!['idle', 'walk', 'run', 'sit'].includes(ps)) c.playEmote(ps);
+});
 const warm = +(Q.get('warm') ?? 1.4);
 for (let i = 0; i < warm * 60; i++) step(1 / 60);
 
@@ -87,7 +92,7 @@ const cy = (yr[0] + yr[1]) / 2;
 const hh = yr[1] - yr[0] + 0.1;
 const tanV = Math.tan((camera.fov * Math.PI) / 360);
 camera.aspect = pw / H;
-const dist = Math.max(hh / 2 / tanV, (n * (Q.has('wm') ? +Q.get('wm')! : zoom === 'head' ? 0.34 : zoom === 'upper' ? 0.6 : 0.8) + 0.05) / 2 / (tanV * camera.aspect)) + 0.2;
+const dist = Math.max(hh / 2 / tanV, ((poseList ? 1 : n) * (Q.has('wm') ? +Q.get('wm')! : zoom === 'head' ? 0.34 : zoom === 'upper' ? 0.6 : 0.8) + 0.05) / 2 / (tanV * camera.aspect)) + 0.2;
 camera.position.set(0, cy, dist);
 camera.lookAt(0, cy, 0);
 camera.updateProjectionMatrix();
@@ -99,7 +104,7 @@ function draw(): void {
   renderer.setScissor(0, 0, W, H);
   renderer.clear();
   views.forEach((ry, k) => {
-    pivots.forEach((pv) => (pv.rotation.y = ry));
+    pivots.forEach((pv, j) => { pv.rotation.y = ry; pv.visible = !poseList || j === k; });
     if (handKinds) chars.forEach((c) => { c.debugHand = handKinds[k % handKinds.length] as never; c.update(0.0001); });
     renderer.setViewport(k * pw, 0, pw, H);
     renderer.setScissor(k * pw, 0, pw, H);
