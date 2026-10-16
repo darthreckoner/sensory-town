@@ -324,12 +324,12 @@ export const tuning = {
     pickup: {
       cameraFollowDistance: 10.5, cameraHeight: 4.4, cameraLookHeight: 2.0, cameraLookAhead: 4.5, cameraMinDistance: 4.5,
       topSpeed: 19, acceleration: 9.5, brakeForce: 24, turnRate: 2.0, turnSpeedFull: 4.5, grip: 10.5, climbLimit: 1.55, slopeGravity: 3.5, waterLimit: -1.0,
-      carRadius: 1.15, carCircleOffset: 1.3, boostSpeed: 1.35, susK: 95, susC: 5, bumpKick: 3.4, lean: 0.17, pitchK: 0.08,
+      carRadius: 1.05, carCircleOffset: 1.15, boostSpeed: 1.35, susK: 95, susC: 5, bumpKick: 3.4, lean: 0.17, pitchK: 0.08,
     },
     golfcart: {
       cameraFollowDistance: 5.2, cameraHeight: 2.5, cameraLookHeight: 1.45, cameraLookAhead: 3.2, cameraMinDistance: 3.2, cameraPosLag: 3.2, cameraFov: 58, cameraFovBoost: 3,
       topSpeed: 10.5, acceleration: 8, brakeForce: 22, reverseSpeed: 5, turnRate: 3.1, turnSpeedFull: 1.6, turnMinAuthority: 0.6, turnSpeedLoss: 0.08, grip: 15,
-      carRadius: 0.85, carCircleOffset: 0.6, boostSpeed: 1.3, susK: 120, susC: 8, lean: 0.12, collideMinSpeed: 2,
+      carRadius: 0.7, carCircleOffset: 0.45, boostSpeed: 1.3, susK: 120, susC: 8, lean: 0.12, collideMinSpeed: 2,
     },
     hoverboard: {
       cameraFollowDistance: 4.5, cameraHeight: 2.2, cameraLookHeight: 1.3, cameraLookAhead: 3, cameraMinDistance: 2.8, cameraPosLag: 3.6, cameraFov: 60, cameraFovBoost: 5,
@@ -338,7 +338,7 @@ export const tuning = {
     },
     icecream: {
       cameraFollowDistance: 12.5, cameraHeight: 5.6, cameraLookHeight: 2.2, cameraLookAhead: 4.5, cameraMinDistance: 5,
-      topSpeed: 15.5, acceleration: 6.2, brakeForce: 16, turnRate: 1.6, turnSpeedFull: 5, grip: 7, carRadius: 1.2, carCircleOffset: 1.4, boostSpeed: 1.28,
+      topSpeed: 15.5, acceleration: 6.2, brakeForce: 16, turnRate: 1.6, turnSpeedFull: 5, grip: 7, carRadius: 1.1, carCircleOffset: 1.2, boostSpeed: 1.28,
       wobble: 0.22, susK: 60, susC: 3, lean: 0.28, bumpKick: 3, pitchK: 0.07,
     },
     boat: {

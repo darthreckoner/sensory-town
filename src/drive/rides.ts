@@ -18,6 +18,7 @@ import { toyMatUnique, roundedBox } from '../art/materials';
 import { Character } from '../art/character';
 import { Mesher } from './mesher';
 import { clamp, lathe } from './envUtils';
+import { loftBody, loftRings, sampleSections, profile, stations, archStations, archFn, tube, makeWheel, type WheelParts } from './rideKit';
 
 export type RideKind = VehicleKind;
 export const RIDE_KINDS: RideKind[] = ['sports', 'pickup', 'golfcart', 'hoverboard', 'icecream', 'boat'];
@@ -77,65 +78,18 @@ const DARK = '#1b1a22', TRIM = '#26242e', CHROME = '#d8dbe6', GLASS = '#2a4d6e',
 
 // ── shared materials ────────────────────────────────────────────────────────
 // FLAT is vertex-coloured, so every flat part of every ride is ONE draw call (the Mesher folds it into a shared material).
-const FLAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.3 });
+const FLAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.4 });
 const NEON = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
-const WHEELS = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.5, side: THREE.DoubleSide });
+const WHEELS = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.35, side: THREE.DoubleSide });
+/** tinted glass with a strong sky reflection (the cabins of the lofted rides) */
+const GLASS_MAT = new THREE.MeshPhysicalMaterial({ color: '#27425c', roughness: 0.05, metalness: 0, transparent: true, opacity: 0.5, envMapIntensity: 2.4, clearcoat: 1, clearcoatRoughness: 0.03, depthWrite: false });
+GLASS_MAT.userData.keep = true;
 
-// ── one wheel's geometry ────────────────────────────────────────────────────
-interface WheelGeo {
-  geo: THREE.BufferGeometry;
-  tireEnd: number;
-  rimEnd: number;
-  count: number;
-}
+// ── wheels: tyres with a rounded sidewall + tread grooves, dished spoked rims (rideKit.ts) ──
+type WheelGeo = WheelParts;
 type WheelStyle = 'alloy' | 'offroad' | 'cart';
-
-/** A wheel (axle along x, outer face at +x) as ONE non-indexed buffer: [tyre | rim | cap], with a colour attribute to fill. */
 function makeWheelGeometry(R: number, W: number, style: WheelStyle): WheelGeo {
-  const rr = Math.min(0.1, R * 0.3);
-  const prof: [number, number][] = [[0, -W / 2]];
-  for (let i = 0; i <= 4; i++) {
-    const a = -Math.PI / 2 + (i / 4) * (Math.PI / 2);
-    prof.push([R - rr + rr * Math.cos(a), -W / 2 + rr + rr * Math.sin(a)]);
-  }
-  for (let i = 0; i <= 4; i++) {
-    const a = (i / 4) * (Math.PI / 2);
-    prof.push([R - rr + rr * Math.cos(a), W / 2 - rr + rr * Math.sin(a)]);
-  }
-  prof.push([0, W / 2]);
-  const piece = (g: THREE.BufferGeometry, m4: THREE.Matrix4): THREE.BufferGeometry => {
-    let c = g.clone().applyMatrix4(m4);
-    for (const name of Object.keys(c.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') c.deleteAttribute(name);
-    if (!c.attributes.normal) c.computeVertexNormals();
-    if (!c.attributes.uv) c.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(c.attributes.position.count * 2), 2));
-    if (c.index) c = c.toNonIndexed();
-    return c;
-  };
-  const xo = W / 2 - 0.015;
-  const T = (x: number, y: number, z: number): THREE.Matrix4 => new THREE.Matrix4().makeTranslation(x, y, z);
-  const tire = [piece(lathe(prof, 26), new THREE.Matrix4().makeRotationZ(Math.PI / 2))];
-  const rim: THREE.BufferGeometry[] = [];
-  const rimR = R * 0.75;
-  rim.push(piece(new THREE.CylinderGeometry(rimR, rimR, 0.04, 24).rotateZ(Math.PI / 2), T(xo, 0, 0)));
-  if (style === 'alloy' || style === 'offroad') {
-    const n = style === 'alloy' ? 5 : 6;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      const len = rimR * 0.95;
-      const m4 = new THREE.Matrix4().compose(
-        new THREE.Vector3(xo + 0.01, Math.cos(a) * len * 0.5, Math.sin(a) * len * 0.5),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(a, 0, 0)),
-        new THREE.Vector3(1, 1, 1),
-      );
-      rim.push(piece(roundedBox(0.04, len, R * 0.16, 0.012, 1), m4));
-    }
-  }
-  const cap = [piece(new THREE.CylinderGeometry(R * 0.2, R * 0.2, 0.05, 14).rotateZ(Math.PI / 2), T(xo + 0.02, 0, 0))];
-  const n = (l: THREE.BufferGeometry[]): number => l.reduce((s, g) => s + g.attributes.position.count, 0);
-  const geo = mergeGeometries([...tire, ...rim, ...cap], false)!;
-  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
-  geo.computeBoundingSphere();
-  return { geo, tireEnd: n(tire), rimEnd: n(tire) + n(rim), count: geo.attributes.position.count };
+  return makeWheel(R, W, style === 'alloy' ? 'sport' : style);
 }
 
 // ── the models ──────────────────────────────────────────────────────────────
@@ -164,6 +118,7 @@ export interface Spec {
 
 interface Template {
   spec: Spec;
+  glass: THREE.BufferGeometry | null;
   paint: THREE.BufferGeometry | null;
   flat: THREE.BufferGeometry | null;
   neon: THREE.BufferGeometry | null;
@@ -180,14 +135,14 @@ const body = (m: Mesher, mat: THREE.Material, cx: number, cy: number, cz: number
 /** Both faces of a one-sided plate (windshields, panels). */
 function plate(m: Mesher, mat: THREE.Material, p0: number[], p1: number[], p2: number[], p3: number[], color: string): void {
   m.quad(mat, p0, p1, p2, p3, undefined, color);
-  m.quad(mat, p3, p2, p1, p0, undefined, color);
+  m.quad(mat, p2, p1, p0, p3, undefined, color);   // (the back face starts at p2: a triangle with p3 = p2 keeps a real normal)
 }
 
 // ── v3 polish: soft shapes (bevelled boxes, balls, rings, cones) ─────────────────
 // The Mesher only makes sharp boxes. The rounded parts are plain geometry built here and folded into the SAME three buckets
 // (paint / flat / neon) when the template is merged — so a ride is still three or four draw calls.
-type Bk = 'paint' | 'flat' | 'neon';
-let EX: Record<Bk, THREE.BufferGeometry[]> = { paint: [], flat: [], neon: [] };
+type Bk = 'paint' | 'flat' | 'neon' | 'glass';
+let EX: Record<Bk, THREE.BufferGeometry[]> = { paint: [], flat: [], neon: [], glass: [] };
 type Colour = string | ((x: number, y: number, z: number) => string);
 const E_Q = new THREE.Quaternion(), E_E = new THREE.Euler(), E_P = new THREE.Vector3(), E_S = new THREE.Vector3(), E_C = new THREE.Color();
 type Rot = [number, number, number];
@@ -205,7 +160,7 @@ function emit(b: Bk, src: THREE.BufferGeometry, m4: THREE.Matrix4, color?: Colou
   const p = g.attributes.position as THREE.BufferAttribute;
   const n = p.count;
   if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
-  if (b !== 'paint') {
+  if (b !== 'paint' && b !== 'glass') {
     const col = new Float32Array(n * 3);
     if (typeof color === 'function') {
       for (let i = 0; i < n; i += 3) {
@@ -221,12 +176,12 @@ function emit(b: Bk, src: THREE.BufferGeometry, m4: THREE.Matrix4, color?: Colou
   EX[b].push(g);
 }
 /** A bevelled box (r = corner radius). */
-function rbox(b: Bk, cx: number, cy: number, cz: number, w: number, h: number, d: number, r: number, color?: Colour, rot?: Rot, seg = 1): void {
+function rbox(b: Bk, cx: number, cy: number, cz: number, w: number, h: number, d: number, r: number, color?: Colour, rot?: Rot, seg = 1, soft = false): void {
   // thin trim (< 13 cm) is not worth rounding: a plain box keeps the triangle count down
-  emit(b, Math.min(w, h, d) < 0.13 ? new THREE.BoxGeometry(w, h, d) : roundedBox(w, h, d, r, seg), xf(cx, cy, cz, rot), color);
+  emit(b, !soft && Math.min(w, h, d) < 0.13 ? new THREE.BoxGeometry(w, h, d) : roundedBox(w, h, d, r, seg), xf(cx, cy, cz, rot), color);
 }
 /** A squashed ball (radii rx, ry, rz). */
-function ball(b: Bk, cx: number, cy: number, cz: number, rx: number, ry: number, rz: number, color: Colour, rot?: Rot, seg = 12, rings = 8): void {
+function ball(b: Bk, cx: number, cy: number, cz: number, rx: number, ry: number, rz: number, color: Colour | undefined, rot?: Rot, seg = 10, rings = 6): void {
   emit(b, new THREE.SphereGeometry(1, seg, rings), xf(cx, cy, cz, rot, rx, ry, rz), color);
 }
 /** A cone / cylinder centred at (cx, cy, cz); axis up (rot lays it down). */
@@ -270,468 +225,523 @@ function star(m: Mesher, axis: 'x' | 'z', at: number, uc: number, yc: number, R:
   }
 }
 
-// ── sports car ──
-const S_WHEEL_X = 0.8, S_WHEEL_Z = 1.32, S_R = 0.34;
-function sportsShape(): THREE.Shape {
-  const top: [number, number][] = [
-    [2.2, 0.34], [2.22, 0.5], [2.12, 0.64], [1.8, 0.76], [1.3, 0.84], [0.8, 0.88], [0.45, 0.9],
-    [0.4, 0.66], [0.36, 0.58], [-1.0, 0.58], [-1.1, 0.62], [-1.18, 0.88], [-1.7, 0.93], [-2.05, 0.92], [-2.2, 0.82],
-    [-2.2, 0.5], [-2.15, 0.34], [-1.95, 0.25],
-  ];
-  const s = new THREE.Shape();
-  top.forEach(([x, y], i) => (i === 0 ? s.moveTo(x, y) : s.lineTo(x, y)));
-  const arch = (cx: number): void => {
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8;
-      s.lineTo(cx - Math.cos(Math.PI * t) * 0.4, 0.34 + Math.sin(Math.PI * t) * 0.4);
+// ── lofted-body helpers ──────────────────────────────────────────────────────
+const I4 = new THREE.Matrix4();
+/** Put any geometry into a bucket as it is (it is already in ride space). */
+function put(b: Bk, g: THREE.BufferGeometry, color?: Colour): void {
+  emit(b, g, I4, color);
+}
+/** A flat decal ribbon hugging a surface: x centre, width, y(z) and the z list. */
+function ribbon(b: Bk, zs: number[], xc: number, w: number, y: (z: number) => number, color: Colour, lift = 0.006): void {
+  const pos: number[] = [], idx: number[] = [];
+  zs.forEach((z, i) => {
+    pos.push(xc - w / 2, y(z) + lift, z, xc + w / 2, y(z) + lift, z);
+    if (i > 0) {
+      const a = (i - 1) * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length / 3).fill(0).flatMap(() => [0, 1, 0]), 3));
+  g.setIndex(idx);
+  put(b, g, color);
+}
+/** A flared arch lip: a half torus over a wheel (axis along x), at lateral position x. */
+function archLip(b: Bk, x: number, wy: number, wz: number, r: number, tube: number, color?: Colour): void {
+  const g = new THREE.TorusGeometry(r, tube, 5, 16, Math.PI).rotateY(Math.PI / 2);
+  emit(b, g, new THREE.Matrix4().makeTranslation(x, wy, wz), color);
+}
+/** A tube (pillar, rail) through points, in a bucket. */
+function pipe(b: Bk, pts: [number, number, number][], r: number, color?: Colour, radial = 6): void {
+  put(b, tube(pts, r, radial), color);
+}
+const GLASS_TINT = '#27425c';
+/** A fine mesh grille: a dark recess, many hair-thin bars, and a rounded chrome surround (a tube round a rounded rectangle). Faces -z. */
+function meshGrille(cx: number, cy: number, cz: number, w: number, h: number, nv: number, nh: number): void {
+  rbox('flat', cx, cy, cz, w, h, 0.05, 0.03, '#0d0c12', undefined, 1, true);
+  for (let i = 0; i < nv; i++) rbox('flat', cx - w / 2 + ((i + 0.5) * w) / nv, cy, cz - 0.03, 0.007, h * 0.92, 0.012, 0.003, '#8c93a6');
+  for (let j = 0; j < nh; j++) rbox('flat', cx, cy - h / 2 + ((j + 0.5) * h) / nh, cz - 0.034, w * 0.96, 0.008, 0.012, 0.003, '#a9afc0');
+  const rx = w / 2 + 0.022, ry = h / 2 + 0.022, rc = Math.min(rx, ry) * 0.5;
+  const pts: [number, number, number][] = [];
+  const corner = (px: number, py: number, a0: number): void => {
+    for (let k = 0; k <= 2; k++) {
+      const a = a0 + (k / 2) * (Math.PI / 2);
+      pts.push([px + Math.cos(a) * rc, py + Math.sin(a) * rc, cz - 0.03]);
     }
   };
-  arch(-S_WHEEL_Z);
-  s.lineTo(-0.92, 0.25);
-  s.lineTo(0.92, 0.25);
-  arch(S_WHEEL_Z);
-  s.lineTo(1.9, 0.26);
-  s.lineTo(2.15, 0.28);
-  s.lineTo(2.2, 0.34);
-  return s;
+  corner(cx + rx - rc, cy + ry - rc, 0);
+  corner(cx - rx + rc, cy + ry - rc, Math.PI / 2);
+  corner(cx - rx + rc, cy - ry + rc, Math.PI);
+  corner(cx + rx - rc, cy - ry + rc, Math.PI * 1.5);
+  pts.push([pts[0][0], pts[0][1], pts[0][2]]);
+  pipe('flat', pts, 0.017, CHROME, 5);
 }
-let sportsBodyGeo: THREE.BufferGeometry | null = null;
+
+// ── sports coupe: a long low hood, a fastback glass canopy, wide haunches, a wing ──
 const buildSports: Builder = (m, paint) => {
-  if (!sportsBodyGeo) {
-    const g = new THREE.ExtrudeGeometry(sportsShape(), { depth: 1.5, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.1, bevelOffset: -0.1, bevelSegments: 3, curveSegments: 8 });
-    g.rotateY(Math.PI / 2);
-    g.translate(-0.75, 0, 0);
-    sportsBodyGeo = g;
-  }
-  // door panels / sills + deck lip in paint
+  const WB = 1.325, R = 0.36;
+  const wheelsAt = [{ z: -WB, y: R, r: R }, { z: WB, y: R, r: R }];
+  const hw = profile([[-2.25, 0.72], [-2.2, 0.8], [-2.05, 0.89], [-1.75, 0.95], [-1.3, 0.97], [-0.6, 0.945], [0.2, 0.935], [0.9, 0.96], [1.4, 0.985], [1.85, 0.96], [2.1, 0.89], [2.25, 0.76]]);
+  const top = profile([[-2.25, 0.6], [-2.2, 0.63], [-2.0, 0.69], [-1.6, 0.77], [-1.2, 0.82], [-0.8, 0.85], [-0.3, 0.83], [0.5, 0.83], [1.1, 0.85], [1.6, 0.91], [2.0, 0.94], [2.2, 0.92], [2.25, 0.88]]);
+  const bot = profile([[-2.25, 0.33], [-2.15, 0.22], [-2.0, 0.15], [2.0, 0.16], [2.15, 0.24], [2.25, 0.35]]);
+  const rnd = profile([[-2.25, 0.7], [-1.8, 0.58], [-0.8, 0.5], [1.0, 0.5], [1.8, 0.58], [2.25, 0.7]]);
+  const zs = stations(-2.25, 2.25, 9, archStations([-WB, WB], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(zs, { hw, top, bottom: bot, round: rnd, taper: () => 0.07, arch: archFn(wheelsAt, 0.07) }), 30));
+  // the glass canopy (a second loft) with a painted roof lid, A / B / C pillars in body colour
+  const gTop = profile([[-0.8, 0.8], [-0.6, 0.93], [-0.35, 1.09], [-0.05, 1.19], [0.4, 1.22], [0.85, 1.19], [1.15, 1.08], [1.4, 0.93], [1.5, 0.84]]);
+  const gHw = profile([[-0.8, 0.74], [-0.4, 0.82], [0.1, 0.86], [0.7, 0.85], [1.2, 0.79], [1.5, 0.6]]);
+  const gz = stations(-0.8, 1.5, 12);
+  put('glass', loftBody(sampleSections(gz, { hw: gHw, top: gTop, bottom: () => 0.74, round: () => 0.4, taper: () => 0.3 }), 28));
+  const lz = stations(-0.12, 1.02, 7);
+  put('paint', loftBody(sampleSections(lz, { hw: (z) => 0.5 * Math.min(1, 0.55 + (z + 0.12) * 4) * Math.min(1, 0.45 + (1.02 - z) * 2.5), top: (z) => gTop(z) + 0.018, bottom: (z) => gTop(z) - 0.05, round: () => 0.3 }), 20));
   for (const sx of [-1, 1]) {
-    rbox('paint', sx * 0.86, 0.74, 0.36, 0.13, 0.34, 1.52, 0.05);
-    body(m, FLAT, sx * 0.86, 0.93, 0.36, 0.1, 0.03, 1.5, CHROME);
+    pipe('paint', [[sx * 0.83, 0.8, -0.74], [sx * 0.7, 0.96, -0.45], [sx * 0.52, 1.14, -0.12]], 0.034);
+    pipe('paint', [[sx * 0.5, 1.185, 0.9], [sx * 0.64, 1.03, 1.2], [sx * 0.8, 0.86, 1.45]], 0.055);
+    pipe('paint', [[sx * 0.84, 0.8, 0.32], [sx * 0.68, 1.0, 0.3], [sx * 0.54, 1.17, 0.28]], 0.03);
+    pipe('flat', [[sx * 0.9, 0.835, -0.7], [sx * 0.92, 0.835, 0.4], [sx * 0.86, 0.835, 1.42]], 0.014, CHROME); // belt trim
   }
-  body(m, paint, 0, 0.99, 2.0, 1.4, 0.04, 0.2);
-  // tub, bulkhead, cowl dash
-  body(m, FLAT, 0, 0.56, 0.32, 1.62, 0.04, 1.4, DARK);
-  body(m, FLAT, 0, 0.78, 1.08, 1.6, 0.4, 0.08, DARK);
-  body(m, FLAT, 0, 0.78, -0.3, 1.62, 0.26, 0.4, DARK);
-  // raked windshield (opaque tinted glass) + A-pillars + header
-  plate(m, FLAT, [-0.8, 0.9, -0.42], [0.8, 0.9, -0.42], [0.8, 1.3, -0.08], [-0.8, 1.3, -0.08], GLASS);
+  // wheel-arch lips (body colour), side skirts, splitter, diffuser, intake
   for (const sx of [-1, 1]) {
-    plate(m, FLAT, [sx * 0.82, 0.9, -0.43], [sx * 0.82, 1.3, -0.09], [sx * 0.76, 1.3, -0.09], [sx * 0.76, 0.9, -0.43], TRIM);
-    body(m, FLAT, sx * 0.97, 1.0, -0.3, 0.12, 0.08, 0.2, DARK);
+    for (const wz of [-WB, WB]) archLip('paint', sx * (hw(wz) - 0.008), R, wz, R + 0.075, 0.03);
+    pipe('flat', [[sx * hw(-0.9) * 0.9, 0.25, -0.9], [sx * hw(0) * 0.915, 0.24, 0], [sx * hw(0.9) * 0.9, 0.25, 0.9]], 0.024, '#1b1a22'); // skirt: a rounded lip hugging the sill
   }
-  body(m, FLAT, 0, 1.3, -0.085, 1.62, 0.04, 0.05, CHROME);
-  // front: grille, splitter, hood vents
-  body(m, FLAT, 0, 0.45, -2.2, 0.95, 0.15, 0.1, DARK);
-  body(m, FLAT, 0, 0.27, -2.08, 1.7, 0.04, 0.34, DARK);
+  ball('paint', 0, 0.2, -2.1, 0.56, 0.03, 0.16, undefined); // chin lip: a flattened ellipsoid in body colour under the nose
+  ball('flat', 0, 0.22, 2.08, 0.58, 0.035, 0.12, '#1b1a22'); // rear diffuser lip
+  meshGrille(0, 0.42, -2.255, 0.66, 0.13, 17, 3);
+  // racing stripes down the hood and the deck
+  const hoodZ = stations(-2.12, -0.82, 9), deckZ = stations(1.25, 2.12, 7);
   for (const sx of [-1, 1]) {
-    body(m, FLAT, sx * 0.62, 0.7, -1.95, 0.56, 0.14, 0.04, DARK);
-    for (let i = 0; i < 3; i++) body(m, FLAT, sx * 0.4, 0.88, -1.0 - i * 0.14, 0.34, 0.012, 0.05, DARK);
+    ribbon('flat', hoodZ, sx * 0.17, 0.09, top, WHITE);
+    ribbon('flat', deckZ, sx * 0.17, 0.09, top, WHITE);
+    // door line, handle, mirror
+    rbox('flat', sx * (hw(-0.5) + 0.004), 0.5, -0.5, 0.012, 0.36, 0.014, 0.004, '#14131a');
+    rbox('flat', sx * (hw(0.75) + 0.004), 0.5, 0.75, 0.012, 0.36, 0.014, 0.004, '#14131a');
+    rbox('flat', sx * (hw(0.1) + 0.012), 0.64, 0.1, 0.02, 0.025, 0.14, 0.01, CHROME);
+    rbox('flat', sx * 0.92, 0.9, -0.52, 0.12, 0.02, 0.04, 0.008, '#1b1a22');
+    ball('paint', sx * 1.0, 0.93, -0.5, 0.065, 0.055, 0.1, undefined);
   }
-  // rear: plate, diffuser; seats, console, steering wheel + column
-  body(m, FLAT, 0, 0.62, 2.21, 0.62, 0.2, 0.025, WHITE);
-  body(m, FLAT, 0, 0.3, 2.12, 1.5, 0.12, 0.2, DARK);
+  // the spoiler: a wing on two posts with end plates
   for (const sx of [-1, 1]) {
-    body(m, FLAT, sx * 0.42, 0.57, 0.38, 0.52, 0.14, 0.56, SEAT);
-    body(m, FLAT, sx * 0.42, 0.86, 0.72, 0.52, 0.44, 0.12, SEAT);
-    body(m, FLAT, sx * 0.42, 0.86, 0.65, 0.08, 0.34, 0.02, '#ff2e88');
-    body(m, FLAT, sx * 0.44, 1.02, 0.98, 0.07, 0.34, 0.07, CHROME); // roll hoops
+    cone('flat', sx * 0.46, 1.02, 1.98, 0.035, 0.03, 0.22, '#1b1a22', 8);
+    rbox('paint', sx * 0.86, 1.1, 2.02, 0.035, 0.2, 0.46, 0.015, undefined, undefined, 1, true);
   }
-  body(m, FLAT, 0, 0.66, 0.2, 0.18, 0.16, 0.9, '#2e2b3a');
-  steeringWheel({ x: -0.42, y: 0.62, z: 0.36, scale: 0.92 }); // on the driver's hands
+  rbox('paint', 0, 1.12, 2.02, 1.74, 0.045, 0.4, 0.02, undefined, [0.08, 0, 0], 1, true);
+  rbox('flat', 0, 1.145, 2.0, 1.2, 0.01, 0.07, 0.003, WHITE, [0.08, 0, 0]);
   // exhaust tips
-  for (const sx of [-1, 1]) rbox('flat', sx * 0.5, 0.36, 2.22, 0.15, 0.15, 0.26, 0.06, CHROME);
-  // racing stripes over the hood and the rear deck (they hug the body top), a rear wing and door roundels
-  const stripe = (pts: [number, number][], x: number): void => {
-    for (let i = 0; i + 1 < pts.length; i++) plate(m, FLAT, [x - 0.09, pts[i][1], pts[i][0]], [x + 0.09, pts[i][1], pts[i][0]], [x + 0.09, pts[i + 1][1], pts[i + 1][0]], [x - 0.09, pts[i + 1][1], pts[i + 1][0]], WHITE);
-  };
-  const hood: [number, number][] = [[-2.12, 0.66], [-1.9, 0.74], [-1.7, 0.8], [-1.5, 0.83], [-1.3, 0.86], [-1.1, 0.88], [-0.9, 0.89], [-0.7, 0.91], [-0.5, 0.92]];
-  const deck: [number, number][] = [[1.28, 0.9], [1.5, 0.93], [1.7, 0.95], [1.88, 0.97]];
+  for (const sx of [-1, 1]) cone('flat', sx * 0.52, 0.26, 2.27, 0.055, 0.05, 0.22, CHROME, 12, [Math.PI / 2, 0, 0]);
+  // interior seen through the glass: dash, seats, steering wheel on the driver's hands
+  const DRV = { x: -0.42, y: 0.44, z: 0.5, scale: 0.82 };
+  rbox('flat', 0, 0.78, -0.55, 1.6, 0.14, 0.4, 0.05, '#1b1a22');
   for (const sx of [-1, 1]) {
-    stripe(hood, sx * 0.17);
-    stripe(deck, sx * 0.17);
-    rbox('flat', sx * 0.5, 1.1, 2.0, 0.07, 0.24, 0.12, 0.025, DARK); // wing uprights
-    rbox('paint', sx * 0.86, 1.26, 2.04, 0.05, 0.32, 0.54, 0.02); // wing end plates
-    ball('flat', sx * 0.935, 0.78, 0.4, 0.014, 0.19, 0.19, WHITE); // door roundel
-    ball('flat', sx * 0.94, 0.78, 0.4, 0.014, 0.11, 0.11, DARK);
+    rbox('flat', sx * 0.42, 0.82, 0.86, 0.46, 0.5, 0.13, 0.06, SEAT);
+    rbox('flat', sx * 0.42, 1.07, 0.88, 0.26, 0.14, 0.1, 0.05, SEAT);
   }
-  rbox('paint', 0, 1.22, 2.04, 1.76, 0.06, 0.44, 0.028); // the wing
-  rbox('flat', 0, 1.256, 2.04, 1.4, 0.012, 0.1, 0.004, WHITE);
-  // lights (neon): headlights + DRL + fog, roll-hoop caps, then the TAIL lights last
+  steeringWheel(DRV);
+  // lights, inset into the body: headlights + a daytime strip, a tail-light bar (the two corner boxes below brighten when braking)
   for (const sx of [-1, 1]) {
-    m.box(NEON, sx * 0.62, 0.7, -2.0, 0.5, 0.09, 0.12, { color: '#e6f4ff', cast: false });
-    m.box(NEON, sx * 0.62, 0.62, -2.04, 0.5, 0.025, 0.06, { color: '#ffb347', cast: false });
-    m.box(NEON, sx * 0.74, 0.37, -2.15, 0.1, 0.06, 0.04, { color: '#ffffff', cast: false });
-    m.box(NEON, sx * 0.44, 1.2, 0.98, 0.09, 0.03, 0.09, { color: '#ffffff', cast: false });
+    ball('neon', sx * 0.55, 0.49, -2.19, 0.23, 0.065, 0.05, '#eaf6ff', [0, sx * 0.4, 0]);
+    ball('neon', sx * 0.66, 0.34, -2.19, 0.09, 0.045, 0.04, '#ffffff', [0, sx * 0.4, 0]);
   }
-  m.box(NEON, 0, 0.93, -0.12, 0.7, 0.025, 0.02, { color: '#00d4ff', cast: false });
-  m.box(NEON, 0, 0.9, 2.2, 1.5, 0.07, 0.04, { color: '#8a1218', cast: false });
-  for (const sx of [-1, 1]) m.box(NEON, sx * 0.72, 0.84, 2.18, 0.28, 0.1, 0.05, { color: '#8a1218', cast: false });
-  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * S_WHEEL_X, y: S_R, z: sz * S_WHEEL_Z, front: sz < 0 }));
+  rbox('neon', 0, 0.74, 2.25, 0.9, 0.03, 0.03, 0.01, '#a01822');
+  for (const sx of [-1, 1]) m.box(NEON, sx * 0.62, 0.74, 2.235, 0.38, 0.1, 0.05, { color: '#8a1218', cast: false });
+  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 0.83, y: R, z: sz * WB, front: sz < 0 }));
   return {
-    wheelR: S_R, wheelW: 0.26, wheelStyle: 'alloy', wheels,
-    driver: { x: -0.42, y: 0.62, z: 0.36, scale: 0.92 }, stand: null, passenger: { x: 0.42, y: 0.62, z: 0.36 },
-    tailBoxes: 3, exhausts: [[-0.5, 0.36, 2.35], [0.5, 0.36, 2.35]], length: 4.4, width: 1.9, height: 1.3, hasPaint: true,
+    wheelR: R, wheelW: 0.3, wheelStyle: 'alloy', wheels,
+    driver: DRV, stand: null, passenger: { x: 0.42, y: 0.44, z: 0.5 },
+    tailBoxes: 2, exhausts: [[-0.52, 0.26, 2.4], [0.52, 0.26, 2.4]], length: 4.5, width: 1.95, height: 1.22, hasPaint: true,
   };
 };
 
-// ── pickup truck: tall, lifted, open cab with a roll cage ──
+// ── pickup: a tall, lifted truck with a glass cab, flared arches and a bed with rails ──
 const buildPickup: Builder = (m, paint) => {
-  const R = 0.58;
-  const DRV = { x: -0.5, y: 1.8, z: -0.1, scale: 1.1 };
-  // frame + axles
-  body(m, FLAT, 0, 0.78, 0, 1.7, 0.28, 4.7, DARK);
-  body(m, FLAT, 0, 0.58, -1.75, 2.0, 0.12, 0.2, DARK);
-  body(m, FLAT, 0, 0.58, 1.55, 2.0, 0.12, 0.2, DARK);
-  // lower body, hood, doors, bed (all soft-cornered)
-  rbox('paint', 0, 1.12, 0.0, 2.2, 0.6, 4.9, 0.2, undefined, undefined, 2);
-  rbox('paint', 0, 1.56, -1.95, 2.15, 0.4, 1.7, 0.16, undefined, undefined, 2); // hood
-  body(m, FLAT, 0, 1.86, -2.42, 1.1, 0.14, 0.08, DARK); // grille slats
-  rbox('flat', 0, 1.62, -2.83, 1.6, 0.36, 0.08, 0.05, DARK); // grille
+  const R = 0.45, FZ = -1.62, RZ = 1.5;
+  const wheelsAt = [{ z: FZ, y: R, r: R }, { z: RZ, y: R, r: R }];
+  const hw = profile([[-2.6, 0.58], [-2.55, 0.8], [-2.4, 0.93], [-2.0, 0.98], [-1.0, 1.0], [0, 0.985], [1.0, 0.99], [2.0, 0.985], [2.5, 0.96], [2.6, 0.9]]);
+  const top = profile([[-2.6, 0.92], [-2.55, 1.0], [-2.3, 1.12], [-1.8, 1.22], [-1.0, 1.27], [0, 1.25], [2.5, 1.25], [2.6, 1.22]]);
+  const bot = profile([[-2.6, 0.62], [-2.45, 0.5], [-2.2, 0.46], [2.2, 0.46], [2.45, 0.5], [2.6, 0.62]]);
+  const rnd = profile([[-2.6, 0.9], [-2.0, 0.65], [-1.0, 0.55], [2.0, 0.55], [2.6, 0.75]]);
+  const zs = stations(-2.6, 2.6, 8, archStations([FZ, RZ], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(zs, { hw, top, bottom: bot, round: rnd, taper: () => 0.05, arch: archFn(wheelsAt, 0.09) }), 30));
+  // the glass cab
+  const gTop = profile([[-1.0, 1.25], [-0.78, 1.5], [-0.5, 1.8], [-0.12, 1.92], [0.3, 1.92], [0.5, 1.82], [0.6, 1.3]]);
+  const gHw = profile([[-1.0, 0.8], [-0.7, 0.88], [0, 0.9], [0.5, 0.88], [0.6, 0.78]]);
+  put('glass', loftBody(sampleSections(stations(-1.0, 0.6, 12), { hw: gHw, top: gTop, bottom: () => 1.2, round: () => 0.35, taper: () => 0.14 }), 28));
+  const lz = stations(-0.42, 0.5, 7);
+  put('paint', loftBody(sampleSections(lz, { hw: (z) => 0.68 * Math.min(1, 0.5 + (z + 0.42) * 3) * Math.min(1, 0.5 + (0.5 - z) * 3), top: (z) => gTop(z) + 0.02, bottom: (z) => gTop(z) - 0.06, round: () => 0.3 }), 20));
   for (const sx of [-1, 1]) {
-    rbox('paint', sx * 1.04, 1.76, -0.45, 0.14, 0.58, 2.0, 0.05); // cab sides (open above)
-    rbox('paint', sx * 1.04, 1.76, 1.55, 0.16, 0.58, 1.9, 0.06); // bed sides
-    rbox('paint', sx * 1.13, 1.2, -1.75, 0.5, 0.2, 1.5, 0.1); // fender flares
-    rbox('paint', sx * 1.13, 1.2, 1.55, 0.5, 0.2, 1.5, 0.1);
-    rbox('flat', sx * 1.17, 0.9, 0.0, 0.16, 0.14, 2.6, 0.06, CHROME); // side steps
-    body(m, FLAT, sx * 1.25, 0.62, 2.2, 0.04, 0.6, 0.5, DARK); // mud flaps
+    pipe('paint', [[sx * 0.9, 1.27, -0.98], [sx * 0.8, 1.6, -0.72], [sx * 0.66, 1.9, -0.4]], 0.04);
+    pipe('paint', [[sx * 0.66, 1.9, 0.44], [sx * 0.8, 1.6, 0.52], [sx * 0.9, 1.28, 0.58]], 0.045);
+    pipe('paint', [[sx * 0.9, 1.27, -0.2], [sx * 0.78, 1.6, -0.2], [sx * 0.66, 1.9, -0.2]], 0.03);
+    pipe('flat', [[sx * 0.95, 1.275, -0.96], [sx * 0.98, 1.275, 0.0], [sx * 0.92, 1.275, 0.56]], 0.015, CHROME);
   }
-  rbox('paint', 0, 1.76, 2.46, 2.2, 0.58, 0.16, 0.06); // tailgate
-  body(m, FLAT, 0, 1.46, 1.55, 1.9, 0.08, 1.9, '#3a3743'); // bed floor
-  body(m, FLAT, 0, 1.48, 0.55, 2.1, 0.08, 0.14, DARK); // cab back
-  rbox('paint', 0, 1.64, 0.6, 2.2, 0.34, 0.14, 0.05); // cab rear wall — low, so the driver shows over it
-  // dash, seats (low narrow backs: the driver's back shows), steering wheel on the driver's hands
-  rbox('flat', 0, 1.56, -1.1, 1.9, 0.36, 0.45, 0.1, DARK);
+  // bed: dark liner, side rails, headboard, tailgate, a chrome sport bar with a light bar
+  rbox('flat', 0, 1.262, 1.58, 1.66, 0.03, 1.85, 0.01, '#2a2830');
+  for (const sx of [-1, 1]) rbox('paint', sx * 0.93, 1.36, 1.58, 0.1, 0.18, 1.95, 0.05, undefined, undefined, 1, true);
+  rbox('paint', 0, 1.4, 0.68, 1.9, 0.3, 0.1, 0.05, undefined, undefined, 1, true);
+  rbox('paint', 0, 1.38, 2.55, 1.94, 0.26, 0.1, 0.05, undefined, undefined, 1, true);
+  rbox('flat', 0, 1.42, 2.605, 0.4, 0.05, 0.03, 0.02, '#14131a');
+  pipe('flat', [[-0.86, 1.3, 0.78], [-0.86, 1.86, 0.8], [0.86, 1.86, 0.8], [0.86, 1.3, 0.78]], 0.035, CHROME, 7);
+  cone('flat', 0, 1.93, 0.8, 0.065, 0.065, 1.5, '#14131a', 10, [0, 0, Math.PI / 2]);
+  // arches: dark plastic flares round every wheel, mud flaps, side steps, skid plate
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.5, 1.56, -0.1, 0.7, 0.28, 0.6, 0.05, DARK); // seat base
-    rbox('flat', sx * 0.5, 1.72, -0.1, 0.8, 0.16, 0.7, 0.07, SEAT); // cushion (top 1.8: the driver's hips)
-    rbox('flat', sx * 0.5, 1.95, 0.3, 0.54, 0.24, 0.14, 0.07, SEAT); // low back
+    for (const wz of [FZ, RZ]) {
+      archLip('flat', sx * (hw(wz) + 0.02), R, wz, R + 0.11, 0.055, '#1b1a22');
+      if (wz > 0) rbox('flat', sx * (hw(wz) + 0.01), 0.58, wz + 0.58, 0.03, 0.24, 0.22, 0.01, '#14131a');
+    }
+    pipe('flat', [[sx * 1.04, 0.58, -0.95], [sx * 1.05, 0.58, -0.2], [sx * 1.04, 0.58, 0.55]], 0.05, '#1b1a22'); // round side steps
+    rbox('flat', sx * (hw(-0.9) + 0.004), 0.95, -0.2, 0.012, 0.64, 0.014, 0.004, '#14131a');
+    rbox('flat', sx * (hw(0.2) + 0.012), 1.12, -0.5, 0.02, 0.03, 0.18, 0.01, CHROME);
+    pipe('flat', [[sx * 0.93, 1.36, -0.92], [sx * 1.0, 1.44, -0.9], [sx * 1.06, 1.5, -0.9]], 0.014, '#1b1a22');
+    ball('flat', sx * 1.08, 1.52, -0.9, 0.04, 0.11, 0.08, '#1b1a22'); // mirrors
+  }
+  ball('flat', 0, 0.52, -2.05, 0.7, 0.045, 0.35, '#2a2830'); // skid plate
+  // front end: grille, bumpers, hood scoop
+  meshGrille(0, 0.98, -2.625, 1.3, 0.4, 28, 5);
+  rbox('flat', 0, 0.68, -2.6, 2.0, 0.22, 0.22, 0.09, CHROME);
+  rbox('flat', 0, 0.72, 2.62, 2.0, 0.2, 0.2, 0.08, CHROME);
+  // a lofted hood scoop that swells out of the hood and fades back into it
+  const scoop = (z: number): number => Math.sin((Math.PI * (z + 1.95)) / 0.85);
+  put('paint', loftBody(sampleSections(stations(-1.95, -1.1, 7), { hw: (z) => 0.05 + 0.27 * Math.pow(Math.max(0, scoop(z)), 0.6), top: (z) => top(z) + 0.1 * Math.max(0, scoop(z)), bottom: (z) => top(z) - 0.07, round: () => 0.5 }), 18));
+  // decals: a white pair of stripes along the flanks
+  for (const sx of [-1, 1]) {
+    rbox('flat', sx * (hw(0) + 0.006), 0.7, 0.0, 0.01, 0.07, 4.6, 0.003, WHITE);
+    rbox('flat', sx * (hw(0) + 0.006), 0.83, 0.0, 0.01, 0.035, 4.6, 0.003, '#ffd23f');
+  }
+  // interior seen through the glass
+  const DRV = { x: -0.5, y: 1.08, z: -0.1, scale: 0.82 };
+  rbox('flat', 0, 1.2, -0.82, 1.5, 0.12, 0.34, 0.04, '#1b1a22', undefined, 1, true);
+  for (const sx of [-1, 1]) {
+    rbox('flat', sx * 0.5, 1.4, 0.24, 0.5, 0.52, 0.13, 0.06, SEAT);
+    rbox('flat', sx * 0.5, 1.7, 0.26, 0.26, 0.16, 0.1, 0.05, SEAT);
   }
   steeringWheel(DRV);
-  // windshield frame + roll cage + roof light bar
-  plate(m, FLAT, [-0.95, 1.95, -1.05], [0.95, 1.95, -1.05], [0.95, 2.55, -0.7], [-0.95, 2.55, -0.7], GLASS);
-  for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.98, 2.3, -0.88, 0.1, 0.9, 0.1, 0.04, CHROME);
-    rbox('flat', sx * 0.98, 2.55, 0.55, 0.1, 1.5, 0.1, 0.04, CHROME);
-    rbox('flat', sx * 1.0, 3.0, -0.2, 0.1, 0.1, 1.7, 0.04, CHROME);
-    rbox('flat', sx * 1.18, 2.1, -0.95, 0.12, 0.12, 0.3, 0.04, DARK); // mirrors
-  }
-  rbox('flat', 0, 3.0, 0.55, 2.0, 0.1, 0.1, 0.04, CHROME);
-  rbox('flat', 0, 3.0, -0.88, 2.0, 0.1, 0.1, 0.04, CHROME);
-  // bumpers (chunky chrome), tow hook, snorkel
-  rbox('flat', 0, 0.95, -2.95, 2.4, 0.3, 0.3, 0.12, CHROME);
-  rbox('flat', 0, 0.95, 2.6, 2.4, 0.28, 0.28, 0.12, CHROME);
-  rbox('flat', 1.05, 2.0, -1.0, 0.12, 1.4, 0.12, 0.05, DARK);
-  m.cyl(FLAT, 1.3, 1.3, -0.4, 0.09, 0.09, 1.2, 8, DARK);
-  // decals: a white + sunny stripe pair along the flanks, and a star on each door
-  for (const sx of [-1, 1]) {
-    body(m, FLAT, sx * 1.112, 1.02, 0, 0.024, 0.11, 4.3, WHITE);
-    body(m, FLAT, sx * 1.112, 1.17, 0, 0.024, 0.07, 4.3, '#ffd23f');
-    star(m, 'x', sx * 1.122, -0.45, 1.76, 0.26, WHITE);
-  }
   // lights: round headlights in chrome rings, fog lights, a roof light bar, tail lights last
   for (const sx of [-1, 1]) {
-    ball('neon', sx * 0.78, 1.64, -2.86, 0.2, 0.2, 0.07, '#fff7dd');
-    ring('flat', sx * 0.78, 1.64, -2.86, 0.21, 0.04, CHROME, undefined, 6, 14);
-    ball('neon', sx * 0.62, 1.04, -3.08, 0.1, 0.07, 0.05, '#ffe9a0');
-    m.box(NEON, sx * 0.4, 3.08, -0.88, 0.34, 0.1, 0.12, { color: '#ffffff', cast: false });
-    m.box(NEON, sx * 0.4, 3.08, 0.55, 0.34, 0.1, 0.12, { color: '#ffd9a0', cast: false });
+    ball('neon', sx * 0.7, 1.0, -2.6, 0.2, 0.15, 0.07, '#fff7dd');
+    ring('flat', sx * 0.7, 1.0, -2.6, 0.2, 0.03, CHROME, undefined, 6, 16);
+    ball('neon', sx * 0.55, 0.6, -2.72, 0.1, 0.05, 0.04, '#ffe9a0');
+    rbox('neon', sx * 0.4, 1.99, 0.8, 0.5, 0.05, 0.05, 0.02, '#ffffff');
   }
-  for (const sx of [-1, 1]) m.box(NEON, sx * 0.9, 1.56, 2.56, 0.3, 0.26, 0.06, { color: '#8a1218', cast: false });
-  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 1.15, y: R, z: sz > 0 ? 1.55 : -1.75, front: sz < 0 }));
+  for (const sx of [-1, 1]) m.box(NEON, sx * 0.9, 1.05, 2.6, 0.12, 0.34, 0.05, { color: '#8a1218', cast: false });
+  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 0.9, y: R, z: sz > 0 ? RZ : FZ, front: sz < 0 }));
   return {
-    wheelR: R, wheelW: 0.46, wheelStyle: 'offroad', wheels,
-    driver: DRV, stand: null, passenger: { x: 0.5, y: 1.8, z: -0.1 },
-    tailBoxes: 2, exhausts: [[-0.3, 1.0, 2.7], [0.3, 1.0, 2.7]], length: 5.9, width: 2.5, height: 3.1, hasPaint: true,
+    wheelR: R, wheelW: 0.42, wheelStyle: 'offroad', wheels,
+    driver: DRV, stand: null, passenger: { x: 0.5, y: 1.08, z: -0.1 },
+    tailBoxes: 2, exhausts: [[-0.4, 0.55, 2.7], [0.4, 0.55, 2.7]], length: 5.2, width: 2.05, height: 1.92, hasPaint: true,
   };
 };
 
-// ── golf cart: open, cute, a roof on posts, a safety flag — the driver shows ──
+/** A one-sided glass panel (both faces) from four corners. */
+function glassPlate(p0: number[], p1: number[], p2: number[], p3: number[]): void {
+  const g = new THREE.BufferGeometry();
+  const P = [p0, p1, p2, p3];
+  const pos = new Float32Array(2 * 4 * 3);
+  P.forEach((p, i) => pos.set(p, i * 3));
+  P.slice().reverse().forEach((p, i) => pos.set(p, (4 + i) * 3));
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+  g.computeVertexNormals();
+  put('glass', g);
+}
+
+// ── golf cart: a smooth moulded-plastic body, a canopy on four posts, big friendly wheels — the driver shows ──
 const buildGolfcart: Builder = (m, paint) => {
-  const R = 0.32;
-  const DRV = { x: -0.28, y: 0.78, z: 0.3, scale: 1.0 };
-  body(m, FLAT, 0, 0.3, 0, 1.0, 0.12, 2.6, DARK); // chassis rails
-  rbox('paint', 0, 0.33, 0.05, 1.5, 0.08, 2.75, 0.03); // floor pan (feet rest just above it)
-  // soft nose: cowl + a rounded snout with a white bumper
-  rbox('paint', 0, 0.82, -1.0, 1.46, 0.72, 0.9, 0.22, undefined, undefined, 2);
-  rbox('paint', 0, 0.64, -1.6, 1.32, 0.46, 0.5, 0.2, undefined, undefined, 2);
-  rbox('flat', 0, 0.55, -1.86, 1.4, 0.2, 0.18, 0.08, WHITE);
-  rbox('paint', 0, 1.18, -0.62, 1.3, 0.09, 0.36, 0.035); // dash top
-  // low rear deck (so the driver's back shows), rounded sills and fenders
-  rbox('paint', 0, 0.6, 1.22, 1.5, 0.5, 0.95, 0.2, undefined, undefined, 2);
-  rbox('flat', 0, 0.86, 1.22, 1.0, 0.04, 0.6, 0.02, '#3a3743'); // bag well
-  rbox('flat', 0, 0.5, 1.78, 1.4, 0.18, 0.16, 0.07, WHITE);
+  const R = 0.225, FZ = -0.78, RZ = 0.78;
+  const wheelsAt = [{ z: FZ, y: R, r: R }, { z: RZ, y: R, r: R }];
+  const DRV = { x: -0.27, y: 0.54, z: 0.2, scale: 0.95 };
+  // floor pan + the moulded front (nose and cowl) and rear pod, each one smooth shell
+  const pan = profile([[-1.0, 0.54], [-0.9, 0.6], [0.0, 0.6], [1.0, 0.58], [1.1, 0.5]]);
+  put('paint', loftBody(sampleSections(stations(-1.0, 1.1, 8), { hw: pan, top: () => 0.3, bottom: () => 0.2, round: () => 0.5 }), 24));
+  const fHw = profile([[-1.2, 0.3], [-1.15, 0.46], [-1.0, 0.56], [-0.7, 0.6], [-0.3, 0.6]]);
+  const fTop = profile([[-1.2, 0.5], [-1.15, 0.62], [-1.0, 0.74], [-0.75, 0.82], [-0.5, 0.86], [-0.3, 0.84]]);
+  const fz = stations(-1.2, -0.3, 6, archStations([FZ], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(fz, { hw: fHw, top: fTop, bottom: () => 0.26, round: () => 0.65, taper: () => 0.05, arch: archFn(wheelsAt, 0.05) }), 28));
+  const rHw = profile([[0.45, 0.6], [0.8, 0.6], [1.05, 0.58], [1.2, 0.42]]);
+  const rTop = profile([[0.45, 0.68], [0.9, 0.7], [1.1, 0.66], [1.2, 0.56]]);
+  const rz = stations(0.45, 1.2, 6, archStations([RZ], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(rz, { hw: rHw, top: rTop, bottom: () => 0.26, round: () => 0.65, taper: () => 0.05, arch: archFn(wheelsAt, 0.05) }), 28));
+  // side sills joining the two shells, wheel lips, a white bumper front and back
   for (const sx of [-1, 1]) {
-    rbox('paint', sx * 0.78, 0.6, 0.0, 0.14, 0.32, 1.7, 0.06); // sills
-    rbox('paint', sx * 0.76, 0.74, -0.95, 0.26, 0.12, 0.85, 0.06); // front fenders
-    rbox('paint', sx * 0.76, 0.74, 0.95, 0.26, 0.12, 0.8, 0.06);
+    rbox('paint', sx * 0.58, 0.42, 0.08, 0.1, 0.22, 1.2, 0.05);
+    for (const wz of [FZ, RZ]) archLip('paint', sx * 0.585, R, wz, R + 0.055, 0.022);
   }
-  // bench seat: cushion + a low backrest, steering wheel in the driver's hands
-  rbox('flat', 0, 0.7, 0.3, 1.2, 0.16, 0.62, 0.07, SEAT);
-  rbox('flat', 0, 0.93, 0.66, 1.12, 0.3, 0.12, 0.06, SEAT);
+  rbox('flat', 0, 0.42, -1.2, 0.84, 0.16, 0.1, 0.06, WHITE);
+  rbox('flat', 0, 0.46, 1.2, 0.84, 0.14, 0.1, 0.06, WHITE);
+  // bench seat with a low back, the dash, steering wheel in the driver's hands
+  rbox('flat', 0, 0.45, 0.22, 1.0, 0.13, 0.5, 0.06, '#f4efe4');
+  rbox('flat', 0, 0.72, 0.52, 1.0, 0.34, 0.1, 0.06, '#f4efe4');
+  ball('flat', 0, 0.85, -0.45, 0.5, 0.07, 0.14, '#1b1a22');
   steeringWheel(DRV);
-  // canopy on four slim posts, with a stripe
-  for (const sx of [-1, 1])
-    for (const z of [-0.62, 0.98]) rbox('flat', sx * 0.68, 1.55, z, 0.07, 1.4, 0.07, 0.03, CHROME);
-  rbox('paint', 0, 2.3, 0.18, 1.7, 0.12, 2.1, 0.06);
-  rbox('flat', 0, 2.375, 0.18, 1.2, 0.03, 1.5, 0.012, WHITE);
-  rbox('flat', 0, 2.18, 0.18, 1.5, 0.05, 1.9, 0.02, WHITE); // canopy underside trim
-  // windscreen, decals (two stripes down the sills, a star on the snout), a whip antenna with a flag
-  plate(m, FLAT, [-0.62, 1.18, -0.62], [0.62, 1.18, -0.62], [0.62, 1.9, -0.72], [-0.62, 1.9, -0.72], GLASS);
+  // the canopy (a lofted roof in white, slim chrome posts) and a tinted windscreen
+  const roofHw = profile([[-0.9, 0.5], [-0.7, 0.62], [0, 0.66], [0.7, 0.62], [0.95, 0.5]]);
+  put('flat', loftBody(sampleSections(stations(-0.95, 1.0, 9), { hw: roofHw, top: (z) => 1.82 - 0.04 * Math.abs(z - 0.02), bottom: () => 1.74, round: () => 0.4 }), 24), '#f6f6f4');
   for (const sx of [-1, 1]) {
-    body(m, FLAT, sx * 0.855, 0.6, 0.0, 0.02, 0.07, 1.6, WHITE);
-    body(m, FLAT, sx * 0.855, 0.68, 0.0, 0.02, 0.04, 1.6, '#ffd23f');
-    star(m, 'x', sx * 0.84, -1.0, 0.86, 0.17, WHITE);
+    for (const z of [-0.62, 0.84]) pipe('flat', [[sx * 0.56, z < 0 ? 0.85 : 0.66, z], [sx * 0.57, 1.3, z], [sx * 0.55, 1.76, z]], 0.022, CHROME);
   }
-  rbox('flat', 0.74, 1.75, 1.45, 0.03, 2.0, 0.03, 0.012, DARK);
-  plate(m, FLAT, [0.74, 2.78, 1.46], [0.74, 2.78, 1.98], [0.74, 2.46, 1.46], [0.74, 2.46, 1.46], '#ffd23f');
-  rbox('flat', 0, 0.5, -1.99, 1.0, 0.1, 0.06, 0.03, CHROME);
-  // lights: round headlights, roof lights, tail lights last
+  glassPlate([-0.52, 0.9, -0.5], [0.52, 0.9, -0.5], [0.5, 1.7, -0.72], [-0.5, 1.7, -0.72]);
+  // decals: a stripe pair, a star on the nose; a whip antenna with a flag
   for (const sx of [-1, 1]) {
-    ball('neon', sx * 0.45, 0.72, -1.87, 0.15, 0.12, 0.05, '#fff7dd');
-    m.box(NEON, sx * 0.55, 2.1, -0.62, 0.12, 0.1, 0.1, { color: '#ffffff', cast: false });
+    rbox('flat', sx * 0.628, 0.5, 0.2, 0.01, 0.05, 1.8, 0.003, WHITE);
+    rbox('flat', sx * 0.628, 0.57, 0.2, 0.01, 0.028, 1.8, 0.003, '#ffd23f');
   }
-  for (const sx of [-1, 1]) m.box(NEON, sx * 0.55, 0.8, 1.71, 0.26, 0.16, 0.05, { color: '#8a1218', cast: false });
-  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 0.7, y: R, z: sz > 0 ? 0.95 : -0.95, front: sz < 0 }));
+  pipe('flat', [[0.52, 0.66, 1.08], [0.54, 1.8, 1.12], [0.52, 2.5, 1.1]], 0.012, DARK);
+  plate(m, FLAT, [0.52, 2.46, 1.1], [0.52, 2.46, 1.52], [0.52, 2.12, 1.1], [0.52, 2.12, 1.1], '#ffd23f');
+  // lights inset in the nose and the tail pod (the tail boxes last)
+  for (const sx of [-1, 1]) {
+    ball('neon', sx * 0.36, 0.64, -1.17, 0.13, 0.09, 0.04, '#fff7dd');
+    ball('neon', sx * 0.52, 1.78, -0.7, 0.05, 0.04, 0.05, '#ffffff');
+  }
+  for (const sx of [-1, 1]) m.box(NEON, sx * 0.4, 0.6, 1.2, 0.2, 0.12, 0.05, { color: '#8a1218', cast: false });
+  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 0.5, y: R, z: sz > 0 ? RZ : FZ, front: sz < 0 }));
   return {
-    wheelR: R, wheelW: 0.22, wheelStyle: 'cart', wheels,
-    driver: DRV, stand: null, passenger: { x: 0.28, y: 0.78, z: 0.3 },
-    tailBoxes: 2, exhausts: [[0, 0.55, 1.9]], length: 3.8, width: 1.7, height: 2.4, hasPaint: true,
+    wheelR: R, wheelW: 0.2, wheelStyle: 'cart', wheels,
+    driver: DRV, stand: null, passenger: { x: 0.27, y: 0.54, z: 0.2 },
+    tailBoxes: 2, exhausts: [[0, 0.4, 1.3]], length: 2.4, width: 1.2, height: 1.82, hasPaint: true,
   };
 };
 
-// ── hoverboard: a chunky deck with an upturned nose and tail, thrusters, glowing underside ──
+// ── hoverboard: a sleek surfboard deck with rounded rails and rocker, glowing thrusters ──
 const buildHoverboard: Builder = (m, paint) => {
-  // deck (paint), rounded; and the upturned nose / tail plates (a kicker at each end)
-  rbox('paint', 0, 0.14, 0, 0.84, 0.13, 1.5, 0.06);
-  const kick = (zNear: number, zFar: number, rise: number): void => {
-    const w = 0.42, yb = 0.085, yt = 0.2;
-    const fwd = zFar < zNear; // the nose rises towards -z
-    const top = [[-w, yt, zNear], [w, yt, zNear], [w, yt + rise, zFar], [-w, yt + rise, zFar]];
-    const bot = [[-w, yb, zNear], [w, yb, zNear], [w, yb + rise, zFar], [-w, yb + rise, zFar]];
-    // top faces up, underside faces down
-    if (fwd) {
-      m.quad(paint, top[0], top[1], top[2], top[3]);
-      m.quad(paint, bot[3], bot[2], bot[1], bot[0]);
-      m.quad(paint, bot[0], top[0], top[3], bot[3]); // left cheek (faces -x)
-      m.quad(paint, top[1], bot[1], bot[2], top[2]); // right cheek (faces +x)
-      m.quad(paint, bot[3], top[3], top[2], bot[2]); // end cap
-    } else {
-      m.quad(paint, top[3], top[2], top[1], top[0]);
-      m.quad(paint, bot[0], bot[1], bot[2], bot[3]);
-      m.quad(paint, top[0], bot[0], bot[3], top[3]);
-      m.quad(paint, bot[1], top[1], top[2], bot[2]);
-      m.quad(paint, top[3], bot[3], bot[2], top[2]); // end cap
-    }
-  };
-  kick(-0.75, -1.2, 0.26);
-  kick(0.75, 1.15, 0.22);
-  // grip pad on top with a glowing border and two racing stripes, chrome rails, thruster pods with glowing rings, a fin
-  rbox('flat', 0, 0.215, 0, 0.62, 0.035, 1.2, 0.015, '#2c2a36');
+  const hw = profile([[-1.25, 0.06], [-1.2, 0.2], [-1.0, 0.34], [-0.5, 0.42], [0.2, 0.43], [0.7, 0.4], [1.0, 0.33], [1.18, 0.2], [1.25, 0.06]]);
+  const rocker = (z: number): number => 0.2 * Math.pow(Math.max(0, Math.abs(z) - 0.55) / 0.7, 2);
+  const topF = (z: number): number => 0.17 + rocker(z) + (z > 0 ? 0 : 0.03 * Math.min(1, Math.abs(z)));
+  put('paint', loftBody(sampleSections(stations(-1.25, 1.25, 17), { hw, top: topF, bottom: (z) => topF(z) - 0.13, round: () => 0.7 }), 26));
+  // grip pad with a glowing border, racing stripes, chrome-ish rails
+  put('flat', loftBody(sampleSections(stations(-0.85, 0.85, 7), { hw: () => 0.28, top: (z) => topF(z) + 0.012, bottom: (z) => topF(z) - 0.03, round: () => 0.3 }), 16), '#2c2a36');
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.24, 0.236, 0, 0.045, 0.012, 1.1, 0.005, WHITE);
-    rbox('flat', sx * 0.43, 0.14, 0, 0.06, 0.12, 1.5, 0.025, CHROME);
-    cone('flat', sx * 0.34, 0.12, 0.94, 0.13, 0.12, 0.42, DARK, 14, [Math.PI / 2, 0, 0]);
-    ring('neon', sx * 0.34, 0.12, 1.16, 0.115, 0.028, '#00d4ff', undefined, 6, 16);
-    cone('flat', sx * 0.34, 0.06, -0.9, 0.08, 0.07, 0.3, DARK, 10, [Math.PI / 2, 0, 0]);
-    rbox('neon', sx * 0.32, 0.245, 0, 0.02, 0.012, 1.24, 0.004, '#7cf6ff');
+    ribbon('flat', stations(-0.8, 0.8, 7), sx * 0.34, 0.025, (z) => topF(z) + 0.006, WHITE);
+    ribbon('neon', stations(-0.88, 0.88, 7), sx * 0.31, 0.012, (z) => topF(z) + 0.016, '#7cf6ff', 0.002);
   }
-  rbox('flat', 0, 0.3, 0.98, 0.06, 0.22, 0.36, 0.025, CHROME);
-  // glow: a strip under the deck (seen from the sides and below), a headlight and a dim tail light last
-  body(m, NEON, 0, 0.045, 0, 0.62, 0.035, 1.9, '#00d4ff');
-  for (const sx of [-1, 1]) body(m, NEON, sx * 0.43, 0.1, -0.2, 0.02, 0.03, 1.2, '#7cf6ff');
-  m.box(NEON, 0, 0.42, -1.14, 0.5, 0.04, 0.04, { color: '#ffffff', cast: false });
-  m.box(NEON, 0, 0.36, 1.2, 0.5, 0.04, 0.04, { color: '#8a1218', cast: false });
+  // twin thrusters under the tail, with glowing rings; a fin
+  for (const sx of [-1, 1]) {
+    cone('flat', sx * 0.2, 0.1, 1.0, 0.1, 0.085, 0.42, '#1b1a22', 14, [Math.PI / 2, 0, 0]);
+    ring('neon', sx * 0.2, 0.1, 1.215, 0.092, 0.024, '#00d4ff', undefined, 6, 18);
+    ball('neon', sx * 0.2, 0.1, 1.2, 0.07, 0.07, 0.03, '#b8f7ff');
+  }
+  // glow strip under the deck (it stays inside the flat middle of the board) and the nose light
+  rbox('neon', 0, 0.05, 0, 0.56, 0.02, 1.15, 0.01, '#00d4ff');
+  for (const sx of [-1, 1]) ribbon('neon', stations(-0.9, 0.9, 8), sx * 0.405, 0.02, (z) => topF(z) - 0.07, '#7cf6ff', 0.0);
+  ball('neon', 0, 0.34, -1.235, 0.07, 0.035, 0.03, '#ffffff');
+  m.box(NEON, 0, 0.36, 1.25, 0.1, 0.03, 0.03, { color: '#8a1218', cast: false });
   return {
     wheelR: 0, wheelW: 0, wheelStyle: 'cart', wheels: [],
-    driver: null, stand: { x: 0, y: 0.22, z: 0.05, yaw: 0.9 }, passenger: null,
-    tailBoxes: 1, exhausts: [[-0.34, 0.1, 1.15], [0.34, 0.1, 1.15]], length: 2.6, width: 0.9, height: 0.45, hasPaint: true,
+    driver: null, stand: { x: 0, y: 0.2, z: 0.05, yaw: 0.9 }, passenger: null,
+    tailBoxes: 1, exhausts: [[-0.2, 0.1, 1.28], [0.2, 0.1, 1.28]], length: 2.5, width: 0.86, height: 0.4, hasPaint: true,
   };
 };
 
-// ── ice-cream truck: a rounded box van that reads as an ice-cream truck from every side ──
+// ── ice-cream van: a rounded box van on a cab, a serving window with an awning, a giant cone ──
 const buildIcecream: Builder = (m, paint) => {
-  const R = 0.46;
-  const DRV = { x: -0.5, y: 1.15, z: -1.3, scale: 0.95 };
+  const R = 0.4, FZ = -1.62, RZ = 1.6;
+  const wheelsAt = [{ z: FZ, y: R, r: R }, { z: RZ, y: R, r: R }];
+  const DRV = { x: -0.5, y: 0.98, z: -1.0, scale: 0.92 };
   const PINK = '#ff9ec7', HOT = '#ff4d8d', MINT = '#9be7ff', CREAM = '#fff4e0', WAFFLE = '#e0a15a', WAFFLE2 = '#c07a32', SPR = ['#ff4d8d', '#ffd23f', '#9be7ff', '#7c4dff', '#ffffff'];
-  body(m, FLAT, 0, 0.6, 0.3, 1.9, 0.3, 5.4, DARK);
-  // the serving box (rounded roof edges), the cab and the hood
-  rbox('paint', 0, 1.75, 1.3, 2.35, 2.0, 3.7, 0.36, undefined, undefined, 2);
-  // the cab is hollow: two doors, a dash and a floor, with the driver's and passenger's seats inside
-  for (const sx of [-1, 1]) rbox('paint', sx * 1.1, 1.18, -1.4, 0.16, 0.86, 1.6, 0.06);
-  rbox('paint', 0, 1.1, -2.02, 2.36, 0.8, 0.24, 0.07, undefined, undefined, 2); // dash / firewall
-  body(m, FLAT, 0, 0.77, -1.35, 2.1, 0.04, 1.6, DARK);
+  // the serving box: a rounded loft, soft corners and a rounded roof
+  const bHw = profile([[-0.6, 1.0], [-0.5, 1.08], [0, 1.1], [2.4, 1.1], [2.72, 1.0], [2.78, 0.9]]);
+  const bTop = profile([[-0.6, 2.62], [-0.45, 2.7], [2.3, 2.7], [2.65, 2.55], [2.78, 2.4]]);
+  const bz = stations(-0.6, 2.78, 7, archStations([RZ], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(bz, { hw: bHw, top: bTop, bottom: () => 0.5, round: () => 0.4, taper: () => 0.06, arch: archFn(wheelsAt, 0.08) }), 30));
+  // cab + hood: a lower body, then a glass cab with a painted roof
+  const lHw = profile([[-2.75, 0.55], [-2.7, 0.85], [-2.5, 0.99], [-2.0, 1.04], [-1.2, 1.06], [-0.6, 1.06]]);
+  const lTop = profile([[-2.75, 0.74], [-2.7, 0.88], [-2.4, 1.06], [-1.9, 1.16], [-1.4, 1.3], [-0.6, 1.32]]);
+  const lBot = profile([[-2.75, 0.5], [-2.55, 0.38], [-2.3, 0.36], [-0.6, 0.38]]);
+  const lz = stations(-2.75, -0.55, 7, archStations([FZ], R, [0, 0.5, 0.85, 1.05]));
+  put('paint', loftBody(sampleSections(lz, { hw: lHw, top: lTop, bottom: lBot, round: () => 0.55, taper: () => 0.05, arch: archFn(wheelsAt, 0.08) }), 28));
+  const gTop = profile([[-1.8, 1.3], [-1.55, 1.7], [-1.2, 2.3], [-0.9, 2.55], [-0.55, 2.58]]);
+  put('glass', loftBody(sampleSections(stations(-1.8, -0.55, 9), { hw: profile([[-1.8, 0.82], [-1.4, 0.98], [-0.55, 1.0]]), top: gTop, bottom: () => 1.26, round: () => 0.35, taper: () => 0.14 }), 26));
+  put('paint', loftBody(sampleSections(stations(-1.3, -0.5, 6), { hw: (z) => 0.92 * Math.min(1, 0.45 + (z + 1.3) * 2), top: (z) => gTop(z) + 0.025, bottom: (z) => gTop(z) - 0.07, round: () => 0.3 }), 20));
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.5, 0.92, -1.3, 0.7, 0.28, 0.6, 0.05, DARK); // seat base
-    rbox('flat', sx * 0.5, 1.08, -1.3, 0.8, 0.14, 0.66, 0.06, SEAT); // cushion (top 1.15: the hips)
-    rbox('flat', sx * 0.5, 1.42, -0.82, 0.56, 0.5, 0.14, 0.07, SEAT); // back
+    pipe('paint', [[sx * 0.96, 1.3, -1.78], [sx * 0.9, 1.9, -1.45], [sx * 0.82, 2.5, -1.0]], 0.045);
+    pipe('flat', [[sx * 1.07, 1.33, -2.0], [sx * 1.1, 1.33, -1.0], [sx * 1.1, 1.33, -0.55]], 0.015, CHROME);
+    rbox('flat', sx * 1.08, 1.0, -1.3, 0.012, 0.5, 0.018, 0.005, '#1b1a22'); // door seam
+    rbox('flat', sx * 1.09, 1.12, -1.75, 0.02, 0.03, 0.16, 0.01, CHROME); // door handle
+    // wheel-arch lips, bumpers' wings
+    for (const wz of [FZ, RZ]) archLip('paint', sx * (wz < 0 ? 1.05 : 1.1), R, wz, R + 0.085, 0.032);
+    ball('flat', sx * 1.2, 1.15, -2.08, 0.05, 0.1, 0.075, '#1b1a22'); // mirrors
   }
-  steeringWheel(DRV);
-  rbox('paint', 0, 0.98, -2.5, 2.3, 0.7, 0.85, 0.22, undefined, undefined, 2);
-  rbox('paint', 0, 2.64, -1.35, 2.38, 0.14, 1.78, 0.07);
-  rbox('flat', 0, 2.78, 1.3, 2.44, 0.1, 3.8, 0.05, WHITE); // rolled white roof trim
+  // the decal band: cream band with hot-pink + mint pinstripes and confetti sprinkles (sides and back)
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 1.1, 1.95, -0.6, 0.12, 0.9, 0.12, 0.05, CHROME); // cab posts
-    rbox('flat', sx * 1.1, 1.95, -2.05, 0.12, 0.9, 0.12, 0.05, CHROME);
-    body(m, FLAT, sx * 1.19, 1.06, -0.62, 0.03, 0.6, 0.04, DARK); // door seams
-    body(m, FLAT, sx * 1.19, 1.06, -2.0, 0.03, 0.6, 0.04, DARK);
-    rbox('flat', sx * 1.2, 1.3, -0.78, 0.04, 0.05, 0.16, 0.02, CHROME); // door handles
-    // dark wheel arches (the wheels sit inside them)
-    rbox('flat', sx * 1.0, 0.64, 1.75, 0.52, 0.86, 1.2, 0.24, DARK);
-    rbox('flat', sx * 1.0, 0.64, -1.7, 0.52, 0.86, 1.2, 0.24, DARK);
+    rbox('flat', sx * 1.108, 1.3, 1.1, 0.012, 0.46, 3.2, 0.004, CREAM);
+    rbox('flat', sx * 1.11, 1.56, 1.1, 0.012, 0.05, 3.2, 0.004, HOT);
+    rbox('flat', sx * 1.11, 1.04, 1.1, 0.012, 0.05, 3.2, 0.004, MINT);
   }
-  plate(m, FLAT, [-1.1, 1.62, -2.1], [1.1, 1.62, -2.1], [1.1, 2.55, -1.95], [-1.1, 2.55, -1.95], GLASS);
-  // the decal band: a cream band round the box with confetti sprinkles, hot-pink + mint pinstripes above and below
-  for (const sx of [-1, 1]) {
-    body(m, FLAT, sx * 1.195, 1.28, 1.3, 0.03, 0.5, 3.0, CREAM);
-    body(m, FLAT, sx * 1.197, 1.56, 1.3, 0.03, 0.06, 3.0, HOT);
-    body(m, FLAT, sx * 1.197, 1.0, 1.3, 0.03, 0.06, 3.0, MINT);
-  }
-  body(m, FLAT, 0, 1.28, 3.165, 1.78, 0.5, 0.03, CREAM);
-  body(m, FLAT, 0, 1.56, 3.167, 1.78, 0.06, 0.03, HOT);
-  body(m, FLAT, 0, 1.0, 3.167, 1.78, 0.06, 0.03, MINT);
-  sprinkles(m, 'x', 1.215, -0.1, 2.7, 1.07, 1.5, 22, 11, SPR);
-  sprinkles(m, 'x', -1.215, -0.1, 2.7, 1.07, 1.5, 22, 23, SPR);
-  sprinkles(m, 'z', 3.185, -0.8, 0.8, 1.07, 1.5, 14, 37, SPR);
-  // serving window (right side): frame, glowing counter light, a white counter and a striped scalloped awning
-  const wx = 1.19;
-  plate(m, FLAT, [wx, 1.68, 0.7], [wx, 1.68, 2.1], [wx, 2.5, 2.1], [wx, 2.5, 0.7], '#1e3550');
-  m.quad(NEON, [wx + 0.012, 1.72, 0.76], [wx + 0.012, 1.72, 2.04], [wx + 0.012, 2.1, 2.04], [wx + 0.012, 2.1, 0.76], undefined, '#ffe9b0');
-  for (const [cy, cz, h, d] of [[1.66, 1.4, 0.07, 1.62], [2.52, 1.4, 0.07, 1.62], [2.09, 0.66, 0.9, 0.07], [2.09, 2.14, 0.9, 0.07]] as [number, number, number, number][]) rbox('flat', wx + 0.025, cy, cz, 0.07, h, d, 0.025, WHITE);
-  rbox('flat', wx + 0.2, 1.63, 1.4, 0.4, 0.07, 1.8, 0.03, WHITE); // the counter
+  rbox('flat', 0, 1.3, 2.775, 1.7, 0.46, 0.012, 0.004, CREAM);
+  rbox('flat', 0, 1.56, 2.777, 1.7, 0.05, 0.012, 0.004, HOT);
+  rbox('flat', 0, 1.04, 2.777, 1.7, 0.05, 0.012, 0.004, MINT);
+  sprinkles(m, 'x', 1.12, -0.35, 2.7, 1.1, 1.5, 22, 11, SPR);
+  sprinkles(m, 'x', -1.12, -0.35, 2.7, 1.1, 1.5, 22, 23, SPR);
+  sprinkles(m, 'z', 2.79, -0.8, 0.8, 1.1, 1.5, 12, 37, SPR);
+  // serving window (right side): a glass panel, a white frame, a counter and a striped, scalloped awning
+  const wx = 1.115;
+  glassPlate([wx, 1.62, 0.35], [wx, 1.62, 1.85], [wx, 2.38, 1.85], [wx, 2.38, 0.35]);
+  m.quad(NEON, [wx - 0.01, 1.66, 0.4], [wx - 0.01, 1.66, 1.8], [wx - 0.01, 1.95, 1.8], [wx - 0.01, 1.95, 0.4], undefined, '#ffe9b0');
+  for (const [cy, cz, h, d] of [[1.6, 1.1, 0.06, 1.62], [2.4, 1.1, 0.06, 1.62], [2.0, 0.3, 0.84, 0.06], [2.0, 1.9, 0.84, 0.06]] as [number, number, number, number][]) rbox('flat', wx + 0.02, cy, cz, 0.06, h, d, 0.02, WHITE);
+  rbox('flat', wx + 0.2, 1.57, 1.1, 0.4, 0.06, 1.8, 0.03, WHITE, undefined, 1, true);
   for (let i = 0; i < 10; i++) {
-    const z = 0.55 + i * 0.17, col = i % 2 ? WHITE : HOT;
-    plate(m, FLAT, [wx, 2.66, z], [wx, 2.66, z + 0.17], [wx + 0.72, 2.32, z + 0.17], [wx + 0.72, 2.32, z], col);
-    rbox('flat', wx + 0.74, 2.26, z + 0.085, 0.06, 0.16, 0.17, 0.03, col); // scallop
+    const z = 0.2 + i * 0.17, col = i % 2 ? WHITE : HOT;
+    plate(m, FLAT, [wx, 2.55, z], [wx, 2.55, z + 0.17], [wx + 0.7, 2.22, z + 0.17], [wx + 0.7, 2.22, z], col);
+    ball('flat', wx + 0.71, 2.18, z + 0.085, 0.03, 0.09, 0.085, col);
   }
-  for (const z of [0.6, 2.2]) rbox('flat', wx + 0.68, 1.98, z, 0.05, 0.7, 0.05, 0.02, CHROME);
-  // left side: a big cone mural (waffle, two scoops, a cherry)
-  plate(m, FLAT, [-1.21, 1.7, 1.3], [-1.21, 2.45, 0.85], [-1.21, 2.45, 1.75], [-1.21, 2.45, 1.75], WAFFLE);
-  ball('flat', -1.215, 2.5, 1.3, 0.03, 0.27, 0.34, PINK);
-  ball('flat', -1.22, 2.72, 1.3, 0.03, 0.18, 0.22, '#ffffff');
-  ball('flat', -1.225, 2.9, 1.3, 0.035, 0.07, 0.07, RED);
-  // a giant cone on the roof: a waffle cone, two big scoops with a drippy skirt, sprinkles and a cherry
-  cone('flat', 0, 3.4, 1.2, 0.05, 0.68, 1.2, (x, y, z) => ((Math.floor((Math.atan2(z - 1.2, x) + Math.PI) / (Math.PI / 6)) + Math.floor((y - 2.8) / 0.2)) % 2 ? WAFFLE : WAFFLE2), 12, undefined, 6);
-  ball('flat', 0, 4.12, 1.2, 0.8, 0.58, 0.8, PINK);
-  cone('flat', 0, 3.98, 1.2, 0.82, 0.78, 0.14, HOT, 14);
+  for (const z of [0.25, 1.95]) pipe('flat', [[wx + 0.66, 1.62, z], [wx + 0.66, 1.9, z], [wx + 0.66, 2.2, z]], 0.018, CHROME);
+  // left side: a big cone mural
+  plate(m, FLAT, [-1.12, 1.68, 1.1], [-1.12, 2.4, 0.7], [-1.12, 2.4, 1.5], [-1.12, 2.4, 1.5], WAFFLE);
+  ball('flat', -1.125, 2.46, 1.1, 0.02, 0.25, 0.3, PINK);
+  ball('flat', -1.13, 2.66, 1.1, 0.02, 0.16, 0.2, '#ffffff');
+  // the giant cone: waffle cone, two scoops with a drippy skirt, sprinkles, a cherry
+  cone('flat', 0, 3.3, 1.2, 0.05, 0.62, 1.2, (x, y, z) => ((Math.floor((Math.atan2(z - 1.2, x) + Math.PI) / (Math.PI / 6)) + Math.floor((y - 2.7) / 0.2)) % 2 ? WAFFLE : WAFFLE2), 12, undefined, 6);
+  ball('flat', 0, 4.02, 1.2, 0.74, 0.55, 0.74, PINK);
+  cone('flat', 0, 3.88, 1.2, 0.76, 0.72, 0.13, HOT, 14);
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2 + 0.3;
-    ball('flat', Math.cos(a) * 0.79, 3.9, 1.2 + Math.sin(a) * 0.79, 0.1, 0.16, 0.1, PINK, undefined, 8, 6);
+    ball('flat', Math.cos(a) * 0.73, 3.8, 1.2 + Math.sin(a) * 0.73, 0.09, 0.15, 0.09, PINK, undefined, 8, 6);
   }
-  ball('flat', 0, 4.66, 1.2, 0.6, 0.46, 0.6, CREAM);
-  ball('flat', 0, 5.2, 1.2, 0.16, 0.16, 0.16, RED, undefined, 10, 8);
-  rbox('flat', 0.03, 5.38, 1.2, 0.03, 0.2, 0.03, 0.012, '#3d7a2a', [0, 0, 0.3]);
+  ball('flat', 0, 4.54, 1.2, 0.56, 0.44, 0.56, CREAM);
+  ball('flat', 0, 5.05, 1.2, 0.15, 0.15, 0.15, RED, undefined, 10, 8);
   for (let i = 0; i < 12; i++) {
-    const a = i * 2.4, p = 0.5 + (i % 4) * 0.2, cx = 0, cz = 1.2;
-    const top = i % 2 === 0;
-    const R0 = top ? 0.8 : 0.6, RY = top ? 0.58 : 0.46, cy = top ? 4.12 : 4.66;
-    m.box(FLAT, cx + Math.cos(a) * R0 * Math.sin(p) * 1.02, cy + Math.cos(p) * RY * 1.02, cz + Math.sin(a) * R0 * Math.sin(p) * 1.02, 0.1, 0.035, 0.035, { color: SPR[i % SPR.length], yaw: a, cast: false });
+    const a = i * 2.4, p = 0.5 + (i % 4) * 0.2, top = i % 2 === 0;
+    const R0 = top ? 0.74 : 0.56, RY = top ? 0.55 : 0.44, cy = top ? 4.02 : 4.54;
+    m.box(FLAT, Math.cos(a) * R0 * Math.sin(p) * 1.02, cy + Math.cos(p) * RY * 1.02, 1.2 + Math.sin(a) * R0 * Math.sin(p) * 1.02, 0.1, 0.035, 0.035, { color: SPR[i % SPR.length], yaw: a, cast: false });
   }
-  // speakers, mirrors, bumpers, grille
+  // speakers on the cab roof, bumpers, number plate, grille
+  for (const sx of [-1, 1]) m.cyl(FLAT, sx * 0.6, 2.6, -1.1, 0.05, 0.17, 0.28, 8, '#1b1a22');
+  rbox('flat', 0, 0.62, -2.75, 2.1, 0.22, 0.2, 0.09, CHROME);
+  rbox('flat', 0, 0.66, 2.8, 2.1, 0.22, 0.2, 0.09, CHROME);
+  meshGrille(0, 0.86, -2.785, 1.1, 0.34, 18, 4);
+  rbox('flat', 0, 0.68, 2.93, 0.5, 0.16, 0.03, 0.02, WHITE);
+  // rear doors with a window each
+  const zr = 2.792;
   for (const sx of [-1, 1]) {
-    m.cyl(FLAT, sx * 0.8, 2.76, -1.2, 0.06, 0.2, 0.32, 8, DARK);
-    rbox('flat', sx * 1.32, 1.6, -2.0, 0.1, 0.34, 0.2, 0.04, DARK);
+    glassPlate([sx * 0.06, 1.86, zr + 0.002], [sx * 0.86, 1.86, zr + 0.002], [sx * 0.86, 2.42, zr + 0.002], [sx * 0.06, 2.42, zr + 0.002]);
+    rbox('flat', sx * 0.12, 1.62, zr + 0.01, 0.05, 0.22, 0.03, 0.02, CHROME);
   }
-  rbox('flat', 0, 0.78, -3.0, 2.5, 0.28, 0.28, 0.1, CHROME);
-  rbox('flat', 0, 0.78, 3.22, 2.5, 0.28, 0.3, 0.1, CHROME);
-  rbox('flat', 0, 1.0, -2.96, 1.3, 0.4, 0.05, 0.03, DARK);
-  rbox('flat', 0, 0.8, 3.4, 0.5, 0.18, 0.03, 0.02, WHITE); // number plate
-  // rear doors: two doors with a window each, a centre seam, frames and handles
-  const zr = 3.17;
+  rbox('flat', 0, 1.95, zr + 0.004, 0.035, 0.9, 0.02, 0.01, '#1b1a22');
+  // the cab interior (seen through the glass), steering wheel in the driver's hands
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.46, 2.13, zr + 0.01, 0.78, 0.52, 0.03, 0.08, '#27405e'); // window
-    plate(m, FLAT, [sx * 0.2, 2.0, zr + 0.03], [sx * 0.34, 2.0, zr + 0.03], [sx * 0.52, 2.34, zr + 0.03], [sx * 0.38, 2.34, zr + 0.03], '#4a6d93'); // glint
-    body(m, FLAT, sx * 0.91, 2.12, zr, 0.05, 1.0, 0.03, WHITE); // frame sides
-    rbox('flat', sx * 0.12, 1.86, zr + 0.03, 0.05, 0.24, 0.04, 0.02, CHROME); // handles
+    rbox('flat', sx * 0.5, 0.82, -0.98, 0.7, 0.3, 0.6, 0.05, '#1b1a22');
+    rbox('flat', sx * 0.5, 0.97, -1.0, 0.8, 0.14, 0.66, 0.06, SEAT);
+    rbox('flat', sx * 0.5, 1.4, -0.7, 0.56, 0.7, 0.13, 0.07, SEAT);
   }
-  body(m, FLAT, 0, 2.12, zr, 0.04, 1.0, 0.04, DARK); // centre seam
-  body(m, FLAT, 0, 2.63, zr, 1.86, 0.05, 0.03, WHITE);
-  body(m, FLAT, 0, 1.64, zr, 1.86, 0.05, 0.03, WHITE);
+  steeringWheel(DRV);
   // lights: round headlights in rings, amber turn lights, a roof beacon, then the TAIL lights last
   for (const sx of [-1, 1]) {
-    ball('neon', sx * 0.85, 1.02, -2.94, 0.2, 0.17, 0.05, '#fff7dd');
-    ring('flat', sx * 0.85, 1.02, -2.94, 0.21, 0.035, CHROME, undefined, 6, 14);
-    ball('neon', sx * 1.0, 1.72, 3.2, 0.1, 0.1, 0.04, '#ffb347');
-    rbox('flat', sx * 1.0, 1.28, 3.17, 0.36, 0.6, 0.05, 0.04, DARK); // tail light housings
+    ball('neon', sx * 0.8, 0.9, -2.72, 0.2, 0.17, 0.05, '#fff7dd');
+    ring('flat', sx * 0.8, 0.9, -2.72, 0.21, 0.033, CHROME, undefined, 6, 14);
+    ball('neon', sx * 0.98, 1.74, 2.78, 0.09, 0.09, 0.03, '#ffb347');
+    rbox('flat', sx * 0.98, 1.3, 2.77, 0.3, 0.55, 0.04, 0.04, '#1b1a22');
   }
-  m.box(NEON, 0, 2.74, -2.0, 0.5, 0.1, 0.1, { color: '#ffd166', cast: false });
-  for (const sx of [-1, 1]) m.box(NEON, sx * 1.0, 1.28, 3.2, 0.26, 0.5, 0.05, { color: '#8a1218', cast: false });
-  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 1.08, y: R, z: sz > 0 ? 1.75 : -1.7, front: sz < 0 }));
+  cone('neon', 0, 2.68, -1.1, 0.045, 0.045, 0.5, '#ffd166', 8, [0, 0, Math.PI / 2]);   // a rounded beacon bar
+  for (const sx of [-1, 1]) m.box(NEON, sx * 0.98, 1.3, 2.8, 0.24, 0.46, 0.04, { color: '#8a1218', cast: false });
+  const wheels = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * 0.92, y: R, z: sz > 0 ? RZ : FZ, front: sz < 0 }));
   return {
-    wheelR: R, wheelW: 0.36, wheelStyle: 'cart', wheels,
-    driver: DRV, stand: null, passenger: { x: 0.5, y: 1.15, z: -1.3 },
-    tailBoxes: 2, exhausts: [[-0.5, 0.6, 3.45], [0.5, 0.6, 3.45]], length: 6.6, width: 2.5, height: 5.4, hasPaint: true,
+    wheelR: R, wheelW: 0.3, wheelStyle: 'cart', wheels,
+    driver: DRV, stand: null, passenger: { x: 0.5, y: 0.98, z: -1.0 },
+    tailBoxes: 2, exhausts: [[-0.5, 0.5, 2.95], [0.5, 0.5, 2.95]], length: 5.5, width: 2.2, height: 2.7, hasPaint: true,
   };
 };
 
-// ── boat: a chunky speedboat with a pointed bow, windscreen, benches, a steering wheel and an outboard ──
-const buildBoat: Builder = (m, paint) => {
-  const L0 = -2.6, L1 = 2.4, HW = 0.98;
-  const DRV = { x: -0.4, y: 0.62, z: 0.8, scale: 1.05 };
-  // hull (paint): two side panels, a pointed bow deck, a flat stern deck, a transom
-  const side = (s: number): void => {
-    // outer hull: from the gunwale down to the keel, bow to stern
-    m.quad(paint, [s * 0.0, 0.7, L0], [s * HW, 0.78, -0.5], [s * HW * 0.55, -0.22, -0.5], [0, -0.28, L0]);
-    m.quad(paint, [s * HW, 0.78, -0.5], [s * HW, 0.82, L1], [s * HW * 0.6, -0.2, L1], [s * HW * 0.55, -0.22, -0.5]);
-  };
-  side(1);
-  // the left side winds the other way
-  m.quad(paint, [0, -0.28, L0], [-HW * 0.55, -0.22, -0.5], [-HW, 0.78, -0.5], [0, 0.7, L0]);
-  m.quad(paint, [-HW * 0.55, -0.22, -0.5], [-HW * 0.6, -0.2, L1], [-HW, 0.82, L1], [-HW, 0.78, -0.5]);
-  // bottom + transom + decks
-  m.quad(paint, [0, -0.28, L0], [HW * 0.55, -0.22, -0.5], [HW * 0.6, -0.2, L1], [-HW * 0.6, -0.2, L1]);
-  m.quad(paint, [0, -0.28, L0], [-HW * 0.6, -0.2, L1], [-HW * 0.55, -0.22, -0.5], [-HW * 0.55, -0.22, -0.5]);
-  m.quad(paint, [-HW * 0.6, -0.2, L1], [HW * 0.6, -0.2, L1], [HW, 0.82, L1], [-HW, 0.82, L1]);
-  // inner floor + front deck
-  m.quad(FLAT, [-0.8, 0.28, -0.4], [0.8, 0.28, -0.4], [0.8, 0.28, L1 - 0.05], [-0.8, 0.28, L1 - 0.05], undefined, '#e7e2d6');
-  m.quad(paint, [0, 0.72, L0], [-HW, 0.8, -0.5], [HW, 0.8, -0.5], [0, 0.72, L0 + 0.01]);
-  m.quad(paint, [-HW, 0.8, -0.5], [-HW, 0.8, -0.1], [HW, 0.8, -0.1], [HW, 0.8, -0.5]);
-  // gunwale rails (inner faces) and a chunky white rubbing strake round the top edge
-  for (const sx of [-1, 1]) {
-    m.quad(FLAT, [sx * (HW - 0.06), 0.3, -0.1], [sx * (HW - 0.06), 0.3, L1], [sx * (HW - 0.06), 0.8, L1], [sx * (HW - 0.06), 0.8, -0.1], undefined, '#f3f2ee');
-    m.quad(FLAT, [sx * (HW - 0.06), 0.8, -0.1], [sx * (HW - 0.06), 0.8, L1], [sx * (HW - 0.06), 0.3, L1], [sx * (HW - 0.06), 0.3, -0.1], undefined, '#f3f2ee');
-    rbox('flat', sx * (HW + 0.0), 0.86, 0.95, 0.13, 0.11, 2.95, 0.05, WHITE);
-    body(m, FLAT, sx * 0.4, 0.88, -1.6, 0.05, 0.05, 1.2, CHROME, sx * 0.3);
-    // a racing stripe along the outer hull, below the strake
-    const stripe = (t0: number, t1: number): void => {
-      const P = (z: number, t: number): number[] => {
-        const u = (z + 0.5) / (L1 + 0.5);
-        const top = [HW, 0.78 + 0.04 * u], bot = [HW * (0.55 + 0.05 * u), -0.22 + 0.02 * u];
-        return [sx * (top[0] + (bot[0] - top[0]) * t + 0.014), top[1] + (bot[1] - top[1]) * t, z];
-      };
-      plate(m, FLAT, P(-0.5, t0), P(L1, t0), P(L1, t1), P(-0.5, t1), '#ffffff');
-    };
-    stripe(0.14, 0.24);
-    // the bow: a stripe running along the stem on each side
-    plate(m, FLAT, [sx * 0.05, 0.62, L0 + 0.02], [sx * (HW - 0.04), 0.7, -0.5], [sx * (HW - 0.04), 0.6, -0.5], [sx * 0.05, 0.52, L0 + 0.02], '#ffffff');
+// ── boat: a lofted V-hull speedboat, a recessed cockpit, a curved windscreen, benches, an outboard ──
+/** Chaikin-round a closed polygon, then resample it to n evenly spaced points (so every station has the same topology). */
+function roundOutline(poly: [number, number][], n: number): [number, number][] {
+  let p = poly;
+  for (let k = 0; k < 2; k++) {
+    const q: [number, number][] = [];
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], b = p[(i + 1) % p.length];
+      q.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    p = q;
   }
-  // windscreen + frame, console, steering wheel on the driver's hands, low narrow benches (the driver shows over them)
-  plate(m, FLAT, [-0.85, 0.82, -0.1], [0.85, 0.82, -0.1], [0.7, 1.4, 0.13], [-0.7, 1.4, 0.13], GLASS);
-  rbox('flat', 0, 0.98, -0.03, 1.8, 0.07, 0.07, 0.03, CHROME);
-  rbox('flat', 0, 0.56, 0.1, 1.3, 0.56, 0.42, 0.1, '#2a2d3a');
+  const len: number[] = [0];
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    len.push(len[i] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  const total = len[len.length - 1], out: [number, number][] = [];
+  let seg = 0;
+  for (let j = 0; j < n; j++) {
+    const d = (j / n) * total;
+    while (len[seg + 1] < d) seg++;
+    const t = (d - len[seg]) / Math.max(1e-6, len[seg + 1] - len[seg]);
+    const a = p[seg], b = p[(seg + 1) % p.length];
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+}
+const buildBoat: Builder = (m, paint) => {
+  const Z0 = -2.6, Z1 = 2.4;
+  const hw = profile([[Z0, 0.02], [-2.5, 0.12], [-2.3, 0.32], [-2.0, 0.54], [-1.5, 0.8], [-1.0, 0.95], [0, 1.0], [1.5, 1.0], [2.2, 0.96], [Z1, 0.94]]);
+  const yg = profile([[Z0, 0.92], [-2.0, 0.92], [-1.2, 0.86], [-0.4, 0.78], [1.0, 0.76], [Z1, 0.8]]); // the sheer: high bow, low waist
+  const yk = profile([[Z0, 0.62], [-2.45, 0.34], [-2.1, -0.02], [-1.4, -0.25], [0.5, -0.3], [Z1, -0.2]]); // keel
+  const cd = profile([[Z0, 0], [-1.6, 0], [-1.0, 0.4], [-0.5, 1], [1.8, 1], [2.3, 0.8], [Z1, 0.6]]); // how deep the cockpit is
+  const zs = stations(Z0, Z1, 18, [-0.9, -0.3, 2.2]);
+  const rings = zs.map((z) => {
+    const w = hw(z), g = yg(z), k = yk(z), c = cd(z), yf = 0.34;
+    const crown = 0.08 * (1 - c);
+    const deck = (f: number): number => g + crown * (1 - f * f) + (yf - g - crown * (1 - f * f)) * c * (f < 0.88 ? 1 : 0);
+    const chine: [number, number] = [w * 0.74, k + (g - k) * 0.38];
+    const poly: [number, number][] = [
+      chine, [w * 0.98, k + (g - k) * 0.72], [w, g], [w * 0.93, g + 0.005], [w * 0.88, deck(0.88)], [w * 0.6, deck(0.6)], [w * 0.3, deck(0.3)], [0, deck(0)],
+      [-w * 0.3, deck(0.3)], [-w * 0.6, deck(0.6)], [-w * 0.88, deck(0.88)], [-w * 0.93, g + 0.005], [-w, g], [-w * 0.98, k + (g - k) * 0.72], [-chine[0], chine[1]], [0, k],
+    ];
+    return { z, pts: roundOutline(poly, 32) };
+  });
+  put('paint', loftRings(rings));
+  // white rubbing strake round the sheer, a hull stripe, the transom glass-fibre pad, bow cleat
+  for (const sx of [-1, 1]) {
+    pipe('flat', zs.filter((z) => z > -2.4).map((z) => [sx * (hw(z) * 0.99), yg(z) + 0.01, z] as [number, number, number]).filter((_, i) => i % 2 === 0), 0.035, WHITE, 6);
+    ribbonSide(sx, zs.filter((z) => z > -1.9), hw, yg, yk);
+  }
+  rbox('flat', 0, 0.92, -2.2, 0.2, 0.05, 0.1, 0.02, CHROME);
+  // the cockpit: a console, benches with low backs, the curved windscreen, the steering wheel in the driver's hands
+  const DRV = { x: -0.4, y: 0.62, z: 0.8, scale: 1.0 };
+  rbox('flat', 0, 0.62, 0.05, 1.3, 0.56, 0.42, 0.12, '#2a2d3a');
   steeringWheel(DRV, DARK, 0.7);
   for (const sx of [-1, 1]) {
-    rbox('flat', sx * 0.4, 0.5, 0.8, 0.7, 0.2, 0.6, 0.08, SEAT);
-    rbox('flat', sx * 0.4, 0.78, 1.14, 0.5, 0.36, 0.13, 0.06, SEAT);
-    rbox('flat', sx * 0.4, 0.62, 0.8, 0.6, 0.03, 0.5, 0.012, '#ff2e88'); // piping
+    rbox('flat', sx * 0.4, 0.5, 0.8, 0.7, 0.2, 0.6, 0.09, '#f1ead8');
+    rbox('flat', sx * 0.4, 0.8, 1.14, 0.5, 0.34, 0.12, 0.06, '#f1ead8');
+    rbox('flat', sx * 0.4, 0.605, 0.8, 0.62, 0.02, 0.52, 0.01, '#ff2e88');
   }
-  rbox('flat', 0, 0.52, 1.95, 1.7, 0.2, 0.55, 0.08, '#e7e2d6'); // stern bench
-  // outboard motor on the transom
-  rbox('flat', 0, 0.62, 2.62, 0.5, 0.7, 0.4, 0.12, '#2a2d3a');
-  rbox('paint', 0, 1.02, 2.62, 0.54, 0.16, 0.44, 0.07);
-  body(m, FLAT, 0, 0.0, 2.7, 0.14, 0.7, 0.2, DARK);
-  rbox('flat', 0, -0.34, 2.72, 0.5, 0.06, 0.34, 0.025, CHROME);
-  // bow cleat + a little flag
-  rbox('flat', 0, 0.84, -2.0, 0.28, 0.06, 0.08, 0.025, CHROME);
+  rbox('flat', 0, 0.54, 1.95, 1.7, 0.2, 0.55, 0.09, '#e7e2d6');
+  glassPlate([-0.9, 0.84, -0.3], [0.0, 0.84, -0.38], [0.0, 1.38, -0.14], [-0.8, 1.38, -0.1]);
+  glassPlate([0.0, 0.84, -0.38], [0.9, 0.84, -0.3], [0.8, 1.38, -0.1], [0.0, 1.38, -0.14]);
+  pipe('flat', [[-0.9, 0.84, -0.3], [-0.85, 1.12, -0.2], [-0.8, 1.38, -0.1], [0, 1.4, -0.14], [0.8, 1.38, -0.1], [0.85, 1.12, -0.2], [0.9, 0.84, -0.3]], 0.025, CHROME, 6);
+  rbox('flat', 0, 0.352, 0.95, 1.5, 0.014, 2.5, 0.005, '#e7e2d6'); // cockpit floor liner
+  // the outboard motor on the transom
+  rbox('flat', 0, 0.64, 2.55, 0.5, 0.74, 0.4, 0.14, '#2a2d3a');
+  rbox('paint', 0, 1.06, 2.55, 0.54, 0.16, 0.44, 0.07);
+  rbox('flat', 0, 0.0, 2.65, 0.14, 0.7, 0.2, 0.05, '#1b1a22');
+  rbox('flat', 0, -0.34, 2.68, 0.5, 0.06, 0.34, 0.025, CHROME);
   // lights
-  ball('neon', 0, 0.9, -2.2, 0.09, 0.07, 0.09, '#ffffff');
-  m.box(NEON, 0, 1.45, 2.2, 0.1, 0.5, 0.1, { color: '#ffd166', cast: false });
-  m.box(NEON, 0, 0.8, 2.45, 0.9, 0.06, 0.04, { color: '#8a1218', cast: false });
+  ball('neon', 0, 0.98, -2.15, 0.09, 0.06, 0.09, '#ffffff');
+  pipe('flat', [[0, 0.8, 2.1], [0, 1.2, 2.1], [0, 1.5, 2.1]], 0.015, DARK);
+  ball('neon', 0, 1.53, 2.1, 0.05, 0.05, 0.05, '#ffd166');
+  m.box(NEON, 0, 0.88, 2.4, 0.8, 0.06, 0.04, { color: '#8a1218', cast: false });
   return {
     wheelR: 0, wheelW: 0, wheelStyle: 'cart', wheels: [],
     driver: DRV, stand: null, passenger: { x: 0.4, y: 0.62, z: 0.8 },
-    tailBoxes: 1, exhausts: [[0, 0.1, 2.9]], length: 5.6, width: 2.1, height: 1.5, hasPaint: true,
+    tailBoxes: 1, exhausts: [[0, 0.1, 2.9]], length: 5.1, width: 2.0, height: 1.5, hasPaint: true,
   };
 };
+/** A white racing stripe along the outer hull (below the sheer). */
+function ribbonSide(sx: number, zs: number[], hw: (z: number) => number, yg: (z: number) => number, yk: (z: number) => number): void {
+  const pos: number[] = [], idx: number[] = [];
+  const pt = (z: number, t: number): [number, number, number] => [sx * (hw(z) * 0.995 + 0.035), yg(z) - 0.12 - t, z];
+  zs.forEach((z, i) => {
+    const a = pt(z, 0), b = pt(z, 0.1);
+    pos.push(...a, ...b);
+    if (i > 0) {
+      const k = (i - 1) * 2;
+      idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length / 3).fill(0).flatMap(() => [sx, 0, 0]), 3));
+  g.setIndex(idx);
+  void yk;
+  put('flat', g, WHITE);
+}
 
 const BUILDERS: Record<RideKind, Builder> = {
   sports: buildSports, pickup: buildPickup, golfcart: buildGolfcart, hoverboard: buildHoverboard, icecream: buildIcecream, boat: buildBoat,
@@ -747,7 +757,7 @@ function template(kind: RideKind): Template {
   if (t) return t;
   const m = new Mesher();
   m.push(0, 0, 0);
-  EX = { paint: [], flat: [], neon: [] };
+  EX = { paint: [], flat: [], neon: [], glass: [] };
   const spec = BUILDERS[kind](m, PAINT_PROTO);
   const group = m.build('ride');
   const pg: THREE.BufferGeometry[] = [], fg: THREE.BufferGeometry[] = [], ng: THREE.BufferGeometry[] = [];
@@ -761,7 +771,6 @@ function template(kind: RideKind): Template {
   pg.push(...EX.paint);
   fg.unshift(...EX.flat);
   ng.unshift(...EX.neon); // (before the Mesher's lights: the tail lights must stay the LAST neon vertices)
-  if (kind === 'sports' && sportsBodyGeo) pg.push(sportsBodyGeo.clone());
   const merge = (l: THREE.BufferGeometry[]): THREE.BufferGeometry | null => {
     if (!l.length) return null;
     const g = l.length === 1 ? l[0] : mergeGeometries(l.map((x) => (x.index ? x.toNonIndexed() : x)), false);
@@ -772,6 +781,7 @@ function template(kind: RideKind): Template {
   const neon = merge(ng);
   t = {
     spec,
+    glass: merge(EX.glass),
     paint: merge(pg),
     flat: merge(fg),
     neon,
@@ -874,9 +884,16 @@ export class Ride {
       this.rig.add(me);
     }
     if (tpl.flat) {
-      const me = new THREE.Mesh(tpl.flat, FLAT_FOLD());
+      const me = new THREE.Mesh(tpl.flat, FLAT);
       me.castShadow = false;
       me.receiveShadow = false;
+      this.rig.add(me);
+    }
+    if (tpl.glass) {
+      const me = new THREE.Mesh(tpl.glass, GLASS_MAT);   // the cabin: tinted, reflective, drawn after the opaque parts
+      me.castShadow = false;
+      me.receiveShadow = false;
+      me.renderOrder = 1;
       this.rig.add(me);
     }
     this.neonGeo = tpl.neon ? ownColour(tpl.neon) : null;
