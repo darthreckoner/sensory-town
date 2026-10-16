@@ -5,6 +5,7 @@
 // drag, pinch or wheel to zoom. Every change pops with sparkles + a pose and autosaves.
 // Extras: Random look, Undo, 4 saved Looks, and a Pose button that ends in a camera flash.
 import * as THREE from 'three';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type OutfitSlot } from '../core/events';
@@ -338,7 +339,8 @@ export class DressUpScene extends GameScene {
   private rebuildMirror(): void {
     if (!this.char) return;
     this.mirror.clear();
-    const copy = this.char.group.clone(true);
+    // skinned characters need their skeleton re-bound on the copy (SkeletonUtils does that)
+    const copy = cloneSkinned(this.char.group);
     copy.traverse((o) => {
       o.castShadow = false;
       o.receiveShadow = false;

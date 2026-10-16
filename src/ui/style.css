@@ -370,6 +370,7 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 .tsheet { text-align: center; }
 .tsheet h2 { font-size: 30px; margin-bottom: 4px; }
 .tsub { color: var(--text-dim); font-weight: 700; margin-bottom: 18px; }
+.tsheet .tbottom { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
 .tcards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .tcard {
   width: 232px; padding: 10px; border-radius: 20px; border: 1px solid var(--glass-line); background: var(--glass-soft); color: var(--text);
@@ -504,6 +505,16 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 }
 .drive-horn .glyph { font-size: calc(var(--horn) * 0.5); line-height: 1; }
 .drive-horn.pressed { transform: translateY(3px) scale(0.93); }
+/* big tap-to-confirm prompt (a car on a FOR SALE mat) */
+.drive-prompt {
+  position: absolute; z-index: 6; left: 50%; bottom: max(250px, 30vh); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; padding: 12px 34px 12px 20px; border-radius: 999px; white-space: nowrap; cursor: pointer;
+  background: var(--grad-lime, linear-gradient(135deg, #b6ff3b, #00d4a0)); color: #10241a; font-weight: 900; font-size: 34px; touch-action: manipulation;
+  box-shadow: var(--shadow), 0 0 0 4px rgba(255, 255, 255, 0.85); animation: driveprompt 1.2s ease-in-out infinite;
+}
+.drive-prompt .ico { font-size: 44px; line-height: 1; }
+.drive-prompt.hidden { display: none; }
+@keyframes driveprompt { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.06); } }
 /* paint shop */
 .paint-sheet { min-width: min(540px, calc(100vw - 60px)); }
 .paint-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }

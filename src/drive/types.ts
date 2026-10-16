@@ -23,6 +23,8 @@ export interface DoorDef {
   carSpeed?: number;
   /** only a car triggers it (the Studio / builder pads) */
   carOnly?: boolean;
+  /** a car never triggers it by itself: it gets a big "tap to enter" prompt while it sits on the mat (FOR SALE lots) */
+  carPrompt?: boolean;
   glow: string;
 }
 

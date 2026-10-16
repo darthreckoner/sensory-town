@@ -71,22 +71,23 @@ The file contains the whole shared town **and** every player profile (outfits, c
 
 ## How to play (for grown-ups)
 
-- **Who is playing?** — tap your character. ✏️ renames, ➕ adds a player.
-- **Dress Up** — pick a category on the left, an item and a color on the right. Drag to spin, pinch to zoom. **Let's go!** drives off.
-- **Drive** — left thumb joystick to steer, right pedals for go/brake, 📯 horn. On PC: WASD / arrow keys, Space brakes, H honks. Drive onto the glowing 🧪 pad to enter the workshop or the 🔨 pad to build. Waving people want a ride — pick them up and drop them off (no timer, just confetti).
-- **Build** — tap an empty plot to start a house; drag pieces from the palette, tap a piece to rotate/recolor/delete; ↶ undo. Only the owner can change their house. Your workshop creations are under ⭐ and can sit on tables and shelves.
-- **Workshop** — 🧸 Squishy (press and drag to squish), 🫧 Slime (stretch, poke, fold, add glitter), 🕯️ Wax (pick → dip/pour layers → crack). 💾 keeps a creation for your shelf and houses.
+- **Choose your player** — tap a character. ✏️ renames, ＋ adds a player.
+- **Style** (runway studio) — pick a category on the left, an item + color on the right; drag to spin, pinch to zoom; 🎲 Random, 📸 Pose, 💾 four saved looks. **Let's ride** goes to town.
+- **Town** — joystick + GO/STOP/⚡BOOST/horn (PC: WASD/arrows, Space brake, Shift boost, H horn). 🚶 gets out to **walk** (E/F on PC); walk through glowing doors into the **Studio**, the **Style** boutique, the Builder's office or your own house. Six districts to explore (Downtown, Home Hills, Beach & Pier, Park & Lake, Skate Park with jumps, Lookout Hill) and **40 hidden 💎 charms** that unlock bonus items (glitter/chrome/glow wax, neon underglow, holo slime, LED sneakers, pool…). Nothing is ever lost or timed.
+- **Build your home** — follow the pink "🏠 Build your home" pill to a **FOR SALE** lot: walk onto the mat, or stop the car on it and tap **Build here?**. Pick a starter home (or start from scratch), then decorate: two floors, finishes, 40+ modern items, ⭐ your Studio creations. Only the owner can edit a house.
+- **Studio** — 🧸 Squishy (press/drag; optional face), 🫧 Slime (7 types, add-ins, stretch until it snaps), 🕯️ Wax (pick → dip/pour colored layers → cool → squeeze to crack). **Save** puts a creation on your shelf and in your houses. Destructive buttons (✨ New) need a hold.
+- **☰ menu** — jump to Town / Build / Studio / Style, switch player, audio, share/import town.
 
 ## Debug
 
 | Key | What |
 |---|---|
-| `` ` `` | Toggle the debug overlay (fps, scene, key tuning values) — iPad: **three-finger tap** |
+| `` ` `` | Toggle the debug overlay (fps, scene, draw calls, key tuning) — iPad: **three-finger tap** |
 | F1 | Reset the current station |
 | F2 | Fill the town with test houses |
 | F3 | Wax harden time = 0 |
 
-All tunable numbers live in `src/tuning.ts`.
+All tunable numbers live in `src/tuning.ts`. Dev builds also expose `window.__selftest.run()` (bug repro suite) and `window.__telemetry` (event log, errors, render cost). Playtest protocol for the kids: `docs/KIDS_PLAYTEST.md`.
 
 ## Code map
 

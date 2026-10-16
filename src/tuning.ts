@@ -223,7 +223,7 @@ export const tuning = {
     plotDoorRadius: 2.4,
     plotCarSpeed: 6,           // a car below this speed triggers a For Sale mat
     doorPadCarSpeed: 99,       // the Studio / Builder pads trigger at any speed (as before)
-    doorTriggerRadius: 3.0,    // the Studio / Builder car pads
+    doorTriggerRadius: 4.6,    // the Studio / Builder car pads (a car triggers them 0.9 further out)
     // charms
     charmRadius: 2.3,
     charmBeamRange: 70,
@@ -294,6 +294,11 @@ export const tuning = {
     fineDetailBelow: 2200,     // town bakes drop tiny details (books, keys...) above this many pieces
     shadowSizeTown: 46,        // half-extent of the sun's shadow box in town view
     shadowSizeHouse: 18,       // ...and when editing a house
+    // edit-mode batching: every piece of a storey is baked into a few merged meshes; only pieces
+    // that were just placed / changed / are being moved keep their own object for a moment
+    liveSeconds: 1.1,          // a changed piece keeps its own object this long (its pop animation), then folds into the bake
+    foldQuietSeconds: 0.18,    // ...and the re-bake waits for this long without edits (so a paint stroke bakes once)
+    maxLive: 40,               // too many separate piece objects: fold the settled ones even mid-stroke
   },
 
   // ── Workshop: squishy ─────────────────────────────────────────────────────

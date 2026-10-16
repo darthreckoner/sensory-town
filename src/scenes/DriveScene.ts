@@ -21,7 +21,7 @@ import { nextReward } from '../core/unlocks';
 import { CarPhysics, ColliderGrid, NO_INPUT, pushOut, res, type CarInput } from '../drive/physics';
 import { FootPhysics } from '../drive/foot';
 import { DriveControls } from '../drive/controls';
-import { Minimap, NameTags, TopHud } from '../drive/hud';
+import { Minimap, NameTags, PromptBubble, TopHud } from '../drive/hud';
 import { JobManager } from '../drive/jobs';
 import { Charms } from '../drive/charms';
 import { DoorLayer, buildPlotLayer, type PlotLayer } from '../drive/doors';
@@ -107,6 +107,8 @@ export class DriveScene extends GameScene {
   private controls!: DriveControls;
   private minimap!: Minimap;
   private top!: TopHud;
+  private prompt!: PromptBubble;
+  private promptTr: Trigger | null = null;
   private tags!: NameTags;
   private modeBtn!: HTMLButtonElement;
   private winW = 1;
@@ -196,10 +198,11 @@ export class DriveScene extends GameScene {
     this.tags = new NameTags(hud);
     this.minimap = new Minimap(hud);
     this.top = new TopHud(hud);
+    this.prompt = new PromptBubble(hud);
     const side = el('div', 'drive-side passthrough', hud);
     button(side, { icon: '🎨', cls: 'round' }, () => this.openPaint());
     this.modeBtn = button(side, { icon: '🚶', cls: 'round drive-mode' }, () => this.toggleMode());
-    this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode() });
+    this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode(), onConfirm: () => this.confirmPrompt() });
   }
 
   enter(params?: { from?: 'workshop' | 'build' | 'dressup' | string }): void {
@@ -309,6 +312,8 @@ export class DriveScene extends GameScene {
     this.minimap.rebuild();
     this.tags.rebuild(store.data.town.houses);
     this.top.job.hide();
+    this.promptTr = null;
+    this.prompt.hide();
     this.top.setCharms(this.charms.collected, this.charms.total, nextReward());
     this.ownsHouse = store.data.town.houses.some((h) => h.ownerId === prof.id);
     this.emptyPlots = PLOTS.filter((p) => this.plotLayer!.empty.includes(p.index));
@@ -659,6 +664,8 @@ export class DriveScene extends GameScene {
     p.vx = p.vz = p.fwdSpeed = 0;
     this.boostOn = false;
     this.foot.reset(sx, sz, p.heading);
+    // stepping out onto a mat must not trigger it: it stays asleep until you step off and back on
+    for (const tr of this.triggers) if (Math.hypot(sx - tr.def.x, sz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
     this.camYaw = p.heading;
     this.camPitch = 0.12;
     this.dragIdle = 0;
@@ -684,6 +691,7 @@ export class DriveScene extends GameScene {
   private setMode(mode: 'car' | 'foot', initial: boolean): void {
     const was = this.mode;
     this.mode = mode;
+    this.setPrompt(null);
     const car = mode === 'car';
     this.walker.group.visible = !car;
     this.car.setDriverVisible(car);
@@ -728,6 +736,7 @@ export class DriveScene extends GameScene {
   // ── doors, pads, mats ─────────────────────────────────────────────────────
   private checkTriggers(dt: number): void {
     if (this.leaving) {
+      this.setPrompt(null);
       // If the scene change was refused (another one in flight), try again shortly.
       this.leaveT += dt;
       if (this.leaveT > 1.4) this.leaving = false;
@@ -735,10 +744,16 @@ export class DriveScene extends GameScene {
     }
     const onFoot = this.mode === 'foot';
     const speed = this.phys.fwdSpeed;
+    let prompt: Trigger | null = null;
     for (const tr of this.triggers) {
       const def = tr.def;
       const dist = Math.hypot(this.mx - def.x, this.mz - def.z);
       const R = (def.radius ?? 1.5) + (onFoot ? 0 : 0.9);
+      // a car on a FOR SALE mat never claims by itself: it gets a big "Build here?" bubble until it drives off
+      if (!onFoot && def.carPrompt) {
+        if (dist < (this.promptTr === tr ? R + 1.2 : R) && this.phys.grounded && !prompt) prompt = tr;
+        continue;
+      }
       // after coming back out of a place (or a visit toast) the mat stays asleep until you step off it
       if (!tr.armed) {
         if (dist > R + 0.8) tr.armed = true;
@@ -753,9 +768,26 @@ export class DriveScene extends GameScene {
         bus.emit('uiTap', { kind: 'soft' });
         continue;
       }
+      this.setPrompt(null);
       this.enterPlace(tr, onFoot);
       return;
     }
+    this.setPrompt(onFoot ? null : prompt);
+  }
+
+  private setPrompt(tr: Trigger | null): void {
+    if (tr === this.promptTr) return;
+    this.promptTr = tr;
+    if (tr) this.prompt.show(tr.def.icon, 'Build here?', () => this.confirmPrompt());
+    else this.prompt.hide();
+  }
+
+  /** Tap (or Enter) on the "Build here?" bubble. */
+  private confirmPrompt(): void {
+    const tr = this.promptTr;
+    if (!tr || this.leaving || this.mode !== 'car' || this.controls.suspended) return;
+    this.setPrompt(null);
+    this.enterPlace(tr, false);
   }
 
   private enterPlace(tr: Trigger, onFoot: boolean): void {
@@ -860,9 +892,11 @@ export class DriveScene extends GameScene {
       if (b.kind !== 'box' || b.only === 'foot') continue;
       const ox = b.hw + 0.8 - Math.abs(this.camPos.x - b.x), oz = b.hd + 0.8 - Math.abs(this.camPos.z - b.z);
       if (ox <= 0 || oz <= 0) continue;
-      if (b.h !== undefined) {
+      if (b.h !== undefined && b.h - groundHeight(b.x, b.z) < 4.5) {
         // a low wall or hedge: rise over it instead of sliding into the next corridor
         if (this.camPos.y < b.h + 0.4) this.camPos.y = b.h + 0.4;
+      } else if (b.h !== undefined && this.camPos.y > b.h + 0.3) {
+        continue; // above a roof (walking on the mall)
       } else if (this.camPos.y < 14) {
         if (ox < oz) this.camPos.x += (this.camPos.x >= b.x ? 1 : -1) * ox;
         else this.camPos.z += (this.camPos.z >= b.z ? 1 : -1) * oz;

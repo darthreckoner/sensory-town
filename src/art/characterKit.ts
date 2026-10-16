@@ -3,7 +3,7 @@
 // no scene or DOM access except one lazily-made canvas-free kit.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { toyMat, type Finish } from './materials';
+import type { Finish } from './materials';
 
 export type V3t = [number, number, number];
 export const TAU = Math.PI * 2;
@@ -246,74 +246,6 @@ export function lipColor(skin: string): string {
   return `#${c.getHexString()}`;
 }
 
-const plaidCache = new Map<string, THREE.Material>();
-/** Plaid flannel: a grayscale pattern texture tinted by the base color. */
-function plaidMat(color: string): THREE.Material {
-  let m = plaidCache.get(color);
-  if (!m) {
-    const c = document.createElement('canvas');
-    c.width = c.height = 64;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#d8d8d8';
-    g.fillRect(0, 0, 64, 64);
-    g.fillStyle = 'rgba(255,255,255,0.55)';
-    g.fillRect(6, 0, 20, 64);
-    g.fillRect(0, 6, 64, 20);
-    g.fillStyle = 'rgba(0,0,0,0.38)';
-    g.fillRect(38, 0, 10, 64);
-    g.fillRect(0, 38, 64, 10);
-    g.fillStyle = 'rgba(255,255,255,0.8)';
-    g.fillRect(55, 0, 2, 64);
-    g.fillRect(0, 55, 64, 2);
-    const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(3, 3);
-    t.colorSpace = THREE.SRGBColorSpace;
-    m = new THREE.MeshPhysicalMaterial({ color, map: t, roughness: 0.85, sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.4) });
-    plaidCache.set(color, m);
-  }
-  return m;
-}
-const wingCache = new Map<string, THREE.Material>();
-let diamondMat: THREE.Material | null = null;
-
-export interface MatCtx {
-  skin: string;
-  hair: string;
-}
-export function roleMat(role: Role, color: string, ctx: MatCtx, finish: Finish): THREE.Material {
-  switch (role) {
-    case 'main': return toyMat(color, finish);
-    case 'trim': return toyMat(lum(color) > 0.75 ? tint(color, -0.18) : tint(color, 0.3), finish === 'fabric' ? 'satin' : finish);
-    case 'dark': return toyMat(tint(color, -0.4), finish);
-    case 'white': return toyMat('#f4f2ee', 'satin');
-    case 'cream': return toyMat('#efe6d2', 'fabric');
-    case 'gold': return toyMat('#ffc93c', 'metal');
-    case 'skin': return toyMat(ctx.skin, 'satin');
-    case 'hair': return toyMat(ctx.hair, 'gloss');
-    case 'ink': return toyMat('#1d1b26', 'satin');
-    case 'print': return toyMat(contrast(color), 'matte');
-    case 'pink': return toyMat('#ff2e88', 'gloss');
-    case 'cyan': return toyMat('#00d4ff', 'gloss');
-    case 'leaf': return toyMat('#2f6b4f', 'gloss');
-    case 'denim': return toyMat('#3d5a80', 'fabric');
-    case 'glass': return toyMat('#14131a', 'gloss');
-    case 'led': return toyMat('#ffffff', 'emissive');
-    case 'lens': return toyMat('#d8f0ff', 'glass');
-    case 'plaid': return plaidMat(color);
-    case 'wing': {
-      let m = wingCache.get(color);
-      if (!m) {
-        m = new THREE.MeshPhysicalMaterial({ color, side: THREE.DoubleSide, roughness: 0.45, sheen: 1, sheenColor: new THREE.Color('#ffffff'), emissive: new THREE.Color(color).lerp(new THREE.Color('#9fb4ff'), 0.6), emissiveIntensity: 0.22 });
-        wingCache.set(color, m);
-      }
-      return m;
-    }
-    case 'diamond':
-      return (diamondMat ??= new THREE.MeshPhysicalMaterial({ color: '#e4fbff', roughness: 0.04, metalness: 0.15, clearcoat: 1, emissive: new THREE.Color('#79e6ff'), emissiveIntensity: 0.5, flatShading: true }));
-  }
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Torso profile + lathe shells
 // ═════════════════════════════════════════════════════════════════════════════
@@ -416,7 +348,6 @@ export const arr3 = (v: THREE.Vector3): V3t => [v.x, v.y, v.z];
 // ═════════════════════════════════════════════════════════════════════════════
 export interface FaceKit {
   eye: THREE.BufferGeometry; // vertex-colored, built for the +x eye (mirror with scale.x = -1)
-  eyeMat: THREE.Material;
   brow: THREE.BufferGeometry; // built for the +x brow
   nose: THREE.BufferGeometry;
   ear: THREE.BufferGeometry;
@@ -461,7 +392,6 @@ export function getFaceKit(): FaceKit {
   mouthLine.e([0, 0, 0], [0.0165, 0.0013, 0.0045]);
   faceKit = {
     eye: eye.build(),
-    eyeMat: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.05 }),
     brow: brow.build(),
     nose: nose.build(),
     ear: new GB(false, true).e([0, 0, 0], [0.0105, 0.028, 0.019]).build(),

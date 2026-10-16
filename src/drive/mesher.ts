@@ -21,6 +21,8 @@ export interface BoxOpts {
   skip?: string[];
   /** y offset of the uv origin (so floors line up) */
   vOff?: number;
+  /** force (or forbid) casting a shadow; default: only big masses (>= 4 wide and >= 2.5 tall) cast */
+  cast?: boolean;
 }
 
 /** Materials that look the same (colour, finish rounded to quarters, maps...) share one mesh: fewer draw calls. */
@@ -35,8 +37,37 @@ export function materialSignature(m: THREE.Material): string {
   ].join('|');
 }
 
+const foldCache = new Map<string, THREE.Material>();
+/**
+ * Flat-coloured materials (no maps, no glow, opaque) share one vertex-coloured material per finish class,
+ * so a district's dozens of colours become a handful of meshes. Returns the material to draw with and the
+ * colour to bake into the vertices (null when the geometry already has its own colours / is not foldable).
+ */
+export function foldMaterial(m: THREE.Material): { mat: THREE.Material; color: THREE.Color | null } {
+  const a = m as THREE.MeshStandardMaterial & THREE.MeshBasicMaterial;
+  if ((m.userData && m.userData.keep) || (a as THREE.MeshStandardMaterial).flatShading || a.map || (a as THREE.MeshStandardMaterial).emissiveMap || m.transparent || m.side !== THREE.FrontSide || m.polygonOffset || a.alphaTest) return { mat: m, color: null };
+  if (m.type === 'MeshStandardMaterial') {
+    const e = (a as THREE.MeshStandardMaterial).emissive;
+    if (e && e.getHex() !== 0) return { mat: m, color: null };
+    const r = Math.round(a.roughness * 4) / 4, mt = Math.round(a.metalness * 4) / 4;
+    const key = 'std|' + r + '|' + mt;
+    let t = foldCache.get(key);
+    if (!t) foldCache.set(key, (t = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: r, metalness: mt })));
+    return { mat: t, color: a.vertexColors ? null : a.color };
+  }
+  if (m.type === 'MeshBasicMaterial' && !a.vertexColors) {
+    const key = 'basic|' + (a.toneMapped ? 1 : 0) + '|' + (a.fog === false ? 0 : 1);
+    let t = foldCache.get(key);
+    if (!t) foldCache.set(key, (t = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: a.toneMapped, fog: a.fog !== false })));
+    return { mat: t, color: a.color };
+  }
+  return { mat: m, color: null };
+}
+
 export class Mesher {
   private buckets = new Map<THREE.Material, Bucket>();
+  private castBuckets = new Map<THREE.Material, Bucket>();
+  private forceCast: boolean | null = null;
   private stack: { x: number; z: number; c: number; s: number }[] = [{ x: 0, z: 0, c: 1, s: 0 }];
   private col = new THREE.Color();
   castShadow = new Set<THREE.Material>();
@@ -68,9 +99,10 @@ export class Mesher {
     return Math.atan2(t.s, t.c);
   }
 
-  private bucket(m: THREE.Material): Bucket {
-    let b = this.buckets.get(m);
-    if (!b) this.buckets.set(m, (b = { p: [], n: [], uv: [], c: [] }));
+  private bucket(m: THREE.Material, cast = this.forceCast ?? false): Bucket {
+    const map = cast || this.castShadow.has(m) ? this.castBuckets : this.buckets;
+    let b = map.get(m);
+    if (!b) map.set(m, (b = { p: [], n: [], uv: [], c: [] }));
     return b;
   }
 
@@ -125,7 +157,7 @@ export class Mesher {
       ['top', [P(-hw, hh, hd), P(hw, hh, hd), P(hw, hh, -hd), P(-hw, hh, -hd)], [0, 1, 0], w, d],
       ['bottom', [P(-hw, -hh, -hd), P(hw, -hh, -hd), P(hw, -hh, hd), P(-hw, -hh, hd)], [0, -1, 0], w, d],
     ];
-    const b = this.bucket(m);
+    const b = this.bucket(m, o.cast ?? (Math.max(w, d) >= 4 && h >= 2.5));
     const col = o.color !== undefined ? new THREE.Color(o.color) : null;
     for (const [name, c, , fw, fh] of faces) {
       if (skip.includes(name)) continue;
@@ -156,7 +188,7 @@ export class Mesher {
 
   /** Vertical cylinder (or tapered / cone with rTop = 0). */
   cyl(m: THREE.Material, cx: number, cy: number, cz: number, rBottom: number, rTop: number, h: number, seg = 10, color?: THREE.ColorRepresentation): this {
-    const b = this.bucket(m);
+    const b = this.bucket(m, rBottom * 2 >= 1.6 && h >= 3);
     const col = color !== undefined ? new THREE.Color(color) : null;
     const slope = (rBottom - rTop) / h;
     for (let i = 0; i < seg; i++) {
@@ -209,6 +241,7 @@ export class Mesher {
   prism(m: THREE.Material, cx: number, cy: number, cz: number, w: number, h: number, d: number, color?: THREE.ColorRepresentation): this {
     const hw = w / 2, hd = d / 2;
     const col = color !== undefined ? this.col.set(color) : null;
+    this.forceCast = Math.max(w, d) >= 4 && h >= 1.5;
     // two sloped quads + two end triangles
     this.quad(m, [cx - hw, cy, cz - hd], [cx - hw, cy, cz + hd], [cx, cy + h, cz + hd], [cx, cy + h, cz - hd], undefined, col ?? undefined);
     this.quad(m, [cx + hw, cy, cz + hd], [cx + hw, cy, cz - hd], [cx, cy + h, cz - hd], [cx, cy + h, cz + hd], undefined, col ?? undefined);
@@ -219,6 +252,7 @@ export class Mesher {
     };
     this.tri(b, W([cx - hw, cy, cz + hd]), W([cx + hw, cy, cz + hd]), W([cx, cy + h, cz + hd]), this.rotN(0, 0, 1), [[0, 0], [1, 0], [0.5, 1]], col);
     this.tri(b, W([cx + hw, cy, cz - hd]), W([cx - hw, cy, cz - hd]), W([cx, cy + h, cz - hd]), this.rotN(0, 0, -1), [[0, 0], [1, 0], [0.5, 1]], col);
+    this.forceCast = null;
     return this;
   }
   private rotN(x: number, y: number, z: number): number[] {
@@ -226,26 +260,44 @@ export class Mesher {
     return [nx, y, nz];
   }
 
-  /** Emit one mesh per material. */
+  /** Emit one mesh per (look-alike material, casts-a-shadow). */
   build(name = 'mesh'): THREE.Group {
     const g = new THREE.Group();
     g.name = name;
-    // fold look-alike materials together
     const groups = new Map<string, { mat: THREE.Material; b: Bucket; cast: boolean; recv: boolean }>();
-    for (const [mat, b] of this.buckets) {
-      if (b.p.length === 0) continue;
-      const basic = (mat as THREE.MeshBasicMaterial).isMeshBasicMaterial;
-      const cast = this.castShadow.has(mat) ? true : !basic;
-      const recv = !this.noReceive.has(mat) && !basic;
-      const key = materialSignature(mat);
+    const add = (mat0: THREE.Material, src: Bucket, cast0: boolean): void => {
+      if (src.p.length === 0) return;
+      const basic = (mat0 as THREE.MeshBasicMaterial).isMeshBasicMaterial;
+      const cast = cast0 && !basic;
+      const recv = !this.noReceive.has(mat0) && !basic;
+      const f = foldMaterial(mat0);
+      const mat = f.mat;
+      // colours for the vertex-coloured fold (a bucket that already has its own colours keeps them)
+      let c = src.c;
+      if (f.color) {
+        c = new Array(src.p.length);
+        for (let i = 0; i < src.p.length; i += 3) {
+          c[i] = f.color.r;
+          c[i + 1] = f.color.g;
+          c[i + 2] = f.color.b;
+        }
+      } else if ((mat as THREE.MeshStandardMaterial).vertexColors && src.c.length !== src.p.length) {
+        // vertex-coloured material without full colour data: paint it the material's own colour
+        c = new Array(src.p.length).fill(1);
+      }
+      const key = (f.color || (mat as THREE.MeshStandardMaterial).vertexColors ? 'fold|' + mat.uuid : materialSignature(mat)) + '|' + (cast ? 1 : 0);
       const hit = groups.get(key);
-      if (!hit) groups.set(key, { mat, b: { p: b.p.slice(), n: b.n.slice(), uv: b.uv.slice(), c: b.c.slice() }, cast, recv });
+      if (!hit) groups.set(key, { mat, b: { p: src.p.slice(), n: src.n.slice(), uv: src.uv.slice(), c: c.slice() }, cast, recv });
       else {
-        for (const k of ['p', 'n', 'uv', 'c'] as const) for (let i = 0; i < b[k].length; i++) hit.b[k].push(b[k][i]);
-        hit.cast = hit.cast || cast;
+        for (let i = 0; i < src.p.length; i++) hit.b.p.push(src.p[i]);
+        for (let i = 0; i < src.n.length; i++) hit.b.n.push(src.n[i]);
+        for (let i = 0; i < src.uv.length; i++) hit.b.uv.push(src.uv[i]);
+        for (let i = 0; i < c.length; i++) hit.b.c.push(c[i]);
         hit.recv = hit.recv && recv;
       }
-    }
+    };
+    for (const [mat, b] of this.buckets) add(mat, b, false);
+    for (const [mat, b] of this.castBuckets) add(mat, b, true);
     for (const { mat, b, cast, recv } of groups.values()) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3));

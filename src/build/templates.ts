@@ -81,29 +81,22 @@ function modernBox(): PlacedPiece[] {
   for (let x = 6; x <= 9; x++) b.add('wall', x, 5, 0, { color: '#f3f2ee', finish: 'paint' });
   b.roofs(X0, Z0, W, D, 'roofFlat', '#3a3a44');
 
+  // Furniture is kept sparse on purpose: every room has clear floor so a first drag always lands.
   // kitchen along the north wall
   b.at('fridge', 2, 1, 2, { color: '#c8c9cf' });
   b.at('counter', 3, 1, 2);
   b.at('stove', 4, 1, 2);
   b.at('kitchenSink', 5, 1, 2);
-  b.at('island', 3, 3, 0, { color: '#2c3e5c' });
-  b.at('stool', 3, 4, 0);
-  b.at('stool', 4, 4, 0);
-  // living
+  // living: a sofa + TV, and a big open middle (x 3-5, z 2-4)
   b.at('sofaL', 2, 5, 1, { color: '#3d5a80' });
   b.at('tvStand', 5, 5, 3);
-  b.at('coffeeTable', 4, 6, 0);
-  b.at('rug', 3, 6, 0, { color: '#8d8b96' });
-  b.at('lamp', 2, 4, 0);
-  b.at('plant', 5, 4, 0);
-  // bedroom
+  b.at('rug', 3, 5, 0, { color: '#8d8b96' });
+  // bedroom: bed + wardrobe + gaming desk, and an empty corner (x 8-9, z 3-4)
   b.at('bed', 7, 1, 2, { color: '#2c3e5c' });
   b.at('nightstand', 6, 1, 2);
-  b.at('nightstand', 9, 1, 2);
-  b.at('wardrobe', 9, 3, 3, { color: '#b9b4ac' });
+  b.at('wardrobe', 9, 1, 3, { color: '#b9b4ac' });
   b.at('gamingSetup', 6, 4, 0);
   b.at('gamingChair', 7, 3, 2, { color: '#ff2e88' });
-  b.at('beanBag', 9, 2, 0);
   // bath
   b.at('toilet', 6, 7, 0);
   b.at('sink', 7, 7, 0);
@@ -117,10 +110,8 @@ function modernBox(): PlacedPiece[] {
   for (let z = 8; z <= 11; z++) b.add('path', 5, z, 0, { finish: 'concrete', color: '#bdbab5' });
   b.at('patioSet', 8, 9, 0, { color: '#ff8a3d' });
   b.at('hedge', 3, 8, 0);
-  b.at('hedge', 4, 8, 0);
   b.at('yardTree', 1, 9, 0);
   b.at('mailbox', 10, 8, 0);
-  b.at('bbq', 10, 11, 0);
   return b.pieces;
 }
 
@@ -139,24 +130,18 @@ function cottage(): PlacedPiece[] {
   b.add('wallDoor', 6, 4, 3, { color: '#f3f2ee', finish: 'paint' });
   b.roofs(X0, Z0, W, D, 'roofGable', '#3a3a44', 0);
 
-  // kitchen + dining + living (left 3 wide)
-  b.at('counter', 3, 2, 2);
+  // Sparse on purpose: open floor in the living room and in the bedroom's corner for a first drag.
+  // kitchen along the north wall + living (left 3 wide)
+  b.at('fridge', 3, 2, 2, { color: '#c8c9cf' });
   b.at('kitchenSink', 4, 2, 2);
   b.at('stove', 5, 2, 2);
-  b.at('fridge', 5, 3, 3, { color: '#c8c9cf' });
-  b.at('diningTable', 3, 3, 0, { color: '#b07a4f' });
-  b.at('chair', 3, 4, 0);
-  b.at('chair', 4, 4, 0);
-  b.at('tvStand', 5, 4, 3);
-  b.at('rug', 3, 5, 0, { color: '#8d8b96' });
+  b.at('tvStand', 5, 5, 3);
+  b.at('rug', 3, 4, 0, { color: '#8d8b96' });
   b.at('sofa', 3, 6, 0, { color: '#9fb59a' });
-  b.at('plant', 5, 6, 0);
-  // bedroom (right)
+  // bedroom (right): the lower-left corner is free
   b.at('bed', 7, 2, 2, { color: '#9fb59a' });
   b.at('nightstand', 6, 2, 2);
   b.at('wardrobe', 8, 4, 3, { color: '#b07a4f' });
-  b.at('desk', 7, 6, 0, { color: '#f3f2ee' });
-  b.at('gamingChair', 7, 5, 2, { color: '#00d4ff' });
   b.add('poster', 3, 5, 3, { finish: 'peaks', color: '#00d4ff' });
   b.add('stringLights', 7, 6, 2, { color: '#ffc93c' });
   // yard
@@ -164,7 +149,6 @@ function cottage(): PlacedPiece[] {
   for (let x = 2; x <= 9; x++) if (x !== 5) b.add('fencePicket', x, 11, 2, { color: '#f3f2ee' });
   b.add('fencePicket', 5, 11, 2, { color: '#f3f2ee' });
   b.at('gardenBed', 6, 8, 0);
-  b.at('hedge', 3, 8, 0);
   b.at('yardTree', 9, 9, 0);
   b.at('mailbox', 2, 11, 0);
   return b.pieces;
@@ -200,30 +184,24 @@ function twoStory(): PlacedPiece[] {
   // stairs: climb north along x = 7 from z = 6 up to z = 3 ... they climb toward local +z, so rotate 2 to climb north
   b.at('stairs', 7, 3, 2, { finish: 'oak', color: '#cf9b62' });
 
-  // ground floor: living (left), kitchen/dining (right of the stairs)
-  b.at('sofa', 3, 6, 0, { color: '#8d8b96' });
+  // Sparse on purpose: a clear living area (x 5-6, z 2-7) and a free corner on each floor.
+  // ground floor: TV + sofa on the left, kitchen strip right of the stairs
   b.at('tvStand', 3, 2, 2);
-  b.at('coffeeTable', 3, 4, 0);
-  b.at('rug', 3, 4, 0, { color: '#2c3e5c' });
-  b.at('armchair', 5, 4, 0, { color: '#c2603f' });
+  b.at('rug', 3, 3, 0, { color: '#2c3e5c' });
+  b.at('sofa', 3, 5, 0, { color: '#8d8b96' });
   b.at('counter', 8, 2, 2);
   b.at('fridge', 8, 3, 3, { color: '#c8c9cf' });
-  b.at('diningTable', 8, 5, 1, { color: '#b07a4f' });
-  b.at('chair', 8, 7, 0);
-  b.at('plant', 6, 2, 0);
-  // upstairs: bedroom (north) + gaming room / bath (south)
-  b.at('bed', 4, 2, 2, { color: '#2c3e5c', level: 1 });
-  b.at('nightstand', 3, 2, 2, { level: 1 });
+  // upstairs: bedroom (north) + gaming nook (south west)
+  b.at('bed', 5, 2, 2, { color: '#2c3e5c', level: 1 });
+  b.at('nightstand', 4, 2, 2, { level: 1 });
   b.at('wardrobe', 7, 2, 2, { level: 1, color: '#b9b4ac' });
-  b.at('gamingSetup', 4, 6, 0, { level: 1 });
-  b.at('gamingChair', 5, 5, 2, { level: 1, color: '#7c4dff' });
-  b.at('beanBag', 3, 6, 0, { level: 1, color: '#ff2e88' });
+  b.at('gamingSetup', 3, 6, 1, { level: 1 });
+  b.at('gamingChair', 4, 6, 3, { level: 1, color: '#7c4dff' });
   b.add('ledStrip', 5, 2, 0, { color: '#00d4ff', finish: 'rainbow', level: 1 });
   // yard
   for (let z = 8; z <= 11; z++) b.add('path', 4, z, 0, { finish: 'concrete', color: '#bdbab5' });
   b.at('carport', 8, 8, 0, { color: '#3a3a44' });
   b.at('hedge', 3, 8, 0);
-  b.at('hedge', 3, 9, 0);
   b.at('yardTree', 1, 6, 0);
   b.at('mailbox', 1, 10, 0);
   return b.pieces;

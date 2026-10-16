@@ -251,8 +251,8 @@ export function snapEdge(gx: number, gz: number): { x: number; z: number; rot: R
   return gx >= lx ? { x: lx, z: cz, rot: 3, inside } : { x: lx - 1, z: cz, rot: 1, inside };
 }
 
-/** Anchor cell that puts the footprint's centre nearest the pointer (cells from the plot origin). */
-function anchorFor(def: PieceDef, rot: number, gx: number, gz: number): [number, number] {
+/** Anchor (not yet rounded to a cell) that puts the footprint's centre on the pointer. */
+function anchorRaw(def: PieceDef, rot: number, gx: number, gz: number): [number, number] {
   const cells = localCells(def);
   let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity;
   for (const [i, j] of cells) {
@@ -262,7 +262,13 @@ function anchorFor(def: PieceDef, rot: number, gx: number, gz: number): [number,
     maxJ = Math.max(maxJ, j);
   }
   const [ox, oz] = rotOffset((minI + maxI) / 2, (minJ + maxJ) / 2, rot);
-  return [Math.round(gx - ox - 0.5), Math.round(gz - oz - 0.5)];
+  return [gx - ox - 0.5, gz - oz - 0.5];
+}
+
+/** Anchor cell that puts the footprint's centre nearest the pointer (cells from the plot origin). */
+function anchorFor(def: PieceDef, rot: number, gx: number, gz: number): [number, number] {
+  const [fx, fz] = anchorRaw(def, rot, gx, gz);
+  return [Math.round(fx), Math.round(fz)];
 }
 
 /** Rotation that puts a footprint's back against a wall, if there is one nearby; else `pref`. */
@@ -378,6 +384,28 @@ export function snapPiece(def: PieceDef, gx: number, gz: number, level: Level, c
         }
         ax = Math.min(Math.max(ax, -mnx), N - 1 - mxx);
         az = Math.min(Math.max(az, -mnz), N - 1 - mxz);
+      }
+      // a near miss still lands: a multi-cell piece that overlaps something slides to the closest free
+      // spot within one cell (the ghost shows where it will go)
+      if (insidePlot && def.kind !== 'rug' && localCells(def).length > 1 && !canPlaceCtx(ctx, def, mk(ax, az, rot))) {
+        const [fx, fz] = anchorRaw(def, rot, gx, gz);
+        let best: [number, number] | null = null, bd = Infinity;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dz) continue;
+            const c2 = mk(ax + dx, az + dz, rot);
+            if (!canPlaceCtx(ctx, def, c2)) continue;
+            const d = (c2.x - fx) * (c2.x - fx) + (c2.z - fz) * (c2.z - fz);
+            if (d < bd) {
+              bd = d;
+              best = [c2.x, c2.z];
+            }
+          }
+        }
+        if (best) {
+          ax = best[0];
+          az = best[1];
+        }
       }
       const cand = mk(ax, az, rot);
       return { cand, inside: footprintCells(def, ax, az, rot).every(([x, z]) => inPlot(x, z)) };

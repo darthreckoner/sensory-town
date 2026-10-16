@@ -413,6 +413,39 @@ export class HomePill {
   }
 }
 
+/** A big tappable bubble above the controls (e.g. "🏠 Build here?" while a car sits on a FOR SALE mat). */
+export class PromptBubble {
+  readonly el: HTMLDivElement;
+  private readonly icon: HTMLSpanElement;
+  private readonly text: HTMLSpanElement;
+  private onTap: (() => void) | null = null;
+  private shown = false;
+
+  constructor(parent: HTMLElement) {
+    this.el = el('div', 'drive-prompt interactive hidden', parent) as HTMLDivElement;
+    this.icon = el('span', 'ico', this.el) as HTMLSpanElement;
+    this.text = el('span', 'txt', this.el) as HTMLSpanElement;
+    bindTap(this.el, () => this.onTap?.());
+  }
+
+  show(icon: string, text: string, onTap: () => void): void {
+    this.onTap = onTap;
+    this.icon.textContent = icon;
+    this.text.textContent = text;
+    if (!this.shown) {
+      this.shown = true;
+      this.el.classList.remove('hidden');
+    }
+  }
+
+  hide(): void {
+    this.onTap = null;
+    if (!this.shown) return;
+    this.shown = false;
+    this.el.classList.add('hidden');
+  }
+}
+
 export class TopHud {
   readonly el: HTMLDivElement;
   readonly job: JobBubble;

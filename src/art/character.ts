@@ -1,26 +1,25 @@
 // Teen-proportioned stylized character (about 1.75 tall, head ~1/6.5 of the
-// height), built from rounded meshes and driven by an Outfit. Used by the
-// profile picker, the Style studio, the car (seated), waving passengers and
-// on-foot play (walk / run / jump).
+// height), driven by an Outfit. Used by the profile picker, the Style studio, the car
+// (seated), waving passengers and on-foot play (walk / run / jump).
 //
-// Rig:   group > rig > { legs: hip > knee > ankle,
-//                        upper (pelvis pivot): torso, arms: shoulder > elbow > wrist, head: neck > head }
-// Slots: every outfit slot owns "mounts" (empty groups) that are cleared and
-//        refilled when that slot changes, so setOutfit() rebuilds only what
-//        changed. partObject(slot) returns a proxy whose scale drives all the
-//        mounts of that slot (juice's popScale works on it).
-// Geometry is merged per outfit piece and cached (characterKit / Hair / Parts) so
-// several characters in the town share vertex buffers and materials.
+// Rig:   group > rig(Bone) > { legs: hip > knee > ankle,
+//                              upper (pelvis pivot): torso, arms: shoulder > elbow > wrist, head: neck > head }
+// Render: every outfit piece is baked into the bind pose, tagged with the bone that drives
+//        it and merged — per material category — into a few SkinnedMeshes sharing one
+//        skeleton (see characterSkin.ts). A character costs <= 8 draw calls (typically 5:
+//        skin, fabric, gloss, metal, eyes) and <= 4 shadow casters. Colors are vertex colors,
+//        so the materials are global.
+// Slots: every outfit slot owns "mount" bones (identity transforms) that its vertices bind to,
+//        so partObject(slot) returns a proxy whose scale drives those mounts (popScale works),
+//        and setOutfit() only re-bakes the slots that changed and re-merges the buffers.
 import * as THREE from 'three';
 import type { Outfit } from '../core/model';
 import type { OutfitSlot } from '../core/events';
-import { toyMat, type Finish } from './materials';
+import type { Finish } from './materials';
 import { tuning } from '../tuning';
-import {
-  B, TAU, TY, TORSO_TABLE, cached, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, roleMat, tint, torsoSpace,
-  type MatCtx, type Piece,
-} from './characterKit';
-import { getHair } from './characterHair';
+import { B, TAU, TY, TORSO_TABLE, cached, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, tint, torsoSpace, type Piece } from './characterKit';
+import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
+import { getHair, TAIL_PIVOT } from './characterHair';
 import { clampStyle, getAccessory, getBottom, getShoes, getTop, OUTFIT_CATALOG, type CatalogSlot } from './characterParts';
 
 export { OUTFIT_CATALOG };
@@ -158,11 +157,15 @@ class Gait {
 // ═════════════════════════════════════════════════════════════════════════════
 // The Character
 // ═════════════════════════════════════════════════════════════════════════════
-interface ArmRig { s: number; shoulder: THREE.Group; elbow: THREE.Group; wrist: THREE.Group; upperTop: THREE.Group; lowerTop: THREE.Group }
-interface LegRig { s: number; hip: THREE.Group; knee: THREE.Group; thighBottom: THREE.Group; shinBottom: THREE.Group; foot: THREE.Group }
-interface Swayer { obj: THREE.Group; side: number; phase: number; tilt: number }
+type Bone = THREE.Bone;
+interface ArmRig { s: number; shoulder: Bone; elbow: Bone; wrist: Bone; upperTop: Bone; lowerTop: Bone }
+interface LegRig { s: number; hip: Bone; knee: Bone; ankle: Bone; thighBottom: Bone; shinBottom: Bone; foot: Bone }
+interface Swayer { obj: Bone; side: number; phase: number; tilt: number }
 type MountSlot = 'top' | 'bottom' | 'shoes' | 'skin' | 'accessory';
+type SlotKey = 'body' | 'hair' | 'accessory' | 'top' | 'bottom' | 'shoes';
+const SLOT_KEYS: SlotKey[] = ['body', 'hair', 'top', 'bottom', 'shoes', 'accessory'];
 type ArmPose = { sx: number; sz: number; ex: number; ez: number };
+const WING_PIVOT = new THREE.Vector3(0.05, 1.3 - TY, -0.095);
 
 export class Character {
   /** Height of the pelvis bottom above the group origin — a seated character's butt sits here. */
@@ -173,38 +176,45 @@ export class Character {
   private shadows: boolean;
   private outfit: Outfit;
 
+  // skeleton (ids are stable: every character builds the same bones in the same order)
+  private bones: Bone[] = [];
+  private boneId = new Map<THREE.Object3D, number>();
+  private rest: THREE.Matrix4[] = [];
+  private skeleton!: THREE.Skeleton;
+  private slotChunks: Record<SlotKey, Chunk[]> = { body: [], hair: [], accessory: [], top: [], bottom: [], shoes: [] };
+  private catMeshes = new Map<Cat, THREE.SkinnedMesh>();
   // rig
-  private rig = new THREE.Group();
-  private upper = new THREE.Group();
-  private headRoot = new THREE.Group();
-  private headBody = new THREE.Group();
+  private rig = new THREE.Bone();
+  private upper = new THREE.Bone();
+  private headRoot = new THREE.Bone();
+  private headBody = new THREE.Bone();
   private arms: ArmRig[] = [];
   private legs: LegRig[] = [];
   // slot mounts
-  private topMount = new THREE.Group();
-  private bottomMount = new THREE.Group();
-  private hairMount = new THREE.Group();
-  private accHead = new THREE.Group();
-  private accBody = new THREE.Group();
-  private accBack = new THREE.Group();
-  private accHandR = new THREE.Group();
-  private cupHolder = new THREE.Group(); // keeps a held cup upright
-  private accWristL = new THREE.Group();
-  private mounts: Record<'top' | 'bottom' | 'shoes' | 'accessory', THREE.Group[]> = { top: [], bottom: [], shoes: [], accessory: [] };
+  private topMount = new THREE.Bone();
+  private bottomMount = new THREE.Bone();
+  private hairMount = new THREE.Bone();
+  private tail = new THREE.Bone();
+  private accHead = new THREE.Bone();
+  private accBody = new THREE.Bone();
+  private accBack = new THREE.Bone();
+  private accHandR = new THREE.Bone();
+  private cupHolder = new THREE.Bone(); // keeps a held cup upright
+  private accWristL = new THREE.Bone();
+  private wingBones: Bone[] = [new THREE.Bone(), new THREE.Bone()];
+  private mounts: Record<'top' | 'bottom' | 'shoes' | 'accessory', Bone[]> = { top: [], bottom: [], shoes: [], accessory: [] };
   private proxy: Record<MountSlot, THREE.Object3D> = {
     top: new THREE.Object3D(), bottom: new THREE.Object3D(), shoes: new THREE.Object3D(), skin: new THREE.Object3D(), accessory: new THREE.Object3D(),
   };
   // face
-  private eyes: THREE.Group[] = [];
-  private brows: THREE.Group[] = []; // animated pivots (index 0 = +x side)
-  private browMeshes: THREE.Mesh[] = [];
-  private corners: THREE.Mesh[] = [];
-  private lipUp!: THREE.Mesh;
-  private lipLow!: THREE.Mesh;
-  private mouthAnim = new THREE.Group();
-  private mouthIn!: THREE.Mesh;
+  private eyes: Bone[] = []; // index 0 = +x side
+  private brows: Bone[] = []; // animated pivots (index 0 = +x side)
+  private corners: Bone[] = [];
+  private lipLow = new THREE.Bone();
+  private mouthAnim = new THREE.Bone();
+  private mouthIn = new THREE.Bone();
   private swayers: Swayer[] = [];
-  private wings: { pivot: THREE.Group; side: number }[] = [];
+  private wings: { pivot: Bone; side: number }[] = [];
   private ledMat: THREE.MeshStandardMaterial | null = null;
   private hairTopY = 0.14;
   private accTopY = 0;
@@ -237,7 +247,6 @@ export class Character {
     this.outfit = Character.sanitize(outfit);
     this.seated = !!opts.seated;
     this.shadows = opts.shadows !== false;
-    this.group.add(this.rig);
     this.buildRig();
     this.rebuildAll();
   }
@@ -268,12 +277,20 @@ export class Character {
       dirty.add('hair');
       dirty.add('accessory');
     }
-    if (dirty.has('skin')) this.applySkin();
+    if (dirty.has('skin') || dirty.has('hair')) this.buildBody(); // skin color (and lips); hair color drives the brows
     if (dirty.has('hair')) this.buildHair();
     if (dirty.has('accessory')) this.buildAccessory();
     if (dirty.has('top')) this.buildTop();
     if (dirty.has('bottom')) this.buildBottom();
     if (dirty.has('shoes')) this.buildShoes();
+    this.refreshMeshes();
+  }
+
+  /** Free the GPU buffers (call when a character is thrown away). */
+  dispose(): void {
+    for (const m of this.catMeshes.values()) m.geometry.dispose();
+    this.ledMat?.dispose();
+    this.skeleton.dispose();
   }
 
   /** Little wave hello (~1.5 s). */
@@ -601,7 +618,7 @@ export class Character {
       leg.hip.rotation.set(l.hx, 0, leg.s * l.hz);
       leg.knee.rotation.x = l.kx;
     });
-    this.accHandR.visible = !this.seated;
+    this.cupHolder.scale.setScalar(this.seated ? 0.001 : 1); // no drink while driving
     // a held cup stays upright whatever the arm does
     if (this.holdsCup) this.cupHolder.rotation.x = -(A[1].sx + A[1].ex) * 0.95;
     // face
@@ -616,8 +633,7 @@ export class Character {
     });
     this.mouthAnim.rotation.z = smirk * 0.06;
     this.lipLow.position.y = -open * 0.0075;
-    this.mouthIn.scale.set(1, Math.max(0.001, open), 1);
-    this.mouthIn.visible = open > 0.03;
+    this.mouthIn.scale.set(1, open > 0.03 ? open : 0.001, 1);
     this.brows.forEach((b, i) => {
       const side = i === 0 ? 1 : -1;
       const raise = browUp * (i === 0 ? 1 : 0.6) + Math.max(0, smirk * side * 0.5) + blink * 0.002;
@@ -648,7 +664,7 @@ export class Character {
       }
     }
     // LED soles cycle through colors
-    if (this.ledMat) {
+    if (this.ledMat && this.catMeshes.get('led')?.visible) {
       const hue = (T * 0.22) % 1;
       this.ledMat.color.setHSL(hue, 1, 0.55);
       this.ledMat.emissive.setHSL(hue, 1, 0.55);
@@ -661,206 +677,183 @@ export class Character {
   }
 
   // ── Construction ─────────────────────────────────────────────────────────
-  private mk(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, o: { skin?: boolean; cast?: boolean; recv?: boolean } = {}): THREE.Mesh {
-    const m = new THREE.Mesh(geo, mat);
-    m.castShadow = this.shadows && (o.cast ?? true);
-    m.receiveShadow = this.shadows && (o.recv ?? true);
-    if (o.skin) m.userData.skin = true;
-    parent.add(m);
-    return m;
-  }
-  private ctx(): MatCtx {
+  private ctx(): ColorCtx {
     return { skin: this.outfit.skin, hair: this.outfit.hair.color };
   }
-  private put(parent: THREE.Object3D, ps: Piece[], color: string, finish: Finish): void {
-    for (const p of ps) {
-      let mat: THREE.Material;
-      if (p.role === 'led') {
-        this.ledMat ??= new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1.8, roughness: 0.3 });
-        mat = this.ledMat;
-      } else mat = roleMat(p.role, color, this.ctx(), p.finish ?? finish);
-      const m = this.mk(parent, p.geo, mat, { cast: p.role !== 'led' });
-      if (p.role === 'skin') m.userData.skin = true;
-    }
+
+  /** Register a bone (ids follow creation order, so every character gets the same ids). */
+  private reg(b: Bone, parent: THREE.Object3D, x = 0, y = 0, z = 0): Bone {
+    b.position.set(x, y, z);
+    parent.add(b);
+    this.boneId.set(b, this.bones.length);
+    this.bones.push(b);
+    return b;
+  }
+
+  /** Bake one geometry onto a bone (bind pose) and queue it in a slot. `extra` = placement inside the bone. */
+  private chunk(slot: SlotKey, bone: THREE.Object3D, geo: THREE.BufferGeometry, cat: Cat, color: THREE.Color | null, extra?: THREE.Matrix4, extraKey?: string): void {
+    const id = this.boneId.get(bone)!;
+    const m = extra ? this.rest[id].clone().multiply(extra) : this.rest[id];
+    const key = extra ? (extraKey ? `${id}|${extraKey}` : undefined) : `${id}`;
+    this.slotChunks[slot].push({ cat, bone: id, baked: bakeGeo(geo, m, key), r: color?.r ?? 1, g: color?.g ?? 1, b: color?.b ?? 1 });
+  }
+
+  /** Pieces → chunks: each piece's role picks its vertex color and its material category. */
+  private put(slot: SlotKey, bone: THREE.Object3D, ps: Piece[], color: string, finish: Finish, extra?: THREE.Matrix4, extraKey?: string): void {
+    const ctx = this.ctx();
+    for (const p of ps) this.chunk(slot, bone, p.geo, catOf(p.role, p.finish ?? finish), roleColor(p.role, color, ctx), extra, extraKey);
   }
 
   private buildRig(): void {
-    const skinMat = () => toyMat(this.outfit.skin, 'satin');
-    const rig = this.rig;
-
-    // ── legs ──
+    const g = this.group;
+    const rig = this.reg(this.rig, g);
+    // legs (index 0 = +x)
     for (const s of [1, -1]) {
-      const hip = new THREE.Group();
-      hip.position.set(s * B.hipX, B.hipY, 0);
-      const knee = new THREE.Group();
-      knee.position.y = -B.thighLen;
-      const ankle = new THREE.Group();
-      ankle.position.y = -B.shinLen;
-      const thighBottom = new THREE.Group();
-      const shinBottom = new THREE.Group();
-      const foot = new THREE.Group();
-      this.mk(hip, limbGeo(0.08, 0.063, B.thighLen), skinMat(), { skin: true });
-      this.mk(knee, limbGeo(0.061, 0.04, B.shinLen), skinMat(), { skin: true });
-      hip.add(thighBottom, knee);
-      knee.add(shinBottom, ankle);
-      ankle.add(foot);
-      rig.add(hip);
-      this.legs.push({ s, hip, knee, thighBottom, shinBottom, foot });
+      const hip = this.reg(new THREE.Bone(), rig, s * B.hipX, B.hipY, 0);
+      const knee = this.reg(new THREE.Bone(), hip, 0, -B.thighLen, 0);
+      const ankle = this.reg(new THREE.Bone(), knee, 0, -B.shinLen, 0);
+      const thighBottom = this.reg(new THREE.Bone(), hip);
+      const shinBottom = this.reg(new THREE.Bone(), knee);
+      const foot = this.reg(new THREE.Bone(), ankle);
+      this.legs.push({ s, hip, knee, ankle, thighBottom, shinBottom, foot });
       this.mounts.bottom.push(thighBottom, shinBottom);
       this.mounts.shoes.push(foot);
     }
-
-    // ── upper body ──
-    this.upper.position.y = TY;
-    rig.add(this.upper);
-    const bodyGeo = cached('torsoSkin', () => {
-      const last = TORSO_TABLE.length - 1;
-      const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 8 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 18);
-      torsoSpace(g);
-      return g;
-    });
-    this.mk(this.upper, bodyGeo, skinMat(), { skin: true });
-    this.upper.add(this.topMount, this.bottomMount, this.accBody, this.accBack);
+    // upper body
+    const upper = this.reg(this.upper, rig, 0, TY, 0);
+    this.reg(this.topMount, upper);
+    this.reg(this.bottomMount, upper);
     this.mounts.top.push(this.topMount);
     this.mounts.bottom.push(this.bottomMount);
-    this.mounts.accessory.push(this.accBody, this.accBack, this.accHead, this.accHandR, this.accWristL);
-
-    // ── arms ──
+    // arms
     for (const s of [1, -1]) {
-      const shoulder = new THREE.Group();
-      shoulder.position.set(s * B.shoulderX, B.shoulderY - TY, 0);
-      const elbow = new THREE.Group();
-      elbow.position.y = -B.armUp;
-      const wrist = new THREE.Group();
-      wrist.position.y = -B.armLow;
-      const upperTop = new THREE.Group();
-      const lowerTop = new THREE.Group();
-      this.mk(shoulder, limbGeo(0.046, 0.039, B.armUp - 0.0), skinMat(), { skin: true });
-      this.mk(elbow, limbGeo(0.037, 0.028, B.armLow), skinMat(), { skin: true });
-      this.mk(wrist, handGeo(s), skinMat(), { skin: true });
-      shoulder.add(upperTop, elbow);
-      elbow.add(lowerTop, wrist);
+      const shoulder = this.reg(new THREE.Bone(), upper, s * B.shoulderX, B.shoulderY - TY, 0);
+      const elbow = this.reg(new THREE.Bone(), shoulder, 0, -B.armUp, 0);
+      const wrist = this.reg(new THREE.Bone(), elbow, 0, -B.armLow, 0);
+      const upperTop = this.reg(new THREE.Bone(), shoulder);
+      const lowerTop = this.reg(new THREE.Bone(), elbow);
       this.arms.push({ s, shoulder, elbow, wrist, upperTop, lowerTop });
       this.mounts.top.push(upperTop, lowerTop);
-      this.upper.add(shoulder);
     }
-    this.arms[1].wrist.add(this.accHandR);
-    this.arms[0].wrist.add(this.accWristL);
-
-    // ── head ──
-    this.headRoot.position.y = B.neckY - TY;
-    this.upper.add(this.headRoot);
-    this.headBody.position.y = B.headCY - B.neckY + B.HY * (B.headScale - 1);
+    // head
+    this.reg(this.headRoot, upper, 0, B.neckY - TY, 0);
+    this.reg(this.headBody, this.headRoot, 0, B.headCY - B.neckY + B.HY * (B.headScale - 1), 0);
     this.headBody.scale.setScalar(B.headScale);
-    this.headRoot.add(this.headBody);
-    const hb = this.headBody;
-    this.mk(hb, headGeo(), skinMat(), { skin: true });
-    const kit = getFaceKit();
-    const eyesBySide: THREE.Group[] = [];
-    const browsBySide: THREE.Group[] = [];
+    this.reg(this.hairMount, this.headBody);
+    this.reg(this.tail, this.hairMount, ...TAIL_PIVOT);
+    // accessories
+    this.reg(this.accHead, this.headBody);
+    this.reg(this.accBody, upper);
+    this.reg(this.accBack, upper);
+    this.wingBones.forEach((w, i) => {
+      const s = i === 0 ? 1 : -1;
+      this.reg(w, this.accBack, WING_PIVOT.x * s, WING_PIVOT.y, WING_PIVOT.z);
+      w.scale.x = s;
+    });
+    this.reg(this.accHandR, this.arms[1].wrist);
+    this.reg(this.cupHolder, this.accHandR, 0, -0.06, 0);
+    this.reg(this.accWristL, this.arms[0].wrist);
+    this.mounts.accessory.push(this.accBody, this.accBack, this.accHead, this.accHandR, this.accWristL);
+    // face bones: eyes and brows are mirrored copies (index 0 = +x)
     for (const s of [1, -1]) {
-      const ear = this.mk(hb, kit.ear, skinMat(), { skin: true });
-      ear.position.set(B.HX * 0.985 * s, -0.004, -0.006);
-      // eyes: built for the +x side, mirrored for -x
       const e = facePoint(21, 4, -0.0045);
-      const eg = new THREE.Group();
-      eg.position.set(e.p.x * s, e.p.y, e.p.z);
-      eg.quaternion.copy(frameQ(new THREE.Vector3(e.n.x * s, e.n.y, e.n.z)));
-      eg.scale.x = s;
-      this.mk(eg, kit.eye, kit.eyeMat, { cast: false, recv: false });
-      hb.add(eg);
-      eyesBySide.push(eg);
-      // eyebrows: placement group > animated pivot > mesh
-      const bp = facePoint(22, 15, 0.002);
-      const bg = new THREE.Group();
-      bg.position.set(bp.p.x * s, bp.p.y, bp.p.z);
-      bg.quaternion.copy(frameQ(new THREE.Vector3(bp.n.x * s, bp.n.y, bp.n.z)));
-      bg.scale.x = s;
-      const pivot = new THREE.Group();
-      bg.add(pivot);
-      this.browMeshes.push(this.mk(pivot, kit.brow, toyMat('#3a2a22', 'satin'), { cast: false, recv: false }));
-      hb.add(bg);
-      browsBySide.push(pivot);
+      const eye = this.reg(new THREE.Bone(), this.headBody, e.p.x * s, e.p.y, e.p.z);
+      eye.quaternion.copy(frameQ(new THREE.Vector3(e.n.x * s, e.n.y, e.n.z)));
+      eye.scale.x = s;
+      this.eyes.push(eye);
     }
-    this.eyes = eyesBySide; // index 0 = +x
-    this.brows = browsBySide;
-    const nose = facePoint(0, -9, 0.0015);
-    const nm = this.mk(hb, kit.nose, skinMat(), { skin: true, cast: false, recv: false });
-    nm.position.copy(nose.p);
-    nm.quaternion.copy(frameQ(nose.n));
-    // mouth: placement group > animated group > lips, corners, interior
-    const mp = facePoint(0, -31, 0.0012);
-    const mouthPlace = new THREE.Group();
-    mouthPlace.position.copy(mp.p);
-    mouthPlace.quaternion.copy(frameQ(mp.n));
-    mouthPlace.add(this.mouthAnim);
-    hb.add(mouthPlace);
-    const lipMat = toyMat(lipColor(this.outfit.skin), 'satin');
-    this.mouthIn = this.mk(this.mouthAnim, kit.mouthIn, toyMat('#3a1620', 'matte'), { cast: false, recv: false });
-    this.mouthIn.position.set(0, -0.0006, -0.002);
-    this.mouthIn.visible = false;
-    this.lipUp = this.mk(this.mouthAnim, kit.lips, lipMat, { cast: false, recv: false });
-    this.lipLow = this.mk(this.mouthAnim, kit.lipLow, lipMat, { cast: false, recv: false });
-    const line = this.mk(this.mouthAnim, kit.mouthLine, toyMat('#6a2a38', 'matte'), { cast: false, recv: false });
-    line.position.set(0, 0.0004, 0.0018);
     for (const s of [1, -1]) {
-      const c = this.mk(this.mouthAnim, kit.corner, lipMat, { cast: false, recv: false });
-      c.position.set(s * 0.0165, 0.0004, 0.0012);
-      this.corners.push(c);
+      const bp = facePoint(22, 15, 0.002);
+      const place = this.reg(new THREE.Bone(), this.headBody, bp.p.x * s, bp.p.y, bp.p.z);
+      place.quaternion.copy(frameQ(new THREE.Vector3(bp.n.x * s, bp.n.y, bp.n.z)));
+      place.scale.x = s;
+      this.brows.push(this.reg(new THREE.Bone(), place));
     }
-    hb.add(this.hairMount, this.accHead);
+    const mp = facePoint(0, -31, 0.0012);
+    const mouthPlace = this.reg(new THREE.Bone(), this.headBody, mp.p.x, mp.p.y, mp.p.z);
+    mouthPlace.quaternion.copy(frameQ(mp.n));
+    this.reg(this.mouthAnim, mouthPlace);
+    for (const s of [1, -1]) this.corners.push(this.reg(new THREE.Bone(), this.mouthAnim, s * 0.0165, 0.0004, 0.0012));
+    this.reg(this.lipLow, this.mouthAnim);
+    this.reg(this.mouthIn, this.mouthAnim, 0, -0.0006, -0.002);
+
+    // bind pose: world matrices at rest (the group is still at the origin)
+    g.updateMatrixWorld(true);
+    this.rest = this.bones.map((b) => b.matrixWorld.clone());
+    this.skeleton = new THREE.Skeleton(this.bones);
   }
 
   private rebuildAll(): void {
-    this.applySkin();
+    this.buildBody();
     this.buildHair();
     this.buildAccessory();
     this.buildTop();
     this.buildBottom();
     this.buildShoes();
+    this.refreshMeshes();
   }
 
-  private applySkin(): void {
-    const mat = toyMat(this.outfit.skin, 'satin');
-    this.rig.traverse((o) => {
-      if (o.userData.skin) (o as THREE.Mesh).material = mat;
-    });
-    const lip = toyMat(lipColor(this.outfit.skin), 'satin');
-    this.lipUp.material = lip;
-    this.lipLow.material = lip;
-    for (const c of this.corners) c.material = lip;
+  /** Skin: body, head, hands, ears, nose, lips — and the eyes (colors baked in the geometry). */
+  private buildBody(): void {
+    const ch = this.slotChunks.body;
+    ch.length = 0;
+    const skin = new THREE.Color(this.outfit.skin);
+    const lip = new THREE.Color(lipColor(this.outfit.skin));
+    const add = (bone: THREE.Object3D, geo: THREE.BufferGeometry, color: THREE.Color | null = skin, cat: Cat = 'skin', extra?: THREE.Matrix4, key?: string) =>
+      this.chunk('body', bone, geo, cat, color, extra, key);
+    add(this.upper, torsoSkinGeo());
+    for (const leg of this.legs) {
+      add(leg.hip, limbGeo(0.08, 0.063, B.thighLen));
+      add(leg.knee, limbGeo(0.061, 0.04, B.shinLen));
+    }
+    for (const arm of this.arms) {
+      add(arm.shoulder, limbGeo(0.046, 0.039, B.armUp));
+      add(arm.elbow, limbGeo(0.037, 0.028, B.armLow));
+      add(arm.wrist, handGeo(arm.s));
+    }
+    add(this.headBody, headGeo());
+    const kit = getFaceKit();
+    add(this.headBody, kit.ear, skin, 'skin', earMatrix(1), 'earR');
+    add(this.headBody, kit.ear, skin, 'skin', earMatrix(-1), 'earL');
+    add(this.headBody, kit.nose, skin, 'skin', noseMatrix(), 'nose');
+    this.eyes.forEach((e) => add(e, kit.eye, null, 'eyes'));
+    add(this.mouthAnim, kit.lips, lip);
+    add(this.lipLow, kit.lipLow, lip);
+    add(this.mouthAnim, kit.mouthLine, new THREE.Color('#6a2a38'), 'gloss', lineMatrix(), 'line');
+    this.corners.forEach((c) => add(c, kit.corner, lip));
+    add(this.mouthIn, kit.mouthIn, new THREE.Color('#3a1620'), 'gloss');
   }
 
   private buildHair(): void {
     const o = this.outfit;
+    const ch = this.slotChunks.hair;
+    ch.length = 0;
     const acc = getAccessory(o.accessory.style, o.top.style);
     this.wearsHat = !!acc?.hat;
     const parts = getHair(o.hair.style);
     this.hairTopY = this.wearsHat ? getHair(0).topY : parts.topY;
-    this.hairMount.clear();
     this.swayers = [];
-    const mat = toyMat(o.hair.color, 'satin');
-    this.mk(this.hairMount, parts.base, mat);
-    if (parts.vol && !this.wearsHat) this.mk(this.hairMount, parts.vol, mat);
-    if (parts.front && !this.wearsHat) this.mk(this.hairMount, parts.front, mat);
-    if (parts.dark) this.mk(this.hairMount, parts.dark, toyMat(tint(o.hair.color, -0.4), 'satin'));
-    if (parts.accent) this.mk(this.hairMount, parts.accent, toyMat(tint(o.hair.color, 0.45), 'satin'));
-    parts.tails.forEach((t, i) => {
-      const g = new THREE.Group();
-      g.position.set(...t.pivot);
-      this.mk(g, t.geo, mat);
-      this.hairMount.add(g);
-      this.swayers.push({ obj: g, side: t.side, phase: i * 1.7, tilt: t.tilt });
-    });
+    const hc = new THREE.Color(o.hair.color);
+    const add = (geo: THREE.BufferGeometry, color: THREE.Color, bone: THREE.Object3D = this.hairMount) => this.chunk('hair', bone, geo, 'gloss', color);
+    add(parts.base, hc);
+    if (parts.vol && !this.wearsHat) add(parts.vol, hc);
+    if (parts.front && !this.wearsHat) add(parts.front, hc);
+    if (parts.dark) add(parts.dark, new THREE.Color(tint(o.hair.color, -0.4)));
+    if (parts.accent) add(parts.accent, new THREE.Color(tint(o.hair.color, 0.45)));
+    const t = parts.tails[0];
+    if (t) {
+      add(t.geo, hc, this.tail);
+      this.swayers.push({ obj: this.tail, side: t.side, phase: 0, tilt: t.tilt });
+    }
     // brows follow the hair color (a bit darker so they stay natural)
     const bc = new THREE.Color(o.hair.color).lerp(new THREE.Color('#2a1d17'), 0.6);
-    const browMat = toyMat(`#${bc.getHexString()}`, 'satin');
-    for (const m of this.browMeshes) m.material = browMat;
+    const kit = getFaceKit();
+    for (const b of this.brows) add(kit.brow, bc, b);
   }
 
   private buildAccessory(): void {
     const o = this.outfit;
-    for (const m of [this.accHead, this.accBody, this.accBack, this.accHandR, this.accWristL]) m.clear();
+    this.slotChunks.accessory.length = 0;
     this.accTopY = 0;
     this.wings = [];
     this.holdsCup = false;
@@ -872,83 +865,131 @@ export class Character {
     const topY = acc.hat ? getHair(0).topY : hair.topY;
     this.holdsCup = !!acc.holds;
     if (acc.head.length) {
-      const g = new THREE.Group();
-      this.put(g, acc.head, color, 'gloss');
+      // head pieces are placed on top of the hair (or on its surface) — a per-outfit transform
+      const m = new THREE.Matrix4();
       if (acc.onSurface) {
         const f = acc.onSurface;
         const { p, n } = facePoint(f.theta, f.phi, f.off, hr);
-        g.position.copy(p);
-        g.quaternion.copy(frameQ(n, f.roll));
+        m.compose(p, frameQ(n, f.roll), new THREE.Vector3(1, 1, 1));
       } else if (!acc.fixed) {
         const s = hr / 1.1;
-        g.scale.setScalar(s);
-        g.position.y = topY - 0.14 * s;
+        m.compose(new THREE.Vector3(0, topY - 0.14 * s, 0), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
       }
-      this.accHead.add(g);
+      this.put('accessory', this.accHead, acc.head, color, 'gloss', m);
       this.accTopY = acc.fixed ? 0 : topY + acc.topLift;
     }
-    if (acc.body.length) this.put(this.accBody, acc.body, color, 'gloss');
-    if (acc.handR.length) {
-      this.cupHolder.position.set(0, -0.06, 0);
-      this.put(this.cupHolder, acc.handR, color, 'gloss');
-      this.accHandR.add(this.cupHolder);
-    }
-    if (acc.wristL.length) this.put(this.accWristL, acc.wristL, color, 'fabric');
+    if (acc.body.length) this.put('accessory', this.accBody, acc.body, color, 'gloss');
+    if (acc.handR.length) this.put('accessory', this.cupHolder, acc.handR, color, 'gloss');
+    if (acc.wristL.length) this.put('accessory', this.accWristL, acc.wristL, color, 'fabric');
     if (acc.back.length) {
-      // wings: a pivot per side so they can flap; the geometry is built in upper-body space
-      const P = new THREE.Vector3(0.05, 1.3 - TY, -0.095);
-      for (const s of [1, -1]) {
-        const pivot = new THREE.Group();
-        pivot.position.set(P.x * s, P.y, P.z);
-        const inner = new THREE.Group();
-        inner.scale.x = s;
-        inner.position.set(0, 0, 0);
-        const holder = new THREE.Group();
-        holder.position.set(-P.x, -P.y, -P.z);
-        this.put(holder, acc.back, color, 'gloss');
-        inner.add(holder);
-        pivot.add(inner);
-        this.accBack.add(pivot);
-        this.wings.push({ pivot, side: s });
-      }
+      // wings: one bone per side so they can flap; the pieces are authored in upper-body space
+      const toPivot = new THREE.Matrix4().makeTranslation(-WING_PIVOT.x, -WING_PIVOT.y, -WING_PIVOT.z);
+      this.wingBones.forEach((w, i) => {
+        this.put('accessory', w, acc.back, color, 'gloss', toPivot, 'wing');
+        this.wings.push({ pivot: w, side: i === 0 ? 1 : -1 });
+      });
     }
   }
 
   private buildTop(): void {
     const o = this.outfit;
-    this.topMount.clear();
-    this.put(this.topMount, getTop(o.top.style, 0).torso, o.top.color, 'fabric');
+    this.slotChunks.top.length = 0;
+    this.put('top', this.topMount, getTop(o.top.style, 0).torso, o.top.color, 'fabric');
     this.arms.forEach((arm, i) => {
       const parts = getTop(o.top.style, i);
-      arm.upperTop.clear();
-      arm.lowerTop.clear();
-      this.put(arm.upperTop, parts.upper, o.top.color, 'fabric');
-      this.put(arm.lowerTop, parts.lower, o.top.color, 'fabric');
+      this.put('top', arm.upperTop, parts.upper, o.top.color, 'fabric');
+      this.put('top', arm.lowerTop, parts.lower, o.top.color, 'fabric');
     });
   }
 
   private buildBottom(): void {
     const o = this.outfit;
     const st = o.bottom.style;
-    this.bottomMount.clear();
-    this.put(this.bottomMount, getBottom(st, 0).torso, o.bottom.color, 'fabric');
+    this.slotChunks.bottom.length = 0;
+    this.put('bottom', this.bottomMount, getBottom(st, 0).torso, o.bottom.color, 'fabric');
     this.legs.forEach((leg, i) => {
       const parts = getBottom(st, i);
-      leg.thighBottom.clear();
-      leg.shinBottom.clear();
-      this.put(leg.thighBottom, parts.thigh, o.bottom.color, 'fabric');
-      this.put(leg.shinBottom, parts.shin, o.bottom.color, 'fabric');
+      this.put('bottom', leg.thighBottom, parts.thigh, o.bottom.color, 'fabric');
+      this.put('bottom', leg.shinBottom, parts.shin, o.bottom.color, 'fabric');
     });
   }
 
   private buildShoes(): void {
     const o = this.outfit;
+    this.slotChunks.shoes.length = 0;
     const ps = getShoes(o.shoes.style);
-    for (const leg of this.legs) {
-      leg.foot.clear();
-      this.put(leg.foot, ps, o.shoes.color, 'satin');
+    for (const leg of this.legs) this.put('shoes', leg.foot, ps, o.shoes.color, 'satin');
+  }
+
+  /** Re-merge every category's chunks into its SkinnedMesh (creating meshes on demand). */
+  private refreshMeshes(): void {
+    const per = new Map<Cat, Chunk[]>();
+    for (const slot of SLOT_KEYS) for (const c of this.slotChunks[slot]) (per.get(c.cat) ?? per.set(c.cat, []).get(c.cat)!).push(c);
+    for (const cat of ALL_CATS) {
+      const list = per.get(cat);
+      const geo = list ? assembleGeometry(list) : null;
+      let mesh = this.catMeshes.get(cat);
+      if (!geo) {
+        if (mesh) {
+          mesh.visible = false;
+          mesh.geometry.dispose();
+          mesh.geometry = new THREE.BufferGeometry();
+        }
+        continue;
+      }
+      if (!mesh) mesh = this.makeMesh(cat);
+      const old = mesh.geometry;
+      mesh.geometry = geo;
+      old.dispose();
+      // raycasting recomputes these lazily from the skinned vertices
+      mesh.boundingSphere = null as unknown as THREE.Sphere;
+      mesh.boundingBox = null as unknown as THREE.Box3;
+      mesh.visible = true;
     }
-    if (!ps.some((p) => p.role === 'led')) this.ledMat = null;
+  }
+
+  private makeMesh(cat: Cat): THREE.SkinnedMesh {
+    let mat: THREE.Material;
+    if (cat === 'led') {
+      this.ledMat ??= new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1.8, roughness: 0.3 });
+      mat = this.ledMat;
+    } else mat = getMats()[cat];
+    const mesh = new THREE.SkinnedMesh(new THREE.BufferGeometry(), mat);
+    mesh.name = `char-${cat}`;
+    mesh.frustumCulled = false; // limbs swing outside the bind-pose bounds
+    mesh.castShadow = this.shadows && SHADOW_CATS.has(cat);
+    mesh.receiveShadow = this.shadows && !NO_RECEIVE.has(cat);
+    this.group.add(mesh);
+    mesh.bind(this.skeleton, new THREE.Matrix4()); // bind pose was captured with the group at the origin
+    this.catMeshes.set(cat, mesh);
+    return mesh;
   }
 }
 
+// ── static body geometry helpers ────────────────────────────────────────────
+function torsoSkinGeo(): THREE.BufferGeometry {
+  return cached('torsoSkin', () => {
+    const last = TORSO_TABLE.length - 1;
+    const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 8 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 18);
+    torsoSpace(g);
+    return g;
+  });
+}
+const mat4 = (pos: THREE.Vector3, q?: THREE.Quaternion) => new THREE.Matrix4().compose(pos, q ?? new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+let _ear: [THREE.Matrix4, THREE.Matrix4] | null = null;
+function earMatrix(s: number): THREE.Matrix4 {
+  _ear ??= [mat4(new THREE.Vector3(B.HX * 0.985, -0.004, -0.006)), mat4(new THREE.Vector3(-B.HX * 0.985, -0.004, -0.006))];
+  return s > 0 ? _ear[0] : _ear[1];
+}
+let _nose: THREE.Matrix4 | null = null;
+function noseMatrix(): THREE.Matrix4 {
+  if (!_nose) {
+    const n = facePoint(0, -9, 0.0015);
+    _nose = mat4(n.p, frameQ(n.n));
+  }
+  return _nose;
+}
+let _line: THREE.Matrix4 | null = null;
+function lineMatrix(): THREE.Matrix4 {
+  return (_line ??= mat4(new THREE.Vector3(0, 0.0004, 0.0018)));
+}

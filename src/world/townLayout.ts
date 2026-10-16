@@ -105,6 +105,8 @@ export const ROAD_PATHS: RoadPath[] = [
   { id: 'ring_e', pts: densify([[42, -42], [42, 42]], 6), w: ROAD_WIDTH, kind: 'street', walk: true, lines: 'center' },
   { id: 'ring_n', pts: densify([[-42, -42], [42, -42]], 6), w: ROAD_WIDTH, kind: 'street', walk: true, lines: 'center' },
   { id: 'ring_s', pts: densify([[-42, 42], [42, 42]], 6), w: ROAD_WIDTH, kind: 'street', walk: true, lines: 'center' },
+  // the Studio plaza driveway: straight and wide, from Main Street right up to the pad
+  { id: 'studio_drive', pts: densify([[21, -5], [21, -13]], 4), w: 9, kind: 'drive', lines: 'none' },
   // ── the big loop + country roads ──
   { id: 'main_e', pts: densify([[47, 0], [80, 0]], 6), w: ROAD_WIDTH - 1, kind: 'road', lines: 'center' },
   { id: 'center_n', pts: densify([[0, -47], [0, -62]], 6), w: ROAD_WIDTH - 1, kind: 'road', lines: 'center' },

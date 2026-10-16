@@ -82,6 +82,7 @@ export class PickerScene extends GameScene {
   private clearSlots(): void {
     for (const s of this.slots) {
       this.stage.remove(s.root);
+      s.char.dispose?.(); // skinned characters own their merged GPU buffers
       s.tag.remove();
     }
     this.slots = [];

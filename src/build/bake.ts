@@ -251,6 +251,16 @@ export class Baker {
     a.n += pos.count;
   }
 
+  /** Index count written so far per fin (lets a caller attribute triangle ranges to the piece it just drew). */
+  mark(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const f of FINS) {
+      const a = this.acc[f];
+      if (a) out[f] = a.idx.length;
+    }
+    return out;
+  }
+
   bake(): Baked {
     const out: Baked = {};
     for (const f of FINS) {

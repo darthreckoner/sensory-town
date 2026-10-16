@@ -57,17 +57,18 @@ export function buildHomeHills(): HomeOut {
     const gx = -64, gz = 3 + 6 * Math.sin((gx + 62) / 24);
     const gy = groundHeight(gx, gz);
     for (const s of [-1, 1]) {
-      m.box(concrete, gx, gy + 2.6, gz + s * 7.6, 1.3, 5.2, 1.3);
-      m.box(mat.neon(PAL.lime), gx - 0.68, gy + 2.6, gz + s * 7.6, 0.06, 5.0, 0.12);
+      m.box(concrete, gx, gy + 5.3, gz + s * 7.6, 1.3, 10.6, 1.3);
+      m.box(mat.neon(PAL.lime), gx - 0.68, gy + 5.3, gz + s * 7.6, 0.06, 10.2, 0.12);
       colliders.push({ kind: 'box', x: gx, z: gz + s * 7.6, hw: 0.65, hd: 0.65 });
     }
-    m.box(trim, gx, gy + 5.5, gz, 0.6, 0.8, 16.4);
+    // the whole gate is raised well above the chase camera (it flies about 6-7 units up), so you drive under it, never through it
+    m.box(trim, gx, gy + 10.4, gz, 0.6, 0.8, 16.4);
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: bigSignTexture('HOME HILLS', '#ffffff', PAL.lime, 1024, 256, 'BUILD YOUR PLACE'), toneMapped: false, side: THREE.DoubleSide }));
-    sign.position.set(gx + 0.38, gy + 7.6, gz);
+    sign.position.set(gx + 0.38, gy + 12.6, gz);
     sign.rotation.y = Math.PI / 2;
     ex.add(sign);
     const back = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ color: '#12101c', side: THREE.DoubleSide }));
-    back.position.set(gx + 0.31, gy + 7.6, gz);
+    back.position.set(gx + 0.31, gy + 12.6, gz);
     back.rotation.y = Math.PI / 2;
     ex.add(back);
   }

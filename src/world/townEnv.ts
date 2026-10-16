@@ -72,16 +72,37 @@ export function buildTownEnvironment(): TownEnv {
   group.add(sc.build.group);
   colliders.push(...sc.veg.colliders);
 
+  // The sun's shadow box only covers the area around the player: far districts and far tree chunks stop casting
+  // (they are still drawn), which halves the shadow pass.
+  const casters = new Map<Piece, THREE.Mesh[]>();
+  for (const p of pieces) {
+    const list: THREE.Mesh[] = [];
+    p.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.castShadow) list.push(m);
+    });
+    casters.set(p, list);
+  }
+  const chunkCast = new Map<THREE.Mesh, boolean>();
+  for (const c of sc.build.chunks) for (const mesh of c.meshes) chunkCast.set(mesh, mesh.castShadow);
+  const SHADOW_NEAR_TREES = 90;
   let vx = RESIDENTIAL.center.x, vz = RESIDENTIAL.center.z;
   const apply = (): void => {
     for (const p of pieces) {
       if (!p.cull) continue;
-      p.group.visible = Math.hypot(vx - p.cull.x, vz - p.cull.z) < p.cull.r;
+      const dist = Math.hypot(vx - p.cull.x, vz - p.cull.z);
+      p.group.visible = dist < p.cull.r;
+      const cast = dist < p.cull.r * 0.55;
+      for (const m of casters.get(p)!) m.castShadow = cast;
     }
     for (const c of terrain.chunks) c.visible = Math.hypot(vx - c.userData.cx, vz - c.userData.cz) < tuning.drive.cullTerrain;
     for (const c of sc.build.chunks) {
-      const vis = Math.hypot(vx - c.cx, vz - c.cz) < tuning.drive.cullVegetation;
-      for (const mesh of c.meshes) mesh.visible = vis;
+      const dist = Math.hypot(vx - c.cx, vz - c.cz);
+      const vis = dist < tuning.drive.cullVegetation;
+      for (const mesh of c.meshes) {
+        mesh.visible = vis;
+        mesh.castShadow = (chunkCast.get(mesh) ?? false) && dist < SHADOW_NEAR_TREES;
+      }
     }
   };
   apply();

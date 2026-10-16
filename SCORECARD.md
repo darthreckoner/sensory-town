@@ -169,3 +169,65 @@ The main cost is characters (58 meshes each) and per-piece house objects.
 **The real external check (not done — needs the kids):** 15-minute silent session on the iPads.
 - **Pass:** they find + start a home unaided, crack wax 3+ times voluntarily, nobody says "babyish", they ask to keep playing.
 - **Watch for:** where they hesitate (pads vs doors), whether they read the 💎 counter, whether the music gets switched off.
+
+### Round 2 — re-graded 2026-10-16 (same locked rubric; repro-first fixes)
+**Repro suite** (`src/core/selftest.ts`). Each bug was reproduced failing before its fix; all now pass in the browser.
+
+| Repro | Before | After |
+|---|---|---|
+| waxReflow | tap at old Cool spot hit "New" → coat wiped | hits Cool, coat kept; New is hold-to-confirm, bottom-left |
+| carClaim | car auto-claimed a lot | lot not claimed; "🏠 Build here?" prompt shown |
+| blackFabric | torso luma 0.42 | **0.17** |
+| gateway | camera blocked 4/160 frames | **0/160** |
+| drawCallsTown | 382 | **130** |
+| drawCallsBuild | 379 | **106** |
+| arriveOnce | — | passes: fires 1× in real time (v2 "chime ×15" **withdrawn** — a frame-stepping artifact of my test) |
+| mineTab | — | passes: fully on screen (v2 finding **withdrawn**) |
+
+**Full cold walkthrough, second profile (Moon), fresh save — 6/6 tasks, 0 console errors:**
+1. Pick player.
+2. Wolf cut + navy (camera glide, sparkles).
+3. Drove the new Studio driveway.
+4. Pink dip + cyan pour → Cool → crack → Save; buttons stayed in fixed slots.
+5. FOR SALE mat by car → "Build here?" → claim → starter sheet (with "Not now") → Modern box → furniture: 3/5 first-try, the 2 misses were cells my own earlier drops filled.
+6. ⭐ Mine → wax creation placed in the house.
+
+Profiles stay separate (Star 0 creations, Moon 1); the shared town shows Moon's house.
+
+**Peak draw calls over the whole run:**
+
+| Scene | v2 | Round 2 |
+|---|---|---|
+| town | 516 | **223** |
+| build | 450 | **215** (includes the template build-up transient) |
+| style | 151 | **42** |
+| picker | 225 | **33** |
+| studio | 120 | 122 |
+
+**Other fixes (Director):** studio-styled wax props (charcoal pot, copper band, steel jug, dark dish with neon rim), bigger picker characters, thicker wax layers, station visibility on Studio entry, picker disposes skinned characters.
+
+| Row | v2 | Round 2 | Counter-argument tested → verdict |
+|---|---|---|---|
+| Audience fit 9–11 | 7 | **7.5** | "Faces are plain" — true, minor; the props were fixed. |
+| P1 Make it yours | 7.5 | **8** | "Cool car paints are locked" — base has the full palette + gloss/matte; first reward comes at 2 charms. Holds. |
+| P2 Satisfying touch | 8 | **8** | Unchanged; hold-to-confirm removes the one frustration. |
+| P3 Free play | 7.5 | **8.5** | "Charms are a soft paywall" — no money, base content never locked, found by exploring. Holds. |
+| Exploration | 8 | **8** | Studio driveway fixed. |
+| Building depth | 7.5 | **8** | "Wall items need walls" — the red ghost explains it. Holds. |
+| Art / style | 7.5 | **7.5** | "Plain faces, a few boxy buildings" — fair; held at 7.5. |
+| Playability | 6 | **7.5** | Repros pass, 0 errors, both profiles, calls ≤ 223. Held below 8: not yet on a real iPad, and the car prompt needs the car stopped on the mat. |
+| Sound | 7 | **7** | Still not heard by ear. |
+
+| Activity | Round 2 |
+|---|---|
+| Wax | 8.5 |
+| Squishy | 7.5 |
+| Slime | 8 |
+| Style | 8 |
+| Driving / exploration | 8 |
+| Building | 8 |
+| Profiles + share | 7 |
+
+**Verdict: every row ≥ 7 → ship round 2.**
+
+Remaining external checks (kids + iPad): see docs/KIDS_PLAYTEST.md.

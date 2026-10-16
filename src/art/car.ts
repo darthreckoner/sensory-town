@@ -18,6 +18,8 @@ import { tuning } from '../tuning';
 import { mesh, roundedBox, toyMatUnique } from './materials';
 import { Character } from './character';
 import { bakeStatic, clamp, lathe } from '../drive/envUtils';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { PAL } from '../drive/palette';
 import { Mesher } from '../drive/mesher';
 import { mat } from '../drive/kit';
 
@@ -96,8 +98,8 @@ export class Car {
   private readonly glow: THREE.Mesh;
   private readonly glowMat: THREE.MeshBasicMaterial;
   private readonly tail: THREE.MeshBasicMaterial;
-  private readonly rimMat: THREE.MeshStandardMaterial;
-  private readonly capMat: THREE.MeshStandardMaterial;
+  private readonly wheelMat: THREE.MeshStandardMaterial;
+  private readonly wheelGeo = new Map<number, WheelGeo>();
   private readonly flames: THREE.Mesh[] = [];
   private spinAngle = 0;
   private roll = 0;
@@ -108,12 +110,11 @@ export class Car {
 
   constructor(color: string, outfit: Outfit, style?: Partial<CarStyle>) {
     this.paint = toyMatUnique(color, 'gloss');
-    this.rimMat = new THREE.MeshStandardMaterial({ color: '#d9dce6', roughness: 0.22, metalness: 0.95 });
-    this.capMat = new THREE.MeshStandardMaterial({ color: '#ff2e88', roughness: 0.4, metalness: 0.3 });
+    this.wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.5, side: THREE.DoubleSide });
     this.tail = new THREE.MeshBasicMaterial({ color: '#8a1218', toneMapped: false });
     this.group.rotation.order = 'YXZ';
     // these are recoloured at runtime, so they must never be folded into look-alike materials
-    for (const m of [this.paint, this.rimMat, this.capMat, this.tail]) m.userData.keep = true;
+    for (const m of [this.paint, this.tail]) m.userData.keep = true;
 
     // soft contact shadow
     const shadow = new THREE.Mesh(
@@ -177,7 +178,7 @@ export class Car {
   setStyle(s: Partial<CarStyle>): void {
     this.style = { ...this.style, ...s };
     this.applyFinish();
-    this.rimMat.color.set(this.style.rims);
+    this.recolorWheels();
     this.glow.visible = !!this.style.neon;
     if (this.style.neon) this.glowMat.color.set(this.style.neon);
   }
@@ -211,16 +212,20 @@ export class Car {
         p.envMapIntensity = 1.2;
     }
     p.needsUpdate = true;
-    this.capMat.color.copy(this.baseColor);
+    this.recolorWheels();
   }
 
   setOutfit(outfit: Outfit): void {
     this.driver.setOutfit(outfit);
   }
 
-  /** Seat (or remove, with null) a passenger. */
+  /** Seat (or remove, with null) a passenger. The car owns its passenger: whoever leaves is disposed. */
   setPassenger(c: Character | null): void {
-    if (this.passenger) this.seatRoot.remove(this.passenger.group);
+    const old = this.passenger;
+    if (old) {
+      this.seatRoot.remove(old.group);
+      if (old !== c) old.dispose();
+    }
     this.passenger = c;
     if (c) {
       const d = tuning.drive;
@@ -293,7 +298,12 @@ export class Car {
   }
 
   // ── construction ─────────────────────────────────────────────────────────
+  // Draw-call diet: everything static is baked into ONE mesh per finish class —
+  // paint (body shell + painted trim), flat colours, chrome, glow, glass — plus the
+  // tail lights (recoloured when braking), the steering wheel and four one-piece
+  // wheels. About 12 meshes, one shadow caster.
   private buildBody(): void {
+    const detail = new THREE.Group();
     // the extruded, bevelled shell with real wheel arches
     const geo = new THREE.ExtrudeGeometry(bodyShape(), {
       depth: 1.5, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.1, bevelOffset: -0.1, bevelSegments: 3, curveSegments: 8,
@@ -302,14 +312,13 @@ export class Car {
     geo.rotateY(Math.PI / 2);
     geo.translate(-0.75, 0, 0);
     const body = new THREE.Mesh(geo, this.paint);
-    body.castShadow = true;
-    body.receiveShadow = false;
-    this.rig.add(body);
+    detail.add(body);
 
     const m = new Mesher();
     m.push(0, 0, 0);
-    const trim = mat.trim();
-    const dark = mat.std('#16151c', 0.5, 0.2);
+    const flat = (c: string): THREE.Material => mat.std(c, 0.55, 0.1);
+    const trim = flat(PAL.trim);
+    const dark = flat('#16151c');
     const chrome = mat.chrome();
     const paint = this.paint;
     // door panels / sills along the open cockpit
@@ -348,7 +357,7 @@ export class Car {
       m.box(this.tail, sx * 0.72, 0.84, 2.18, 0.28, 0.1, 0.05);
       m.box(mat.neon('#ffffff'), sx * 0.52, 0.6, 2.2, 0.1, 0.05, 0.03);
     }
-    m.box(mat.std('#f3f2ee', 0.5), 0, 0.62, 2.21, 0.62, 0.2, 0.025);
+    m.box(flat('#f3f2ee'), 0, 0.62, 2.21, 0.62, 0.2, 0.025);
     m.box(dark, 0, 0.3, 2.12, 1.5, 0.12, 0.2);
     // roll hoops (chrome) behind the seats + a small deck spoiler lip
     for (const sx of [-1, 1]) {
@@ -356,94 +365,157 @@ export class Car {
       m.box(mat.neon('#ffffff'), sx * 0.44, 1.2, 0.98, 0.09, 0.03, 0.09);
     }
     m.box(paint, 0, 0.99, 2.0, 1.4, 0.04, 0.2);
-    this.rig.add(m.build('car-detail'));
+    detail.add(m.build('car-detail'));
 
     // exhaust tips and boost flames (cones pointing back)
     for (const sx of [-1, 1]) {
       const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.24, 12).rotateX(Math.PI / 2), chrome);
       tip.position.set(sx * 0.5, 0.36, 2.2);
-      this.rig.add(tip);
+      detail.add(tip);
       const f = new THREE.Mesh(new THREE.ConeGeometry(0.1, 1.2, 8, 1, true).translate(0, 0.6, 0).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#8fd9ff', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }));
       f.position.set(sx * 0.5, 0.36, 2.3);
       f.visible = false;
       this.rig.add(f);
       this.flames.push(f);
     }
-  }
 
-  private buildInterior(): void {
-    const seat = new THREE.MeshStandardMaterial({ color: '#1d1b26', roughness: 0.7 });
-    const accent = new THREE.MeshStandardMaterial({ color: '#ff2e88', roughness: 0.6 });
-    const g = new THREE.Group();
+    // seats, console, steering column (static)
+    const seat = flat('#1d1b26');
+    const accent = flat('#ff2e88');
     for (const sx of [-1, 1]) {
-      const base = mesh(roundedBox(0.52, 0.14, 0.56, 0.05, 2), seat, true, false);
+      const base = mesh(roundedBox(0.52, 0.14, 0.56, 0.05, 2), seat, false, false);
       base.position.set(sx * 0.42, 0.62 - 0.05, 0.38);
-      const back = mesh(roundedBox(0.52, 0.44, 0.12, 0.05, 2), seat, true, false);
+      const back = mesh(roundedBox(0.52, 0.44, 0.12, 0.05, 2), seat, false, false);
       back.position.set(sx * 0.42, 0.86, 0.72);
       back.rotation.x = -0.2;
       const stripe = mesh(roundedBox(0.08, 0.34, 0.02, 0.01, 1), accent, false, false);
       stripe.position.set(sx * 0.42, 0.86, 0.65);
       stripe.rotation.x = -0.2;
-      g.add(base, back, stripe);
+      detail.add(base, back, stripe);
     }
-    // centre console
-    const con = mesh(roundedBox(0.18, 0.16, 0.9, 0.04, 2), mat.std('#2e2b3a', 0.5), true, false);
+    const con = mesh(roundedBox(0.18, 0.16, 0.9, 0.04, 2), flat('#2e2b3a'), false, false);
     con.position.set(0, 0.66, 0.2);
-    g.add(con);
-    this.rig.add(bakeStatic(g));
+    detail.add(con);
+    const colHolder = new THREE.Group();
+    colHolder.position.set(-0.42, 1.0, -0.05);
+    colHolder.rotation.x = 1.1;
+    const col = mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.34, 8).rotateX(Math.PI / 2), dark, false, false);
+    col.position.z = -0.17;
+    colHolder.add(col);
+    detail.add(colHolder);
 
-    // steering wheel (animated): a thick ring with a flat bottom look + spokes
+    // Normalise the shadow flags so the pieces fold together: only the paint casts (one caster for the whole car),
+    // and the car never receives shadows (smooth shell, no acne).
+    detail.traverse((o) => {
+      const mm = o as THREE.Mesh;
+      if (!mm.isMesh) return;
+      mm.castShadow = mm.material === this.paint;
+      mm.receiveShadow = false;
+    });
+    this.rig.add(bakeStatic(detail));
+  }
+
+  private buildInterior(): void {
+    // steering wheel (animated): a thick ring + spokes, one mesh
+    const flat = (c: string): THREE.Material => mat.std(c, 0.55, 0.1);
     const sw = new THREE.Group();
     sw.position.set(-0.42, 1.0, -0.05);
     sw.rotation.x = 1.1;
-    const ring = mesh(new THREE.TorusGeometry(0.17, 0.028, 8, 22), mat.std('#16151c', 0.5), false, false);
-    const spoke = mesh(roundedBox(0.34, 0.03, 0.03, 0.01, 1), mat.std('#8d8b96', 0.4, 0.6), false, false);
-    const hub = mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 12).rotateX(Math.PI / 2), accent, false, false);
-    const mark = mesh(roundedBox(0.03, 0.06, 0.03, 0.01, 1), mat.neon('#ffffff'), false, false);
+    const parts = new THREE.Group();
+    parts.add(mesh(new THREE.TorusGeometry(0.17, 0.028, 8, 22), flat('#16151c'), false, false));
+    parts.add(mesh(roundedBox(0.34, 0.03, 0.03, 0.01, 1), flat('#8d8b96'), false, false));
+    parts.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 12).rotateX(Math.PI / 2), flat('#ff2e88'), false, false));
+    const mark = mesh(roundedBox(0.03, 0.06, 0.03, 0.01, 1), flat('#ffffff'), false, false);
     mark.position.set(0, 0.17, 0);
-    this.swSpin.add(ring, spoke, hub, mark);
+    parts.add(mark);
+    parts.traverse((o) => {
+      const mm = o as THREE.Mesh;
+      if (mm.isMesh) mm.castShadow = mm.receiveShadow = false;
+    });
+    for (const c of [...bakeStatic(parts).children]) this.swSpin.add(c);
     sw.add(this.swSpin);
-    const col = mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.34, 8).rotateX(Math.PI / 2), mat.std('#16151c', 0.5), false, false);
-    col.position.z = -0.17;
-    sw.add(col);
     this.rig.add(sw);
   }
 
-  /** Low-profile tyre, 5-spoke alloy, brake disc + coloured centre cap. */
+  /** Low-profile tyre, 5-spoke alloy and centre cap as ONE vertex-coloured mesh (rim + cap colours change with the paint sheet). */
   private buildWheel(side: number): THREE.Object3D {
-    const tireMat = new THREE.MeshStandardMaterial({ color: '#1b1a22', roughness: 0.9, side: THREE.DoubleSide });
-    const R = WHEEL_R, W = WHEEL_W, rr = 0.09;
-    const prof: [number, number][] = [[0, -W / 2]];
-    for (let i = 0; i <= 4; i++) {
-      const a = -Math.PI / 2 + (i / 4) * (Math.PI / 2);
-      prof.push([R - rr + rr * Math.cos(a), -W / 2 + rr + rr * Math.sin(a)]);
+    let rec = this.wheelGeo.get(side);
+    if (!rec) {
+      rec = makeWheelGeometry(side);
+      this.wheelGeo.set(side, rec);
+      this.recolorWheels();
     }
-    for (let i = 0; i <= 4; i++) {
-      const a = (i / 4) * (Math.PI / 2);
-      prof.push([R - rr + rr * Math.cos(a), W / 2 - rr + rr * Math.sin(a)]);
-    }
-    prof.push([0, W / 2]);
-    const asm = new THREE.Group();
-    const tire = mesh(lathe(prof, 28), tireMat, true, false);
-    tire.rotation.z = Math.PI / 2;
-    asm.add(tire);
-    const xo = side * (W / 2 - 0.015);
-    // rim barrel + lip, spokes, cap (the dark well / disc / caliper behind the spokes were invisible at speed and cost draw calls)
-    const lip = mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.04, 28).rotateZ(Math.PI / 2), this.rimMat, true, false);
-    lip.position.x = xo;
-    asm.add(lip);
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      const sp = mesh(roundedBox(0.04, 0.22, 0.055, 0.012, 1), this.rimMat, true, false);
-      sp.position.set(xo + side * 0.01, Math.cos(a) * 0.125, Math.sin(a) * 0.125);
-      sp.rotation.x = a;
-      asm.add(sp);
-    }
-    const cap = mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 14).rotateZ(Math.PI / 2), this.capMat, false, false);
-    cap.position.x = xo + side * 0.02;
-    asm.add(cap);
-    return bakeStatic(asm);
+    const m = new THREE.Mesh(rec.geo, this.wheelMat);
+    m.castShadow = false;
+    m.receiveShadow = false;
+    return m;
   }
+
+  private recolorWheels(): void {
+    const tire = new THREE.Color('#1b1a22');
+    const rim = new THREE.Color(this.style.rims);
+    const cap = this.baseColor;
+    for (const rec of this.wheelGeo.values()) {
+      const a = rec.geo.attributes.color as THREE.BufferAttribute;
+      const arr = a.array as Float32Array;
+      const put = (from: number, to: number, c: THREE.Color): void => {
+        for (let i = from; i < to; i++) {
+          arr[i * 3] = c.r;
+          arr[i * 3 + 1] = c.g;
+          arr[i * 3 + 2] = c.b;
+        }
+      };
+      put(0, rec.tireEnd, tire);
+      put(rec.tireEnd, rec.rimEnd, rim);
+      put(rec.rimEnd, rec.count, cap);
+      a.needsUpdate = true;
+    }
+  }
+}
+
+interface WheelGeo {
+  geo: THREE.BufferGeometry;
+  tireEnd: number;
+  rimEnd: number;
+  count: number;
+}
+
+/** A wheel's geometry in one non-indexed buffer: [tyre | rim lip + spokes | cap], with a colour attribute to fill. */
+function makeWheelGeometry(side: number): WheelGeo {
+  const R = WHEEL_R, W = WHEEL_W, rr = 0.09;
+  const prof: [number, number][] = [[0, -W / 2]];
+  for (let i = 0; i <= 4; i++) {
+    const a = -Math.PI / 2 + (i / 4) * (Math.PI / 2);
+    prof.push([R - rr + rr * Math.cos(a), -W / 2 + rr + rr * Math.sin(a)]);
+  }
+  for (let i = 0; i <= 4; i++) {
+    const a = (i / 4) * (Math.PI / 2);
+    prof.push([R - rr + rr * Math.cos(a), W / 2 - rr + rr * Math.sin(a)]);
+  }
+  prof.push([0, W / 2]);
+  const piece = (g: THREE.BufferGeometry, m4: THREE.Matrix4): THREE.BufferGeometry => {
+    let c = g.clone().applyMatrix4(m4);
+    for (const name of Object.keys(c.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') c.deleteAttribute(name);
+    if (!c.attributes.normal) c.computeVertexNormals();
+    if (!c.attributes.uv) c.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(c.attributes.position.count * 2), 2));
+    if (c.index) c = c.toNonIndexed();
+    return c;
+  };
+  const xo = side * (W / 2 - 0.015);
+  const T = (x: number, y: number, z: number): THREE.Matrix4 => new THREE.Matrix4().makeTranslation(x, y, z);
+  const tire = [piece(lathe(prof, 28), new THREE.Matrix4().makeRotationZ(Math.PI / 2))];
+  const rim = [piece(new THREE.CylinderGeometry(0.255, 0.255, 0.04, 28).rotateZ(Math.PI / 2), T(xo, 0, 0))];
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    const m4 = new THREE.Matrix4().compose(new THREE.Vector3(xo + side * 0.01, Math.cos(a) * 0.125, Math.sin(a) * 0.125), new THREE.Quaternion().setFromEuler(new THREE.Euler(a, 0, 0)), new THREE.Vector3(1, 1, 1));
+    rim.push(piece(roundedBox(0.04, 0.22, 0.055, 0.012, 1), m4));
+  }
+  const cap = [piece(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 14).rotateZ(Math.PI / 2), T(xo + side * 0.02, 0, 0))];
+  const n = (l: THREE.BufferGeometry[]): number => l.reduce((s, g) => s + g.attributes.position.count, 0);
+  const geo = mergeGeometries([...tire, ...rim, ...cap], false)!;
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
+  geo.computeBoundingSphere();
+  return { geo, tireEnd: n(tire), rimEnd: n(tire) + n(rim), count: geo.attributes.position.count };
 }
 
 // ── small canvas textures ───────────────────────────────────────────────────

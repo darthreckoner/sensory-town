@@ -246,7 +246,7 @@ export function buildPlotLayer(): PlotLayer {
         scene: 'build',
         params: { plot: plot.index, claim: true },
         radius: d.plotDoorRadius,
-        carSpeed: d.plotCarSpeed,
+        carPrompt: true,
         glow: PAL.lime,
       });
     } else {

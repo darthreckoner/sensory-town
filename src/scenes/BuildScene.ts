@@ -21,7 +21,7 @@ import {
 } from '../world/houseMesh';
 import { Baker, Brush, bakedToGroup, ghostify, disposeBaked } from '../build/bake';
 import { dims } from '../build/kit';
-import { pieceBaseY, pieceRotY } from '../build/pieces';
+import { pieceRotY } from '../build/pieces';
 import {
   canPlace, edgeKey, isBodyWall, isRoofType, levelOf, makeCtx, snapPiece, type Cand, type HouseCtx, type Level, type Rot,
 } from '../build/rules';
@@ -301,6 +301,8 @@ export class BuildScene extends GameScene {
       plot: this.plotIdx,
       level: this.level,
       pieces: this.house?.pieces.length ?? 0,
+      bakedMeshes: this.edit?.stats().baked ?? 0,   // merged meshes drawing the house
+      liveObjects: this.edit?.objs.size ?? 0,        // pieces that currently have their own object (just placed / moving)
       undo: this.undoStack.length,
       tool: this.tool?.id ?? '-',
     };
@@ -311,6 +313,7 @@ export class BuildScene extends GameScene {
   // ═══════════════════════════════════════════════════════════════════════
   private rebuildTown(): void {
     this.rebuildStatic([]);
+    this.decoGroup.visible = true;
     this.rebuildDecos();
     this.rebuildMarkers();
     this.rebuildPicks();
@@ -319,10 +322,11 @@ export class BuildScene extends GameScene {
     this.tagLayer.style.display = '';
   }
 
-  private rebuildStatic(skip: number[]): void {
+  /** Merged houses (+ merged village decorations in house mode, where nobody picks them: a few draw calls however big the village). */
+  private rebuildStatic(skip: number[], withDecorations = false): void {
     disposeBaked(this.staticGroup);
     this.staticGroup.clear();
-    this.staticGroup.add(buildTownContent(store.data.town, { skipPlots: skip, decorations: false }).group);
+    this.staticGroup.add(buildTownContent(store.data.town, { skipPlots: skip, decorations: withDecorations }).group);
   }
 
   private rebuildDecos(): void {
@@ -550,7 +554,8 @@ export class BuildScene extends GameScene {
     this.wallsLow = false;
     this.toolRot = 0;
 
-    this.rebuildStatic([i]);
+    this.rebuildStatic([i], true);
+    this.decoGroup.visible = false;
     this.rebuildPicks();
     this.markerGroup.visible = false;
     this.tagLayer.style.display = 'none';
@@ -1096,7 +1101,7 @@ export class BuildScene extends GameScene {
     if (!this.edit) return undefined;
     this.setRay(x, y);
     for (const h of this.ray.intersectObjects(this.edit.pickLayers(), true)) {
-      const p = this.edit.pieceFromObject(h.object);
+      const p = this.edit.pieceFromHit(h);
       if (p) return p;
     }
     return undefined;
@@ -1554,10 +1559,10 @@ export class BuildScene extends GameScene {
     const step = Math.min(22, 700 / list.length);
     const every = Math.max(3, Math.floor(list.length / 10));
     objs.forEach((obj, i) => {
-      obj.visible = false;
+      edit.setHeld(list[i], true);
       window.setTimeout(() => {
         if (!obj.parent) return;
-        obj.visible = true;
+        edit.setHeld(list[i], false, tuning.build.placeBounceSeconds + 0.12);   // revealed; folds into the merged bake right after its pop
         if (i % every === 0) bus.emit('piecePlaced', { pos: this.fxPos(list[i]), type: list[i].type, object: obj });
         else popScale(obj, tuning.build.placeBounceSeconds, 0.22);
       }, step * i);
@@ -1766,8 +1771,7 @@ export class BuildScene extends GameScene {
     this.palItems?.querySelectorAll('.ptile').forEach((n) => n.classList.remove('on'));
     this.tool = { kind: 'move', id: 'move', piece: p, from: { x: p.x, z: p.z, rot: p.rot, level: levelOf(p) }, viaDrag };
     this.moveCtx = makeCtx(this.house.pieces.filter((q) => q.id !== p.id));
-    const o = this.edit.objs.get(p.id);
-    if (o) o.visible = false;
+    this.edit.setHeld(p, true);
     this.clearGhost();
     this.refreshBrushPanel();
     if (!viaDrag) toast('Drag it where you want it');
@@ -1781,8 +1785,7 @@ export class BuildScene extends GameScene {
     t.piece.x = t.from.x;
     t.piece.z = t.from.z;
     t.piece.rot = t.from.rot;
-    const o = this.edit.objs.get(t.piece.id);
-    if (o) o.visible = true;
+    this.edit.setHeld(t.piece, false);
   }
 
   private applyMove(tool: Extract<Tool, { kind: 'move' }>, c: Cand): void {
@@ -1796,13 +1799,10 @@ export class BuildScene extends GameScene {
       if (c.level === 1 && !isRoofType(p.type)) p.level = 1;
       else delete p.level;
     });
-    const obj = edit.objs.get(p.id);
-    if (obj) obj.visible = true;
+    edit.setHeld(p, false);
     edit.update(p);
-    if (obj) {
-      obj.rotation.y = pieceRotY(p);
-      obj.position.y = pieceBaseY(p, edit.ctx);
-    }
+    const obj = edit.live(p);
+    obj.rotation.y = pieceRotY(p);
     this.houseVer++;
     this.ghostKey = '';
     bus.emit('piecePlaced', { pos: this.fxPos(p), type: p.type, object: obj });
@@ -1816,11 +1816,9 @@ export class BuildScene extends GameScene {
           else delete p.level;
         });
         edit.update(p);
-        const o = edit.objs.get(p.id);
-        if (o) {
-          o.rotation.y = pieceRotY(p);
-          popScale(o, 0.3, 0.2);
-        }
+        const o = edit.live(p);
+        o.rotation.y = pieceRotY(p);
+        popScale(o, 0.3, 0.2);
         this.houseVer++;
       });
     }
@@ -2035,7 +2033,7 @@ export class BuildScene extends GameScene {
 
   private setRotation(p: PlacedPiece, rot: Rot, quiet = false): void {
     const edit = this.edit!;
-    const obj = edit.objs.get(p.id);
+    const obj = edit.live(p);
     let steps = (rot - p.rot + 4) % 4;
     if (steps === 3) steps = -1;   // undoing a quarter turn swings back the short way
     store.update(() => {
@@ -2044,7 +2042,7 @@ export class BuildScene extends GameScene {
     this.houseVer++;
     edit.update(p);
     const flat = pieceDef(p.type)?.kind === 'roof' || pieceDef(p.type)?.kind === 'floor';
-    if (obj && !flat && steps !== 0) {
+    if (!flat && steps !== 0) {
       const a0 = obj.rotation.y, a1 = a0 - steps * (Math.PI / 2);
       const end = pieceRotY(p);
       tweens.add(0.22, (k) => (obj.rotation.y = a0 + (a1 - a0) * k), { ease: ease.outBack, key: obj.rotation, done: () => (obj.rotation.y = end) });
@@ -2079,7 +2077,7 @@ export class BuildScene extends GameScene {
     edit.update(p);
     this.houseVer++;
     this.rememberStyle(p.type, color, p.finish);
-    bus.emit('pieceRecolored', { pos: this.fxPos(p), object: edit.objs.get(p.id) });
+    bus.emit('pieceRecolored', { pos: this.fxPos(p), object: edit.live(p) });
     if (merge) this.lastRecolor!.t = performance.now();
     else {
       this.pushUndo(() => {
@@ -2195,12 +2193,16 @@ export class BuildScene extends GameScene {
           }
         }, 80 + i * 60);
       });
-      const bottom = el('div', 'row', body);
-      bottom.style.justifyContent = 'center';
-      bottom.style.marginTop = '18px';
+      const bottom = el('div', 'row tbottom', body);
       button(bottom, { label: 'Start from scratch', cls: 'ghost big', tap: 'back' }, () => {
         close();
         this.sheetOpen = false;
+      });
+      // an explicit way out for anyone who got here by accident (an empty lot is released when you leave)
+      button(bottom, { label: 'Not now', cls: 'ghost big', tap: 'back' }, () => {
+        close();
+        this.sheetOpen = false;
+        toast('No rush - tap ✨ Templates any time, or Done to leave');
       });
     }, { dismissable: true });
     // the backdrop closes the sheet without going through our buttons
@@ -2229,10 +2231,10 @@ export class BuildScene extends GameScene {
     const step = Math.min(26, 1700 / list.length);
     const every = Math.max(4, Math.floor(list.length / 24));
     objs.forEach((obj, i) => {
-      obj.visible = false;
+      edit.setHeld(list[i], true);
       window.setTimeout(() => {
         if (!obj.parent) return;
-        obj.visible = true;
+        edit.setHeld(list[i], false, tuning.build.placeBounceSeconds + 0.12);   // revealed; folds into the merged bake right after its pop
         if (i % every === 0) bus.emit('piecePlaced', { pos: this.fxPos(list[i]), type: list[i].type, object: obj });
         else popScale(obj, tuning.build.placeBounceSeconds, 0.22);
       }, step * i);
@@ -2251,6 +2253,7 @@ export class BuildScene extends GameScene {
     this.orbit.update(dt);
     this.env.update(dt, t);
     tickBuildMaterials(t);
+    this.edit?.tick(dt);   // fold settled piece objects back into the merged bake
 
     // the sun follows what we look at, so the shadow map stays sharp
     this.rig.sun.target.position.copy(this.orbit.target);

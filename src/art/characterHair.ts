@@ -28,6 +28,8 @@ interface HairBuild {
 
 const U = 0.1; // isotropic puff unit (meters)
 const hp = (p: V3t): V3t => [p[0] * B.HX, p[1] * B.HY, p[2] * B.HZ];
+/** The ponytail's swing pivot (meters, head space) — the character has one tail bone, placed here. */
+export const TAIL_PIVOT: V3t = hp([0, 0.78, -0.76]);
 const hr = (r: V3t): V3t => [r[0] * B.HX, r[1] * B.HY, r[2] * B.HZ];
 /** Ellipsoid in head units. */
 const E = (b: GB, p: V3t, r: V3t, rot?: V3t) => b.e(hp(p), hr(r), rot);
@@ -125,7 +127,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     t.e([0, -0.18, -0.075], [0.032, 0.072, 0.028]);
     t.e([0, -0.27, -0.07], [0.027, 0.072, 0.025]);
     t.e([0, -0.35, -0.055], [0.018, 0.062, 0.018]);
-    h.tails.push({ gb: t, pivot: hp([0, 0.78, -0.76]), side: 0, tilt: 0.45 });
+    h.tails.push({ gb: t, pivot: TAIL_PIVOT, side: 0, tilt: 0.45 });
     h.topY = 0.14;
     h.hairR = 1.1;
   },

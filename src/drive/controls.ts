@@ -33,6 +33,8 @@ export type ControlMode = 'car' | 'foot';
 export interface ControlHooks {
   onHorn(): void;
   onToggleMode(): void;
+  /** Enter: confirm the on-screen prompt ("Build here?") */
+  onConfirm?(): void;
 }
 
 export class DriveControls {
@@ -116,6 +118,10 @@ export class DriveControls {
     if (this.suspended) return;
     if (c === 'KeyH') {
       if (!e.repeat && this.mode === 'car') this.hooks.onHorn();
+      return;
+    }
+    if (c === 'Enter') {
+      if (!e.repeat) this.hooks.onConfirm?.();
       return;
     }
     if (c === 'KeyE' || c === 'KeyF') {

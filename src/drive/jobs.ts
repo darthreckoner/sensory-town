@@ -127,8 +127,11 @@ export class JobManager {
 
   /** Remove everything from the scene (scene exit). */
   clear(): void {
+    // every discarded Character gives its GPU buffers back
+    if (this.seated && this.seated !== this.car.passenger) this.seated.dispose();
     this.standing?.group.removeFromParent();
-    this.car.setPassenger(null);
+    this.standing?.dispose();
+    this.car.setPassenger(null); // disposes the seated passenger
     this.seated = null;
     this.standing = null;
     this.pickupBeacon?.dispose();
@@ -349,6 +352,7 @@ export class JobManager {
       npc.group.position.y = this.hopTo.y + Math.sin(Math.PI * k) * 0.5;
       if (k >= 1) {
         npc.group.removeFromParent();
+        npc.dispose();
         this.standing = null;
         this.state = 'cooldown';
         this.timer = d.jobRespawnSeconds;

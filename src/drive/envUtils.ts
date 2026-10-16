@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toyMatUnique, type Finish } from '../art/materials';
-import { materialSignature } from './mesher';
+import { foldMaterial, materialSignature } from './mesher';
 
 const TAU = Math.PI * 2;
 
@@ -181,17 +181,36 @@ export function bakeStatic(root: THREE.Object3D): THREE.Group {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || (m as THREE.InstancedMesh).isInstancedMesh) return;
-    const mat = m.material as THREE.Material;
-    if (Array.isArray(mat)) return;
+    const mat0 = m.material as THREE.Material;
+    if (Array.isArray(mat0)) return;
     let g = m.geometry.clone();
     // Keep only the attributes every primitive shares so merging never fails.
-    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv' && name !== 'color') g.deleteAttribute(name);
+    // flat colours fold into shared vertex-coloured materials (fewer draw calls)
+    const f = foldMaterial(mat0);
+    const mat = f.mat;
+    const vc = !!(mat as THREE.MeshStandardMaterial).vertexColors;
+    const n = g.attributes.position.count;
+    if (f.color) {
+      const arr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        arr[i * 3] = f.color.r;
+        arr[i * 3 + 1] = f.color.g;
+        arr[i * 3 + 2] = f.color.b;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    } else if (vc) {
+      const src = g.attributes.color;
+      const arr = new Float32Array(n * 3).fill(1);
+      if (src) for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) arr[i * 3 + k] = src.getComponent(i, k);
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    } else g.deleteAttribute('color');
     if (!g.attributes.normal) g.computeVertexNormals();
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     g.clearGroups();
     rel.multiplyMatrices(inv, m.matrixWorld);
     g.applyMatrix4(rel);
-    const key = `${materialSignature(mat)}|${m.castShadow ? 1 : 0}${m.receiveShadow ? 1 : 0}`;
+    const key = `${f.color || vc ? 'fold|' + mat.uuid : materialSignature(mat)}|${m.castShadow ? 1 : 0}${m.receiveShadow ? 1 : 0}`;
     let b = buckets.get(key);
     if (!b) buckets.set(key, (b = { mat, cast: m.castShadow, receive: m.receiveShadow, geos: [] }));
     b.geos.push(g);
