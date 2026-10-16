@@ -11,6 +11,7 @@ import { Car, type CarMotion } from '../art/car';
 import { buildTownEnvironment, type Collider, type TownEnv } from '../world/townEnv';
 import { buildTownContent } from '../world/houseMesh';
 import { BUILD_YARD, SPAWN, WORKSHOP } from '../world/townLayout';
+import { disposeBaked } from '../world/houseMesh';
 import { el, button, sheet, swatches } from '../ui/ui';
 import { CarPhysics, type CarInput } from '../drive/physics';
 import { DriveControls } from '../drive/controls';
@@ -112,7 +113,10 @@ export class DriveScene extends GameScene {
     this.camera.far = 420;
 
     // Houses and decorations change in build mode, so rebuild them every time.
-    if (this.content) this.scene.remove(this.content);
+    if (this.content) {
+      this.scene.remove(this.content);
+      disposeBaked(this.content);
+    }
     const built = buildTownContent(store.data.town);
     this.content = built.group;
     this.scene.add(this.content);
@@ -194,6 +198,7 @@ export class DriveScene extends GameScene {
     this.tags.clear();
     if (this.content) {
       this.scene.remove(this.content);
+      disposeBaked(this.content); // free the merged town meshes (rebuilt on every visit)
       this.content = null;
     }
   }

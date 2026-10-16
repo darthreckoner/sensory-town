@@ -1,7 +1,7 @@
 # STATE
 
 ## Build version
-v1 — first complete playable build (in progress; see SCORECARD.md for grades).
+v1.1 — complete playable build, deployed: https://darthreckoner.github.io/sensory-town/ (grades in SCORECARD.md — every row ≥ 7).
 
 ## What the player should feel (this build)
 1. "This town is ours, and my stuff in it is mine" — my look, my car, my houses, my squishies.
@@ -15,8 +15,13 @@ v1 — first complete playable build (in progress; see SCORECARD.md for grades).
 - Workshop scene (cozy craft room, shelf showing the player's saved creations) with three stations:
   - Squishy: 5 shapes with kawaii faces (bun, cat, star, peach, cube), 16 colors, multi-touch dents with gaussian falloff + volume ring, whole-body squash, slow memory-foam rise, recovery pop, Keep it!
   - Wax: Pick → Coat (dip into the pot by dragging the squishy down; pour by carrying the jug over it — tilts around its spout; layers have per-vertex coverage with drippy edges; wet → matte hardening; ❄️ Cool) → Crack (Voronoi pre-fractured shell, hairline cracks radiate from the exact press point, stress → crack gap → peel on a hinge → fall with gravity onto the plate; broken edges show the colored layer stripes; squishy bulges through openings; chain reaction; auto-clear + confetti). 🔁 Again / ✨ New / 💾 Keep.
-  - Slime: (Sonnet coder — see report).
-- Dress-up, Drive (town, car, jobs), Build (houses, village) — built by Sonnet coders against the shared contracts in `docs/CODER_BRIEF.md`.
+  - Slime: glossy domed blob in a tray (starts glittery). Drag = stretch a strand that thins toward the finger, springy gooey settle, plastic folds that relax, tap = poke + ripple, up to 4 fingers, ✨ glitter / 🍬 sprinkles / ⭐ stars / 🫧 pearls, 24 colors, wet-click ASMR events every few cm of drag.
+- Dress-up (boutique stage): chibi character with glossy eyes; 8 hair, 6 tops, 5 bottoms, 5 shoes, 9 extras, 6 skin tones, all recolorable; spin with inertia, pinch/wheel zoom, camera glides to the changed part, sparkle + pose on every change, 🎲 Surprise, ↩️ undo, portrait layout.
+- Drive (the hub): toy convertible in the profile's car color with the dressed-up kid driving; arcade physics, soft bounces, curbs; touch joystick + GO/STOP pedals + horn (hidden on PC until touch), WASD/arrows/Space/H on PC; minimap with pads, job target and 🏠 home markers; 🎨 repaint; glowing 🧪 workshop and 🔨 build pads; optional pickup/drop-off jobs with waving passengers, HUD arrow, confetti; owner name tags over houses.
+- Build: town mode (claim a plot with one tap, village decorations: tree/pine/bush/flowers/fence/lamp/bench), house mode (floor, wall, window, door, 2 roofs, bed, sofa, table, lamp, plant, shelf, rug, ⭐ your workshop creations which sit on tables/shelves), drag-from-palette with ghost (red = blocked), tap piece → rotate/recolor/delete, paint strokes, eraser, undo, roof toggle, low walls, 🪄 Starter house, owner-only editing, remove house.
+- Town environment: candy-dome workshop, build yard with crane, fountain park, windmill, ice-cream stand, duck pond, playground, instanced trees/flowers/lamps, hills and drifting clouds.
+- Profiles & sharing: per-profile outfit/car/creations/houses, shared town, Share Town (Web Share file → AirDrop, download fallback), Get Town (file → confirm → replace; verified to persist).
+- Performance safety: adaptive resolution (drops pixel ratio if fps < 50 for 2.5 s), town DPR cap 1.5, scenery instanced, no GPU memory growth across scene switches (verified).
 
 ## Assumptions made (Director's calls, need designer review)
 - "Build together" = both profiles build in one shared town on the same iPad; the two iPads swap towns via export/import files. No live sync (offline, no server).

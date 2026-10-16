@@ -17,9 +17,11 @@ async function boot(): Promise<void> {
   document.addEventListener('dblclick', (e) => e.preventDefault());
   document.addEventListener('contextmenu', (e) => e.preventDefault());
   // Unlock audio on the very first touch anywhere (the profile picker tap).
+  // (iOS WebKit only honours some gesture types for audio, so listen to all of them.)
   const unlock = () => audio.unlock();
-  window.addEventListener('pointerdown', unlock, { capture: true });
-  window.addEventListener('keydown', unlock, { capture: true });
+  for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'] as const) {
+    window.addEventListener(type, unlock, { capture: true });
+  }
 
   await store.load();
   syncSettings();

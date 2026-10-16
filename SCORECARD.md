@@ -41,3 +41,26 @@ Tested in desktop Chromium via scripted touch/keyboard input + screenshots (hidd
 | Profiles + share | 7 | Rename/add, per-profile saves, import verified (replace + persist). Real AirDrop untested. |
 
 **Iteration 1 tickets:** (1) Squishy → jiggle spring, deeper finger-sized dents, squeeze squash; (2) saturated default house colors; (3) slime rest dome; (4) perf trims (scenery −25%, squishy mesh 30→26, adaptive DPR); (5) "my house" on minimap + bigger creations in houses.
+
+### Slice 2 — after Iteration 1  · graded 2026-10-16 ~03:00 (deployed: https://darthreckoner.github.io/sensory-town/)
+Changes: squishy jelly-jiggle spring + volume bulge ring (dents now read as real craters with a raised rim), saturated house defaults, slime starts glittery with a taller dome, 🏠 "my house" markers on the minimap, bigger creations in houses, slime add-ins on shelf previews, portrait-iPad layout pass (workshop camera fit, icon-only tabs, buttons lifted off the step bar), adaptive resolution for slower iPads, scenery −25%, squishy mesh 9.6k→7.3k verts, return-from-workshop/build spawns on open road, louder flake/stretch/swish sounds, iOS audio unlock on every gesture type. Live HTTPS deploy verified: service worker active, full precache (index, JS, CSS, icons, manifest).
+
+| Area | Slice 1 | Slice 2 | Why |
+|---|---|---|---|
+| Pillar 1 — Make it yours | 7 | **7.5** | Home markers + readable creations in houses close the "where's my stuff" gap. Still no character standing at home. |
+| Pillar 2 — Satisfying touch | 7 | **8** | Squishy now has visible craters + jelly wobble; wax 8.5; two-finger glitter slime stretch; every action verified to emit its event + sound. |
+| Pillar 3 — Free play | 9 | **9** | Unchanged — nothing to lose anywhere. |
+| Art / style | 8 | **8** | Richer house colors; slime reads as a glossy mound. |
+| Playability | 7 | **7.5** | Portrait works, slow-device safety net, spawn camera fixed, offline deploy verified. Held back from 8 only by what I can't test here: real iPad touch, GPU fps, and audio by ear. |
+
+| Activity | Slice 1 | Slice 2 |
+|---|---|---|
+| Wax cracking | 8.5 | 8.5 |
+| Squishy | 6.5 | **7.5** |
+| Slime | 7 | **7.5** |
+| Dress-up | 8 | 8 |
+| Driving + jobs | 8 | 8 |
+| Building | 7 | **7.5** |
+| Profiles + share | 7 | 7 |
+
+**Result: every row ≥ 7. Ship bar met.** Remaining risk is device-only (see STATE.md → Known issues).

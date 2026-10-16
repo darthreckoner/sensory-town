@@ -27,7 +27,7 @@ class AudioEngine {
     if (!this.ctx) this.build();
     const ctx = this.ctx!;
     if (ctx.state !== 'running') void ctx.resume();
-    if (!this.unlocked) {
+    if (!this.unlocked || ctx.state !== 'running') {
       // iOS: play a silent buffer inside the gesture.
       const b = ctx.createBuffer(1, 1, 22050);
       const s = ctx.createBufferSource();

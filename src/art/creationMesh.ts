@@ -8,10 +8,22 @@ import { makeShapeGeometry, faceMaterial } from './shapes';
  * A creation as a small model, about `size` world units tall, resting on y = 0.
  * Cheap enough to show dozens (low-detail geometry, cached per shape).
  */
+// shared geometries (these previews are rebuilt often — houses, shelves)
+const geo = {
+  blob: new THREE.SphereGeometry(0.5, 28, 18),
+  sprinkle: new THREE.CapsuleGeometry(0.018, 0.06, 3, 6),
+  star: new THREE.OctahedronGeometry(0.045),
+  pearl: new THREE.SphereGeometry(0.035, 10, 8),
+  glint: new THREE.SphereGeometry(0.012, 6, 4),
+  jar: new THREE.CylinderGeometry(0.62, 0.58, 0.32, 32, 1, true),
+  ring: new THREE.TorusGeometry(0.95, 0.07, 8, 32),
+};
+const slimeMats = new Map<string, THREE.Material>();
+
 export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
   const g = new THREE.Group();
   if (c.kind === 'slime') {
-    const blob = mesh(new THREE.SphereGeometry(0.5, 28, 18), slimeMat(c.color, (c.glitter ?? 0) > 0 || (c.addins?.length ?? 0) > 0));
+    const blob = mesh(geo.blob, slimeMat(c.color, (c.glitter ?? 0) > 0 || (c.addins?.length ?? 0) > 0));
     blob.scale.set(1.15, 0.5, 1.15);
     blob.position.y = 0.24;
     g.add(blob);
@@ -24,19 +36,19 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
     };
     if (c.addins?.includes('sprinkles')) {
       const cols = ['#ff5d8f', '#ffd166', '#5fd3a5', '#7fd8ff', '#ffffff'];
-      for (let i = 0; i < 14; i++) onDome(mesh(new THREE.CapsuleGeometry(0.018, 0.06, 3, 6), toyMat(cols[i % cols.length]), false, false));
+      for (let i = 0; i < 14; i++) onDome(mesh(geo.sprinkle, toyMat(cols[i % cols.length]), false, false));
     }
     if (c.addins?.includes('stars')) {
-      for (let i = 0; i < 8; i++) onDome(mesh(new THREE.OctahedronGeometry(0.045), toyMat(i % 2 ? '#ffd166' : '#ffffff'), false, false));
+      for (let i = 0; i < 8; i++) onDome(mesh(geo.star, toyMat(i % 2 ? '#ffd166' : '#ffffff'), false, false));
     }
     if (c.addins?.includes('pearls')) {
-      for (let i = 0; i < 8; i++) onDome(mesh(new THREE.SphereGeometry(0.035, 10, 8), toyMat('#fff8f0', 'gloss'), false, false));
+      for (let i = 0; i < 8; i++) onDome(mesh(geo.pearl, toyMat('#fff8f0', 'gloss'), false, false));
     }
     if ((c.glitter ?? 0) > 0) {
-      for (let i = 0; i < 18; i++) onDome(mesh(new THREE.SphereGeometry(0.012, 6, 4), toyMat('#ffffff', 'emissive'), false, false));
+      for (let i = 0; i < 18; i++) onDome(mesh(geo.glint, toyMat('#ffffff', 'emissive'), false, false));
     }
     // a little jar for slime
-    const jar = mesh(new THREE.CylinderGeometry(0.62, 0.58, 0.32, 32, 1, true), toyMat('#ffffff', 'glass'), false, false);
+    const jar = mesh(geo.jar, toyMat('#ffffff', 'glass'), false, false);
     jar.position.y = 0.16;
     g.add(jar);
   } else {
@@ -49,7 +61,7 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
       g.add(shell);
       // drippy rim using the second-to-last layer for a hint of layering
       if (c.layers.length > 1) {
-        const ring = mesh(new THREE.TorusGeometry(0.95, 0.07, 8, 32), toyMat(c.layers[c.layers.length - 2], 'satin'), false, false);
+        const ring = mesh(geo.ring, toyMat(c.layers[c.layers.length - 2], 'satin'), false, false);
         ring.rotation.x = Math.PI / 2;
         ring.position.y = -0.35;
         ring.scale.setScalar(1.02);
@@ -70,7 +82,10 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
 }
 
 function slimeMat(color: string, glitter: boolean): THREE.Material {
-  return new THREE.MeshPhysicalMaterial({
+  const key = color + glitter;
+  const hit = slimeMats.get(key);
+  if (hit) return hit;
+  const m = new THREE.MeshPhysicalMaterial({
     color,
     roughness: 0.12,
     clearcoat: 1,
@@ -79,4 +94,6 @@ function slimeMat(color: string, glitter: boolean): THREE.Material {
     sheen: 0.4,
     sheenColor: new THREE.Color('#ffffff'),
   });
+  slimeMats.set(key, m);
+  return m;
 }

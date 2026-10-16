@@ -6,6 +6,8 @@ Built with Vite + TypeScript + Three.js. All models, textures and sounds are gen
 
 ---
 
+**Live (installable, works offline): https://darthreckoner.github.io/sensory-town/**
+
 ## Run it locally
 
 ```bash
