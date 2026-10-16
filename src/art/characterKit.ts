@@ -419,6 +419,11 @@ export const torsoSpace = (g: THREE.BufferGeometry): void => {
 // Head: an ellipsoid with a tapered jaw, plus face placement helpers
 // ═════════════════════════════════════════════════════════════════════════════
 // rounder jaw than the realistic v2 head: a gentle taper, full cheeks
+/** The jaw/chin sits forward of the plain ellipsoid (a defined chin in profile): smooth from 0 at y = -0.25 to full at the chin. */
+export const chinZ = (y: number): number => {
+  const k = Math.min(1, Math.max(0, (-0.25 - y) / 0.7));
+  return 0.013 * k * k * (3 - 2 * k);
+};
 const jawX = (y: number) => 1 - 0.2 * Math.pow(Math.max(0, -y), 1.5);
 const jawZ = (y: number) => 1 - 0.14 * Math.pow(Math.max(0, -y), 1.3);
 
@@ -455,7 +460,7 @@ export function headGeo(blush = 0): THREE.BufferGeometry {
       col[i * 3] = 1 + (BL.mul[0] - 1) * w;
       col[i * 3 + 1] = 1 + (BL.mul[1] - 1) * w;
       col[i * 3 + 2] = 1 + (BL.mul[2] - 1) * w;
-      p.setXYZ(i, x * B.HX * jawX(y), y * B.HY, z * B.HZ * jawZ(y) + (y < -0.3 ? 0.004 * -y : 0));
+      p.setXYZ(i, x * B.HX * jawX(y), y * B.HY, z * B.HZ * jawZ(y) + chinZ(y));
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3)); // blush: multiplies the skin color
     g.computeVertexNormals();
@@ -470,7 +475,7 @@ export function facePoint(thetaDeg: number, phiDeg: number, off = 0, k = 1): { p
   const sx = Math.sin(t) * Math.cos(f), sy = Math.sin(f), sz = Math.cos(t) * Math.cos(f);
   const wx = B.HX * jawX(sy), wz = B.HZ * jawZ(sy);
   const n = new THREE.Vector3(sx / wx, sy / B.HY, sz / wz).normalize();
-  const p = new THREE.Vector3(wx * k * sx, B.HY * k * sy, wz * k * sz).addScaledVector(n, off);
+  const p = new THREE.Vector3(wx * k * sx, B.HY * k * sy, wz * k * sz + chinZ(sy)).addScaledVector(n, off);
   return { p, n };
 }
 /** Orientation with +z along n and +x kept horizontal. */
@@ -594,8 +599,11 @@ let faceKit: FaceKit | null = null;
 export function getFaceKit(): FaceKit {
   if (faceKit) return faceKit;
   // nose: a soft wedge — bridge into a rounded tip, no nostrils (nose frame: y up, z out of the face)
+  // a defined nose: a bridge that grows out of the brow line into a rounded tip with soft alar wings (no nostrils)
   const nose = new GB(false, true);
-  nose.add(loft((t) => [0, 0.011 - 0.0175 * t, 0.0004 + 0.0052 * t], (t) => 0.003 + 0.0045 * t, (t) => 0.003 + 0.0028 * t, 0.22, 0.4, 10, 8), {}, true);
+  nose.add(loft((t) => [0, 0.02 - 0.034 * t, 0.002 + 0.0088 * Math.pow(t, 1.2)], (t) => 0.0033 + 0.0042 * t, (t) => 0.0028 + 0.0045 * t, 0.2, 0.4, 12, 10), {}, true);
+  nose.e([0, -0.0145, 0.0112], [0.007, 0.0054, 0.0054]);
+  for (const sd of [-1, 1]) nose.e([sd * 0.0068, -0.0122, 0.0072], [0.0052, 0.0043, 0.005]);
   // lips: one smooth half-lip per side (mouth space), weighted toward the corner bone with x
   const lipW = (p: V3t) => {
     const k = Math.min(1, Math.max(0, (Math.abs(p[0]) - 0.003) / 0.009));
