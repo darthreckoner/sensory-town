@@ -258,6 +258,8 @@ export class Character {
   // hands: one bone per variant under each wrist (scale 0.001 = hidden), index 0 = +x arm
   private handBones: Record<HandKind, Bone[]> = { relax: [], open: [], grip: [], peace: [], heart: [] };
   private handKind: HandKind[] = ['relax', 'relax'];
+  /** dev: force one hand variant (the body lab uses it to show every gesture) */
+  debugHand: HandKind | null = null;
   private handsBuilt = new Set<HandKind>(['relax']); // hand variants are built on first use (keeps a character light)
   private swayers: Swayer[] = [];
   private wings: { pivot: Bone; side: number }[] = [];
@@ -1190,6 +1192,7 @@ export class Character {
     this.upper.rotation.set(leanX, twistY, rollZ);
     this.upper.scale.set(1 - breath * 0.004, 1 + breath * D.breath * 0.5, 1 - breath * 0.004);
     this.headRoot.rotation.set(headX, headY, headZ);
+    if (this.debugHand) hk[0] = hk[1] = this.debugHand;
     this.arms.forEach((arm, i) => {
       const a = A[i];
       arm.shoulder.rotation.set(a.sx, 0, arm.s * a.sz);
@@ -1353,7 +1356,7 @@ export class Character {
       w.scale.x = s;
     });
     this.reg(this.accHandR, this.arms[1].wrist);
-    this.reg(this.cupHolder, this.accHandR, 0.056, -0.054, 0); // the cup sits on the palm side (+x for this arm), inside the gripping fist
+    this.reg(this.cupHolder, this.accHandR, 0.026, -0.06, -0.034); // held items sit in the hollow of the gripping fist (palm side = +x for this arm; their authored z = 0.034 cancels the shift)
     this.reg(this.accWristL, this.arms[0].wrist);
     this.mounts.accessory.push(this.accBody, this.accBack, this.accHead, this.accHandR, this.accWristL);
     // back-bling mount (upper back, +Z away from the back) and the glider grip anchor

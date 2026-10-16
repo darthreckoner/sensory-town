@@ -633,76 +633,140 @@ export function getFaceKit(): FaceKit {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Hands: chunky stylized hands — a soft rounded palm, four capsule fingers + a thumb, ~1.3x
-// the old mitten. Hang from the wrist (origin = wrist joint); the palm faces the body.
-// Four variants share one skin bucket and are swapped by scaling bones, so a gesture is
-// never claimed without being shown: 'relax' (natural curl: ~25° at the knuckle, ~15° at
-// the middle joint), 'open' (flat hand for waves), 'grip' (fist around a cup / handle) and
-// 'peace' (a real V: index + middle up, ring + pinky folded, thumb across them).
+// Hands: sculpted, realistic-scale hands (about 1.05x an adult hand): a flattened palm that tapers
+// from the wrist, thenar / hypothenar pads, four tapered fingers (three phalanges, a gentle
+// swell at each joint) and a three-part thumb, every finger one smooth swept tube.
+// Hang from the wrist (origin = wrist joint); the palm faces the body.
+// Variants share one skin bucket and are swapped by scaling bones, so a gesture is never claimed
+// without being shown: 'relax' (natural curl), 'open' (flat hand for waves), 'grip' (fist around a
+// cup / handle) and 'peace' (a real V: index + middle up, ring + pinky folded, thumb across them).
 // ═════════════════════════════════════════════════════════════════════════════
-export const HAND_S = 1.05; // realistic scale (the stylized v3 hands were 1.3)
+export const HAND_S = 1.05; // x a realistic adult hand (the stylized v3 hands were chunky mitts)
 export type HandKind = 'relax' | 'open' | 'grip' | 'peace' | 'heart';
 export const HAND_KINDS: HandKind[] = ['relax', 'open', 'grip', 'peace', 'heart'];
 
+/**
+ * Smooth tube along a 3D Catmull-Rom curve through `pts`: radius `r(t)`, flattened by `flat(t)` along
+ * `flatAxis` (e.g. the palm normal), rounded ends (`capIn` / `capOut` = fraction of the length).
+ */
+export function sweep(pts: V3t[], r: (t: number) => number, flat: number | ((t: number) => number), flatAxis: V3t, capIn = 0.1, capOut = 0.12, n = 14, radial = 8): THREE.BufferGeometry {
+  const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])), false, 'centripetal');
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const fa = new THREE.Vector3(flatAxis[0], flatAxis[1], flatAxis[2]);
+  const Tn = new THREE.Vector3(), A = new THREE.Vector3(), Bv = new THREE.Vector3(), Pt = new THREE.Vector3();
+  const cap = (t: number) => (t < capIn ? Math.sqrt(Math.max(0, 1 - ((capIn - t) / capIn) ** 2)) : t > 1 - capOut ? Math.sqrt(Math.max(0, 1 - ((t - (1 - capOut)) / capOut) ** 2)) : 1);
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    curve.getPointAt(t, Pt);
+    curve.getTangentAt(t, Tn);
+    A.copy(fa).addScaledVector(Tn, -fa.dot(Tn));
+    if (A.lengthSq() < 1e-6) A.set(0, 0, 1).addScaledVector(Tn, -Tn.z);
+    A.normalize();
+    Bv.crossVectors(Tn, A).normalize();
+    const k = cap(t) * r(t);
+    const fl = typeof flat === 'number' ? flat : flat(t);
+    for (let j = 0; j < radial; j++) {
+      const ph = (j / radial) * TAU;
+      const ca = Math.cos(ph) * k * fl, sb = Math.sin(ph) * k;
+      pos.push(Pt.x + A.x * ca + Bv.x * sb, Pt.y + A.y * ca + Bv.y * sb, Pt.z + A.z * ca + Bv.z * sb);
+      uv.push(0, 0);
+    }
+  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < radial; j++) {
+    const a = i * radial + j, b = i * radial + ((j + 1) % radial), c = a + radial, d = b + radial;
+    idx.push(a, c, b, b, c, d);
+  }
+  // the winding depends on the handedness of (tangent, flat axis): make the faces point outward (signed volume > 0)
+  let vol = 0;
+  for (let i = 0; i < idx.length; i += 3) {
+    const o0 = idx[i] * 3, o1 = idx[i + 1] * 3, o2 = idx[i + 2] * 3;
+    vol += pos[o0] * (pos[o1 + 1] * pos[o2 + 2] - pos[o1 + 2] * pos[o2 + 1]) - pos[o0 + 1] * (pos[o1] * pos[o2 + 2] - pos[o1 + 2] * pos[o2]) + pos[o0 + 2] * (pos[o1] * pos[o2 + 1] - pos[o1 + 1] * pos[o2]);
+  }
+  if (vol < 0) for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 export function handGeo(side: number, kind: HandKind = 'relax'): THREE.BufferGeometry {
-  return cached(`hand|${side}|${kind}`, () => {
+  return cached(`hand2|${side}|${kind}`, () => {
     const b = new GB(false, true);
     const m = -side; // medial: the palm faces +m on x
     const S = HAND_S;
+    const flatAxis: V3t = [m, 0, 0];
     const P = (x: number, y: number, z: number): V3t => [m * x * S, y * S, z * S];
     const unit = (x: number, y: number, z: number): V3t => {
       const v = new THREE.Vector3(x, y, z).normalize();
       return [v.x, v.y, v.z];
     };
-    const ptAdd = (p: V3t, d: V3t, len: number): V3t => [p[0] + d[0] * len * S, p[1] + d[1] * len * S, p[2] + d[2] * len * S];
-    const dir = (curl: number, tilt: number): V3t => unit(m * Math.sin(curl), -Math.cos(curl), Math.sin(tilt));
-    // palm + a soft wrist cap (tucks under the sleeve cuff)
-    b.e(P(0, -0.043, 0), [0.0215 * S, 0.0375 * S, 0.0315 * S]);
-    b.e(P(0, -0.014, 0), [0.0235 * S, 0.02 * S, 0.0255 * S]);
-    const Z = [0.0235, 0.0078, -0.0078, -0.0235];
-    const RAD = [0.0093, 0.0098, 0.0095, 0.0085];
-    const LEN: [number, number][] = [[0.026, 0.021], [0.029, 0.023], [0.026, 0.021], [0.02, 0.017]];
-    const finger = (i: number, c1: number, c2: number, tilt: number) => {
-      const a = P(0.004, -0.068, Z[i]);
-      const j = ptAdd(a, dir(c1, tilt), LEN[i][0]);
-      const t = ptAdd(j, dir(c1 + c2, tilt * 0.6), LEN[i][1]);
-      b.seg(a, j, RAD[i] * S, undefined, true);
-      b.seg(j, t, RAD[i] * 0.92 * S, undefined, true);
+    const walk = (p: V3t, d: V3t, len: number): V3t => [p[0] + d[0] * len * S, p[1] + d[1] * len * S, p[2] + d[2] * len * S];
+    const dir = (a: number, tilt: number): V3t => unit(m * Math.sin(a), -Math.cos(a), tilt);
+    // ── palm: flat, wider at the knuckles, with the wrist end tucked into the forearm ──
+    const PY0 = 0.024, PY1 = -0.093; // wrist end (inside the forearm) .. knuckle line
+    const palmR = (t: number) => {
+      const s01 = Math.min(1, Math.max(0, (0 - (PY0 + (PY1 - PY0) * t)) / -PY1)); // 0 above the wrist, 1 at the knuckles
+      return (0.0245 + 0.016 * s01 * s01 * (3 - 2 * s01)) * S;
     };
+    const palmFlat = (t: number) => 0.88 - 0.46 * Math.pow(Math.max(0, (t - 0.2) / 0.8), 1.4);
+    b.add(sweep([P(0, PY0, 0), P(0, -0.04, 0), P(0, PY1, 0)], palmR, palmFlat, flatAxis, 0.08, 0.14, 16, 12), {}, true);
+    // thenar (thumb ball) and hypothenar pads, on the palm side
+    const pad = (p: V3t, s: V3t, r?: V3t) => b.add(sph(), { p, s: [s[0] * S, s[1] * S, s[2] * S], r });
+    pad(P(0.0085, -0.04, 0.0165), [0.0125, 0.03, 0.0145], [0, 0, m * -0.15]);
+    pad(P(0.006, -0.052, -0.02), [0.0095, 0.026, 0.011], [0, 0, m * 0.08]);
+    // ── fingers: knuckle line slightly arched (middle finger highest), three phalanges each ──
+    const FZ = [0.0275, 0.0095, -0.0088, -0.0255];
+    const FY = [-0.0875, -0.0915, -0.0885, -0.0825];
+    const R0 = [0.0108, 0.0113, 0.0105, 0.0091];
+    const LEN: [number, number, number][] = [[0.037, 0.022, 0.018], [0.041, 0.026, 0.02], [0.038, 0.024, 0.019], [0.03, 0.018, 0.016]];
+    const finger = (i: number, c1: number, c2: number, c3: number, tilt: number) => {
+      const [l1, l2, l3] = LEN[i];
+      const a = P(0.0015, FY[i], FZ[i]);
+      const d1 = dir(c1, tilt), d2 = dir(c1 + c2, tilt * 0.7), d3 = dir(c1 + c2 + c3, tilt * 0.45);
+      const s0 = walk(a, d1, -0.014);
+      const p1 = walk(a, d1, l1), p2 = walk(p1, d2, l2), p3 = walk(p2, d3, l3);
+      const tot = 0.014 + l1 + l2 + l3;
+      const u1 = (0.014 + l1) / tot, u2 = (0.014 + l1 + l2) / tot;
+      const rad = (t: number) => R0[i] * S * (1 - 0.3 * t) * (1 + 0.07 * Math.exp(-(((t - u1) / 0.05) ** 2)) + 0.05 * Math.exp(-(((t - u2) / 0.05) ** 2)));
+      b.add(sweep([s0, a, p1, p2, p3], rad, 0.93, flatAxis, 0.08, 0.1, 14, 8), {}, true);
+    };
+    // ── thumb: metacarpal, proximal, distal ──
     const thumb = (pts: V3t[]) => {
-      b.seg(pts[0], pts[1], 0.0125 * S, undefined, true);
-      b.seg(pts[1], pts[2], 0.0112 * S, undefined, true);
+      b.add(sweep(pts, (t) => 0.0148 * S * (1 - 0.3 * t), 0.9, flatAxis, 0.12, 0.1, 14, 8), {}, true);
     };
-    const tb = P(0.004, -0.03, 0.027);
+    const tb = P(0.004, -0.03, 0.0205);
+    const thumbPts = (d1: V3t, d2: V3t, d3: V3t, l: [number, number, number] = [0.04, 0.031, 0.026]): V3t[] => {
+      const t1 = walk(tb, d1, l[0]), t2 = walk(t1, d2, l[1]), t3 = walk(t2, d3, l[2]);
+      return [walk(tb, d1, -0.012), tb, t1, t2, t3];
+    };
     if (kind === 'relax') {
-      const c1 = [0.4, 0.43, 0.48, 0.54], c2 = [0.24, 0.27, 0.31, 0.35], tl = [0.07, 0.02, -0.03, -0.09];
-      for (let i = 0; i < 4; i++) finger(i, c1[i], c2[i], tl[i]);
-      const t1 = ptAdd(tb, unit(m * 0.3, -0.55, 0.78), 0.03);
-      thumb([tb, t1, ptAdd(t1, unit(m * 0.5, -0.65, 0.58), 0.022)]);
+      const c1 = [0.32, 0.4, 0.48, 0.56], c2 = [0.5, 0.55, 0.6, 0.62], c3 = [0.3, 0.32, 0.34, 0.36], tl = [0.07, 0.02, -0.03, -0.09];
+      for (let i = 0; i < 4; i++) finger(i, c1[i], c2[i], c3[i], tl[i]);
+      thumb(thumbPts(unit(m * 0.22, -0.84, 0.5), unit(m * 0.36, -0.78, 0.46), unit(m * 0.52, -0.7, 0.42)));
     } else if (kind === 'open') {
-      const tl = [0.15, 0.05, -0.06, -0.17];
-      for (let i = 0; i < 4; i++) finger(i, 0.05 + i * 0.01, 0.03, tl[i]);
-      const t1 = ptAdd(tb, unit(m * 0.1, -0.5, 0.86), 0.03);
-      thumb([tb, t1, ptAdd(t1, unit(m * 0.15, -0.5, 0.85), 0.023)]);
+      const tl = [0.2, 0.07, -0.08, -0.22];
+      for (let i = 0; i < 4; i++) finger(i, 0.03 + i * 0.01, 0.04 + i * 0.005, 0.03, tl[i]);
+      thumb(thumbPts(unit(m * 0.1, -0.5, 0.86), unit(m * 0.12, -0.5, 0.85), unit(m * 0.15, -0.45, 0.88)));
     } else if (kind === 'grip') {
-      for (let i = 0; i < 4; i++) finger(i, 1.25 + i * 0.03, 1.15, 0.02 * (1.5 - i));
-      const t1 = P(0.026, -0.05, 0.03);
-      thumb([tb, t1, P(0.032, -0.07, 0.008)]);
+      for (let i = 0; i < 4; i++) finger(i, 1.4 + i * 0.03, 1.45, 0.9, 0.02 * (1.5 - i));
+      thumb([P(-0.008, -0.02, 0.016), tb, P(0.026, -0.058, 0.032), P(0.04, -0.078, 0.014), P(0.042, -0.09, -0.006)]);
     } else if (kind === 'heart') {
       // heart hands: fingers together, curving in at the tips; the thumb swings out and down
       // toward the wrist, so two hands read as a heart (fingertips meet on top, thumbs below)
-      const c1 = [0.1, 0.12, 0.15, 0.2], c2 = [0.2, 0.22, 0.26, 0.3];
-      for (let i = 0; i < 4; i++) finger(i, c1[i], c2[i], 0.01 * (1.5 - i));
-      const t1 = ptAdd(tb, unit(m * 0.05, 0.28, 0.96), 0.032);
-      thumb([tb, t1, ptAdd(t1, unit(m * 0.1, 0.62, 0.78), 0.026)]);
+      const c1 = [0.1, 0.12, 0.15, 0.2], c2 = [0.22, 0.24, 0.28, 0.32], c3 = [0.16, 0.18, 0.2, 0.22];
+      for (let i = 0; i < 4; i++) finger(i, c1[i], c2[i], c3[i], 0.01 * (1.5 - i));
+      thumb(thumbPts(unit(m * 0.05, 0.28, 0.96), unit(m * 0.1, 0.62, 0.78), unit(m * 0.12, 0.7, 0.7), [0.04, 0.03, 0.024]));
     } else {
       // peace: index + middle straight in a V, ring + pinky folded into the palm, thumb across them
-      finger(0, 0.03, 0.02, 0.4);
-      finger(1, 0.03, 0.02, -0.26);
-      finger(2, 1.3, 1.2, -0.05);
-      finger(3, 1.35, 1.2, -0.05);
-      const t1 = P(0.034, -0.052, 0.006);
-      thumb([tb, t1, P(0.036, -0.064, -0.02)]);
+      finger(0, 0.03, 0.02, 0.02, 0.4);
+      finger(1, 0.03, 0.02, 0.02, -0.26);
+      finger(2, 1.4, 1.45, 0.9, -0.05);
+      finger(3, 1.45, 1.45, 0.9, -0.05);
+      thumb([P(-0.008, -0.02, 0.016), tb, P(0.036, -0.056, 0.012), P(0.05, -0.07, -0.006), P(0.05, -0.08, -0.02)]);
     }
     return b.build();
   });
