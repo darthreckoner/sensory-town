@@ -1363,7 +1363,7 @@ export class Character {
     this.backMount.position.set(0, 1.36 - TY, -0.108);
     this.backMount.rotation.y = Math.PI;
     upper.add(this.backMount);
-    this.gliderAnchor.position.set(0, 1.99 - TY, 0.215);
+    this.gliderAnchor.position.set(0, 1.993 - TY, 0.185); // = the midpoint of the two gripping fists (measured over a 4 s glide: fists at x +-0.184, 3 cm behind the old anchor)
     upper.add(this.gliderAnchor);
 
     // face bones: eyes and brows are mirrored copies (index 0 = +x)
