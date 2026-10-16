@@ -302,3 +302,34 @@ Rubric: locked in docs/V3_PLAN.md before any v3 code. Grades are integers, hones
 - **Verified:** production build passes 19/19 selftests at 1920×920; the 7 layout and emote tests pass at 852×393; 0 console errors. Swim was checked in the real sea.
 - **Not checked by me:** the slide in-game (checked only in the lab).
 - **Open tuning:** the jog/sprint posture leans forward (`leanFixRun`).
+
+### v3.4 (2026-10-16 evening): designer's iPad feedback
+**Designer's report:** "building is difficult due to menu layout"; "30 fps, quite a bit of stuttering, especially when there are pop ups" (the iPad was in Low Power Mode, which caps Safari at 30 fps); a stuck white-noise sound after a slide.
+
+**Fixes:**
+- **Build HUD, Fortnite-mobile style:**
+  - piece cluster at the right thumb;
+  - one material cycle button;
+  - top tool strip;
+  - side drawer for decor, starters and edit that folds into a chip;
+  - the aim area (centre 50%×50%) is asserted clear at every size.
+- **Pop-ups:**
+  - every backdrop-filter removed;
+  - compositor-only animations;
+  - thumbnails rendered in idle time with async read-back;
+  - reveal card pre-warmed;
+  - new `popupSpikes` selftest. The cold reveal stall went from 146–167 ms (with a long task) to 50 ms, the pane's baseline.
+- **Engine:**
+  - shader pre-warm behind the loading fade, plus an extra frame to compile shadow programs;
+  - pooled ride-giving passengers (building one was a 12–44 ms hitch);
+  - `hyp()` instead of `Math.hypot` in per-frame code;
+  - stepped adaptive quality (shadows, then casters, then vegetation, then DPR);
+  - debug overlay: worst ms, spikes, quality step, Low Power hint.
+  - On desktop, the worst drive hitches went from 35–54 ms to about 13 ms.
+- **Audio:** looping noise voices self-stop 300 ms after their last update.
+
+**Verified:**
+- Production build: 20/20 selftests at 1920×920.
+- The 6 layout tests pass at 1180×820 and 852×393.
+
+**Still pending:** a real-iPad retest with Low Power Mode off.

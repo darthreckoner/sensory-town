@@ -1083,6 +1083,12 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 
 /* v3 perf/tablet: below 1280 px the charm chip shows just the count (the NEXT: text would run into the slot rail / the panel) */
 @media (max-width: 1279px) { .lk-charms .nx { display: none; } }
+/* v3 tablet: the Locker bottom bar (− / undo / SURPRISE / EMOTE / PHOTO / +) is icon-only below 1500 px wide, so it fits between the slot rail and the panel on every iPad landscape size (1024, 1133, 1180, 1366) */
+@media (min-aspect-ratio: 1/1) and (max-width: 1499px) {
+  .dr-bar { gap: 10px; }
+  .dr-bar .btn .lbl { display: none; }
+  .dr-bar .btn.big { min-width: 76px; padding: 0 16px; }
+}
 /* the Looks cards + bottom bar keep their v2 layout; recolour for v3 */
 .dr-looks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; width: 100%; }
 .look { border: 3px solid rgba(255, 255, 255, 0.55); background: rgba(10, 16, 102, 0.55); box-shadow: 0 4px 0 rgba(4, 6, 40, 0.5); }
