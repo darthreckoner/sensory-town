@@ -1574,7 +1574,6 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
   .ws .lc .item, .ws .rc .item { width: 48px !important; height: 48px !important; border-width: 2px; border-radius: 10px; touch-action: pan-y; }
   .ws .lc .item .ico, .ws .rc .item .ico { font-size: 24px !important; }
   .ws .lc .item > span:not(.ico):not(.lock-badge) { display: none; }
-  .ws .item .lock-badge { top: -5px; right: -5px; font-size: 9px; padding: 1px 4px; }
   .ws .lc .btn { min-height: 48px; padding: 0 8px; font-size: 14px; gap: 6px; }
   .ws .lc .btn .ico { font-size: 22px; }
   .ws .lc .btn.round { width: 48px; height: 48px; align-self: center; }
@@ -1639,7 +1638,6 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
   .ws .lc .item, .ws .rc .item { width: 52px !important; height: 52px !important; flex: 0 0 auto; border-width: 2px; border-radius: 10px; touch-action: pan-x; }
   .ws .lc .item .ico, .ws .rc .item .ico { font-size: 26px !important; }
   .ws .lc .item > span:not(.ico):not(.lock-badge) { display: none; }
-  .ws .item .lock-badge { top: -5px; right: -5px; font-size: 9px; padding: 1px 4px; }
   .ws .lc .btn { flex: 0 0 auto; min-height: 52px; padding: 0 12px; font-size: 15px; gap: 6px; }
   .ws .lc .btn.round { width: 52px; height: 52px; }
   .ws .lc .label, .ws .rc .label { flex: 0 0 auto; font-size: 11px; }
@@ -1690,4 +1688,9 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
   .ws .lc::-webkit-scrollbar { display: none; }
   .ws .lc .item { touch-action: pan-y; }
   .ws[data-st="wax"] .lc { max-height: calc(100% - 108px - 80px - var(--safe-t) - var(--safe-b)); }
+}
+/* v3 phone (studio): the 🔒 count chip stays inside its tile (bottom-right corner), so it never hangs into a neighbour, the action buttons or off the screen */
+.ws .item .lock-badge, .ws .slime-type .lk { top: auto; left: auto; right: 3px; bottom: 3px; max-width: calc(100% - 6px); box-sizing: border-box; padding: 1px 6px; font-size: 11px; line-height: 1.25; white-space: nowrap; overflow: hidden; }
+@media (max-height: 520px) and (min-aspect-ratio: 1/1), (max-width: 560px) and (max-aspect-ratio: 1/1) {
+  .ws .item .lock-badge, .ws .slime-type .lk { right: 2px; bottom: 2px; padding: 0 4px; font-size: 9px; }
 }

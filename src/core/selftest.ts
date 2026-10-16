@@ -715,6 +715,7 @@ const TESTS: Record<string, () => Promise<Result>> = {
    */
   async studioLayout() {
     const { checkLayout } = await import('./layoutcheck');
+    const { charmTotal } = await import('./unlocks');
     const W = window.innerWidth, H = window.innerHeight;
     const portrait = H > W;
     const S = W >= 900 && H >= 600 ? { t: 0, r: 0, b: 20, l: 0 } : portrait ? { t: 59, r: 0, b: 34, l: 0 } : { t: 0, r: 59, b: 21, l: 59 }; // (a tablet only has the home bar)
@@ -764,32 +765,52 @@ const TESTS: Record<string, () => Promise<Result>> = {
       notes.push(`${label}: ${rep.groups} blocks, ${rep.taps} taps${rep.tight.length ? `, ${rep.tight.length} under 52px` : ''}`);
       for (const i of rep.issues) problems.length < 16 && problems.push(`${label}: ${i.kind} ${i.a}${i.b ? ' / ' + i.b : ''} (${i.value})`);
     };
+    // a fresh profile (0 charms: every bonus shape / finish / slime shows its 🔒 badge) and a fully unlocked one both have to lay out cleanly
+    const prof: any = store.profile;
+    const realCharms: string[] = prof.charms;
+    const rebuild = () => {
+      // the Squishy and Slime tiles are built once at init: rebuild them so the badges follow the charm count (Wax rebuilds its panels at every step)
+      for (const id of ['squishy', 'slime']) {
+        const st: any = (scenes.get('workshop') as any).stations?.get(id);
+        if (st?.buildUi) {
+          st.ui.replaceChildren();
+          st.buildUi();
+        }
+      }
+    };
     try {
-      for (const id of ['squishy', 'slime', 'wax']) {
-        await scenes.go('workshop', { station: id });
-        await sleep(260);
-        window.dispatchEvent(new Event('resize'));
-        scenes.step(240);
-        check(id);
-        if (id === 'wax') {
-          const w: any = cur();
-          const st = w.active;
-          st.coating.clear();
-          const l = st.coating.beginLayer('#ff2e88', 'dip');
-          st.coating.dipTo(l, 2);
-          l.final = true;
-          st.setStep('coat', true);
-          scenes.step(200);
-          check('wax coat');
-          st.setStep('crack', true);
-          scenes.step(200);
-          check('wax crack');
-          st.setStep('pick', true);
-          st.coating.clear();
-          scenes.step(20);
+      for (const state of ['locked', 'open']) {
+        prof.charms = state === 'locked' ? [] : Array.from({ length: charmTotal() + 5 }, (_, i) => `layout_test_${i}`);
+        rebuild();
+        const tag = state === 'locked' ? 'fresh: ' : '';
+        for (const id of ['squishy', 'slime', 'wax']) {
+          await scenes.go('workshop', { station: id });
+          await sleep(260);
+          window.dispatchEvent(new Event('resize'));
+          scenes.step(240);
+          check(tag + id);
+          if (id === 'wax') {
+            const w: any = cur();
+            const st = w.active;
+            st.coating.clear();
+            const l = st.coating.beginLayer('#ff2e88', 'dip');
+            st.coating.dipTo(l, 2);
+            l.final = true;
+            st.setStep('coat', true);
+            scenes.step(200);
+            check(tag + 'wax coat');
+            st.setStep('crack', true);
+            scenes.step(200);
+            check(tag + 'wax crack');
+            st.setStep('pick', true);
+            st.coating.clear();
+            scenes.step(20);
+          }
         }
       }
     } finally {
+      prof.charms = realCharms;
+      rebuild();
       calm.remove();
       keys.forEach((k, i) => (saved[i] ? root.style.setProperty(k, saved[i]) : root.style.removeProperty(k)));
       window.dispatchEvent(new Event('resize'));

@@ -46,6 +46,26 @@ function visible(e: Element, stop: Element): boolean {
   return true;
 }
 
+/** The part of `e` that is really on screen: its rect cut by every scrolling / clipping ancestor inside the scene root (null when none of it shows, e.g. a tile scrolled out of a strip). */
+function shown(e: Element, stop: Element): { left: number; top: number; right: number; bottom: number } | null {
+  const r = e.getBoundingClientRect();
+  let l = r.left, t = r.top, rr = r.right, b = r.bottom;
+  for (let n = e.parentElement; n && n !== stop.parentElement; n = n.parentElement) {
+    const s = getComputedStyle(n);
+    if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+    const c = n.getBoundingClientRect();
+    if (s.overflowX !== 'visible') {
+      l = Math.max(l, c.left);
+      rr = Math.min(rr, c.right);
+    }
+    if (s.overflowY !== 'visible') {
+      t = Math.max(t, c.top);
+      b = Math.min(b, c.bottom);
+    }
+  }
+  return rr - l >= 1 && b - t >= 1 ? { left: l, top: t, right: rr, bottom: b } : null;
+}
+
 /**
  * Check one scene's DOM overlay. `root` is the scene's `ui` element. A "block" is any visible, absolutely
  * positioned element inside it (plates, panels, button groups, the title…); two blocks that are not parent and
@@ -66,7 +86,7 @@ export function checkLayout(root: HTMLElement, opts: { probes?: LayoutProbe[]; m
   const issues: LayoutIssue[] = [];
   const tight: LayoutIssue[] = [];
 
-  const blocks: { e: Element; r: DOMRect }[] = [];
+  const blocks: { e: Element; r: { left: number; top: number; right: number; bottom: number } }[] = [];
   const all = root.querySelectorAll('*');
   for (const e of Array.from(all)) {
     if (opts.ignore && e.matches(opts.ignore)) continue;
@@ -77,7 +97,9 @@ export function checkLayout(root: HTMLElement, opts: { probes?: LayoutProbe[]; m
     if (pe === 'none' && !e.querySelector('button, .tab, .swatch, .item')) {
       // decorative text (hints, toasts) still must not sit on the faces / buttons, so keep it
     }
-    blocks.push({ e, r: e.getBoundingClientRect() });
+    const sr = shown(e, root);
+    if (!sr) continue; // scrolled out of its strip
+    blocks.push({ e, r: sr });
   }
   // a block that only wraps other blocks (a bare absolute container with no paint of its own) is skipped
   const paints = (e: Element) => {
@@ -115,7 +137,7 @@ export function checkLayout(root: HTMLElement, opts: { probes?: LayoutProbe[]; m
   // tap targets: every button / tab / swatch / item that is on screen (inside a scroll strip only if it is actually clipped in)
   let taps = 0;
   for (const e of Array.from(root.querySelectorAll('button, .tab, .swatch, .item'))) {
-    if (!visible(e, root)) continue;
+    if (!visible(e, root) || !shown(e, root)) continue;
     const r = e.getBoundingClientRect();
     taps++;
     const m = Math.min(r.width, r.height);
