@@ -2,7 +2,7 @@
 // tower, cabanas, a volleyball court, a tiki bar, a long pier on pylons and a
 // lighthouse with a sweeping beam at the end.
 import * as THREE from 'three';
-import { PIERS, WATER_Y } from '../world/townLayout';
+import { PIERS, SANDCASTLE, WATER_Y } from '../world/townLayout';
 import { groundHeight } from '../world/heightfield';
 import type { Collider } from '../world/townEnv';
 import type { Piece } from './types';
@@ -15,6 +15,79 @@ import { bench, bin, lamp } from './props';
 export interface BeachOut extends Piece {
   palms: { x: number; z: number; s: number }[];
   rocks: { x: number; z: number; s: number }[];
+}
+
+// ── v3 world: the giant sandcastle (Sandcastle Bay's landmark), a tall keep with four corner towers,
+//    a crenellated wall round a courtyard, a gate facing the sea, pennants, a bucket and a spade ──
+function sandcastle(m: Mesher, colliders: Collider[], cx: number, cz: number, yaw: number): void {
+  const sand = mat.std('#ecd49a', 0.95), sandDark = mat.std('#d8bb7a', 0.95);
+  const G = (x: number, z: number): number => groundHeight(x, z);
+  // seated on the LOWEST ground under it (the walls reach down into the slope on the high side, so no gap shows on the low side)
+  const gy = Math.min(G(cx, cz), G(cx + 11, cz), G(cx - 11, cz), G(cx, cz + 11), G(cx, cz - 11), G(cx + 11, cz + 11), G(cx - 11, cz - 11), G(cx + 11, cz - 11), G(cx - 11, cz + 11)) - 0.25;
+  m.push(cx, cz, yaw);
+  const W = 9;                                              // half-width of the courtyard
+  const lwx = (x: number, z: number): [number, number] => m.toWorld(x, z);
+  const quarter = Math.abs(Math.sin(yaw)) > 0.5;                 // the castle is turned a quarter-turn (or not): its boxes stay axis-aligned
+  const addBox = (x: number, z: number, hw: number, hd: number, h: number): void => {
+    const [wx, wz] = lwx(x, z);
+    colliders.push({ kind: 'box', x: wx, z: wz, hw: quarter ? hd : hw, hd: quarter ? hw : hd, h });
+  };
+  // walls: four runs, the front (+z, facing the sea after yaw) has a gate gap
+  const wall = (x: number, z: number, hw: number, hd: number): void => {
+    m.box(sand, x, gy + 1.1, z, hw * 2, 3.4, hd * 2, { cast: true });
+    const along = hw > hd, len = (along ? hw : hd) * 2;
+    for (let k = 0; k < Math.floor(len / 1.4); k++) {
+      const t = -len / 2 + 0.7 + k * 1.4;
+      m.box(sand, along ? x + t : x, gy + 3.05, along ? z : z + t, along ? 0.8 : hw * 2, 0.7, along ? hd * 2 : 0.8);
+    }
+    addBox(x, z, hw, hd, gy + 3.4);
+  };
+  wall(0, -W, W + 0.5, 0.55);                        // back
+  wall(-W, 0, 0.55, W);                              // left
+  wall(W, 0, 0.55, W);                               // right
+  wall(-W + 3.6, W, 3.6, 0.55);                      // front, left of the gate
+  wall(W - 3.6, W, 3.6, 0.55);                       // front, right of the gate
+  // the gate arch: two thick posts and a lintel with a flag
+  m.box(sand, 0, gy + 3.2, W, 3.4, 0.9, 1.3);
+  // four corner towers with cone roofs and pennants
+  const flagCols = ['#ff4d6d', '#3ec6ff', '#ffd23a', '#7bff6a'];
+  [[-W, -W], [W, -W], [-W, W], [W, W]].forEach(([tx, tz], i) => {
+    m.cyl(sand, tx, gy - 1.2, tz, 2.2, 1.85, 7.8, 12);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      m.box(sand, tx + Math.cos(a) * 1.7, gy + 6.95, tz + Math.sin(a) * 1.7, 0.7, 0.7, 0.7, { yaw: -a });
+    }
+    m.cyl(sandDark, tx, gy + 6.6, tz, 1.9, 1.7, 0.2, 12);
+    m.cyl(mat.std('#c9a25a', 0.9), tx, gy + 7.2, tz, 1.5, 0.0, 2.8, 12);
+    m.cyl(mat.std('#f3efe4', 0.6), tx, gy + 9.9, tz, 0.06, 0.05, 1.8, 5);
+    m.box(mat.std(flagCols[i], 0.7), tx + 0.55, gy + 11.0, tz, 1.1, 0.7, 0.04);
+    // little window slits
+    m.box(mat.std('#6b5030', 0.9), tx, gy + 4.2, tz + 1.9, 0.35, 1.0, 0.1);
+    colliders.push(...(() => { const [wx, wz] = lwx(tx, tz); return [{ kind: 'circle' as const, x: wx, z: wz, r: 2.2, h: gy + 7 }]; })());
+  });
+  // the keep in the middle: a stack of two boxes with a crown and a big flag
+  m.box(sand, 0, gy + 2.7, -1.5, 7.2, 7.0, 7.2);
+  m.box(sandDark, 0, gy + 6.4, -1.5, 7.9, 0.5, 7.9);
+  for (let k = 0; k < 7; k++) for (const s of [-3.5, 3.5]) {
+    m.box(sand, -3.15 + k * 1.05, gy + 7.0, -1.5 + s, 0.6, 0.8, 0.6);
+    m.box(sand, s, gy + 7.0, -1.5 - 3.15 + k * 1.05, 0.6, 0.8, 0.6);
+  }
+  m.box(sand, 0, gy + 8.5, -1.5, 4.4, 3.4, 4.4);
+  m.cyl(mat.std('#c9a25a', 0.9), 0, gy + 10.2, -1.5, 3.4, 0.0, 3.6, 4);
+  m.cyl(mat.std('#f3efe4', 0.6), 0, gy + 13.6, -1.5, 0.07, 0.05, 3.2, 5);
+  m.box(mat.std('#ff4d9a', 0.7), 0.9, gy + 15.0, -1.5, 1.8, 1.1, 0.05);
+  m.box(mat.std('#6b5030', 0.9), 0, gy + 1.7, 2.17, 1.7, 3.2, 0.12);               // the keep's door
+  colliders.push(...(() => { const [wx, wz] = lwx(0, -1.5); return [{ kind: 'circle' as const, x: wx, z: wz, r: 4.2, h: gy + 9 }]; })());
+  // a giant bucket and spade beside it (the builder's tools)
+  m.cyl(mat.std('#e8344a', 0.5), W + 4.5, gy, 3, 1.2, 1.5, 1.7, 12);
+  m.cyl(mat.std('#ffd23a', 0.5), W + 4.5, gy + 1.7, 3, 1.55, 1.55, 0.14, 12);
+  m.box(mat.std('#3ec6ff', 0.5), W + 7.2, gy + 1.2, 1.4, 0.18, 2.6, 0.18, { yaw: 0.3 });
+  m.box(mat.std('#3ec6ff', 0.5), W + 7.2, gy + 0.2, 0.9, 1.1, 0.12, 1.2, { yaw: 0.3 });
+  {
+    const [bx, bz] = lwx(W + 4.5, 3);
+    colliders.push({ kind: 'circle', x: bx, z: bz, r: 1.6, h: gy + 1.8 });
+  }
+  m.pop();
 }
 
 export function buildBeach(): BeachOut {
@@ -128,6 +201,8 @@ export function buildBeach(): BeachOut {
     colliders.push({ kind: 'box', x, z, hw: 2.3, hd: 1.4, h: 3 });
   }
 
+  sandcastle(m, colliders, SANDCASTLE.x, SANDCASTLE.z, SANDCASTLE.yaw);
+
   // ── the pier ──
   const pier = PIERS.find((p) => p.id === 'main')!;
   {
@@ -195,6 +270,7 @@ export function buildBeach(): BeachOut {
   const buoyCols = [PAL.orange, PAL.white, PAL.pink];
   for (let i = 0; i < 12; i++) {
     const bz = -60 + i * 12, bx = 148;
+    if (groundHeight(bx, bz) > WATER_Y - 1.0) continue; // v3: only where there is real water (the bay is bounded by headlands now)
     const buoy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), mat.neon(buoyCols[i % 3]));
     buoy.position.set(bx, WATER_Y + 0.2, bz);
     buoy.userData.bob = i;

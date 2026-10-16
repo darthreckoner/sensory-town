@@ -4,10 +4,12 @@
 import { store } from '../../core/store';
 import { isUnlocked } from '../../core/unlocks';
 import { OUTFIT_CATALOG, type CatalogSlot } from '../character';
-import { STARTER_OUTFITS, defaultLocker, type Hex, type Locker, type Outfit, type VehicleKind } from '../../core/model';
+import { WARDROBE } from '../wardrobeCatalog';
+import { STARTER_OUTFITS, defaultLocker, type FaceOpts, type Hex, type Locker, type Outfit, type VehicleKind } from '../../core/model';
+import { faceKey } from '../characterFace';
 import {
   BACK_BLINGS, CONTRAILS, EMOTES, EMOTE_SLOTS, GLIDERS, RIDES, SKINS, WRAP_FINISHES,
-  skinById, styleReward, type GearItem, type PartSpec, type Rarity, type SkinDef,
+  faceRewardOf, skinById, styleReward, type FaceField, type GearItem, type PartSpec, type Rarity, type SkinDef,
 } from './catalog';
 
 // ── ownership ────────────────────────────────────────────────────────────────
@@ -62,26 +64,28 @@ export function partIndex(slot: CatalogSlot, spec: PartSpec, salt = 0): number {
   return slot === 'accessory' ? 0 : salt % list.length;
 }
 
-/** The outfit a skin + style makes (the player keeps their own skin tone). */
-export function resolveSkinOutfit(s: SkinDef, style: number, skinTone: Hex): Outfit {
+/** The outfit a skin + style makes (the player keeps their own skin tone; suits keep her hair + extras if they don't set any). */
+export function resolveSkinOutfit(s: SkinDef, style: number, skinTone: Hex, base?: Outfit): Outfit {
   const st = s.styles[Math.max(0, Math.min(style, s.styles.length - 1))];
   const salt = SKINS.indexOf(s) + 1;
   const [hairC, topC, botC, shoeC, accC] = st.c;
+  const keep = base ?? store.profile.outfit;
   return {
     skin: skinTone,
-    hair: { style: partIndex('hair', s.parts.hair, salt), color: hairC },
+    ...(keep.face ? { face: { ...keep.face } } : {}),
+    hair: s.parts.hair && hairC ? { style: partIndex('hair', s.parts.hair, salt), color: hairC } : { ...keep.hair },
     top: { style: partIndex('top', s.parts.top, salt), color: topC },
     bottom: { style: partIndex('bottom', s.parts.bottom, salt), color: botC },
     shoes: { style: partIndex('shoes', s.parts.shoes, salt), color: shoeC },
-    accessory: { style: partIndex('accessory', s.parts.accessory, salt), color: accC },
+    accessory: s.parts.accessory ? { style: partIndex('accessory', s.parts.accessory, salt), color: accC } : { style: 0, color: keep.accessory.color },
   };
 }
 
 /** Rarity of a wardrobe part: the wardrobe catalog's own tag if it has one, else reward-gated parts are epic. */
 export function partRarity(slot: CatalogSlot, index: number): Rarity {
-  const it = OUTFIT_CATALOG[slot][index] as { rarity?: Rarity; reward?: string } | undefined;
-  if (it?.rarity) return it.rarity;
-  return it?.reward ? 'epic' : 'common';
+  const w = WARDROBE[slot][index];
+  if (w) return w.rarity;
+  return (OUTFIT_CATALOG[slot][index] as { reward?: string } | undefined)?.reward ? 'epic' : 'common';
 }
 
 // ── equip (every write goes through store.update) ────────────────────────────
@@ -107,6 +111,8 @@ export function equipMyStyle(): Outfit {
   if (L.skin === 'custom') return p.outfit;
   const mine = L.customOutfit ? structuredClone(L.customOutfit) : structuredClone(STARTER_OUTFITS[Math.max(0, store.data.profiles.indexOf(p)) % STARTER_OUTFITS.length]);
   mine.skin = p.outfit.skin;
+  if (p.outfit.face) mine.face = { ...p.outfit.face }; // the face is hers, whatever she wears
+  else delete mine.face;
   store.update(() => {
     L.skin = 'custom';
     L.skinStyle = 0;
@@ -179,3 +185,24 @@ export const defaultRideColor = (kind: VehicleKind): Hex =>
 
 // keep unused-import linters quiet for helpers the scene uses via this module
 void has;
+
+// ── face (Custom → Face): stored in profile.outfit.face; never tied to a skin ──
+export const faceOwned = (field: FaceField, id: unknown): boolean => owns(faceRewardOf(field, id));
+/** A short key of the current face, for thumbnail cache keys. */
+export const faceTag = (): string => faceKey(store.profile.outfit.face);
+export function setFace(patch: Partial<FaceOpts>): void {
+  const p = store.profile;
+  const L = getLocker();
+  store.update(() => {
+    p.outfit.face = { ...(p.outfit.face ?? {}), ...patch };
+    if (L.customOutfit) L.customOutfit.face = { ...p.outfit.face };
+  });
+}
+export function replaceFace(face: FaceOpts): void {
+  const p = store.profile;
+  const L = getLocker();
+  store.update(() => {
+    p.outfit.face = { ...face };
+    if (L.customOutfit) L.customOutfit.face = { ...face };
+  });
+}

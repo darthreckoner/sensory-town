@@ -92,7 +92,7 @@ function cloudMesh(): THREE.Mesh {
     for (let k = 0; k < parts; k++) {
       const u = k / (parts - 1) - 0.5;                       // -0.5..0.5 along the bank
       const r = (12 + 18 * (1 - Math.abs(u) * 1.6) + rng() * 8) * (0.8 + rng() * 0.3);
-      const g = new THREE.SphereGeometry(r, 12, 8);
+      const g = new THREE.SphereGeometry(r, 11, 7);
       g.scale(1.25, 0.78, 1);
       g.translate(u * span, base + r * 0.62 + rng() * 5, (rng() - 0.5) * 14);
       g.rotateY(yaw);
@@ -150,6 +150,60 @@ function distantIslands(): THREE.Mesh {
   return m;
 }
 
+/**
+ * A loose flock of gulls wheeling round the viewer (the whole flock follows the sky, so seabirds are always
+ * about, over the bay or over the hills). One draw call: each bird is five vertices, flapped and flown in the vertex shader.
+ */
+function gulls(): { mesh: THREE.Mesh; uniforms: { uTime: { value: number } } } {
+  const N = 22;
+  const base = new THREE.BufferGeometry();
+  // body (a long thin triangle pair) and two wings; aWing = how far out along the wing (flaps more at the tips)
+  const P = [0, 0, 0.9, 0.12, 0, -0.2, -0.12, 0, -0.2, 0, 0, -0.9,
+    0, 0, 0.35, 0, 0, -0.45, -1.75, 0, -0.15,
+    0, 0, 0.35, 1.75, 0, -0.15, 0, 0, -0.45];
+  const W = [0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0];
+  base.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  base.setAttribute('aWing', new THREE.Float32BufferAttribute(W, 1));
+  base.setIndex([0, 1, 2, 1, 3, 2, 4, 5, 6, 7, 8, 9]);
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = base.index;
+  geo.setAttribute('position', base.getAttribute('position'));
+  geo.setAttribute('aWing', base.getAttribute('aWing'));
+  const rng = seeded(1212);
+  const bird = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    const dir = rng() < 0.5 ? -1 : 1;
+    bird.set([35 + rng() * 120, dir * (0.05 + rng() * 0.06), rng() * 6.28, 16 + rng() * 40], i * 4);
+  }
+  geo.setAttribute('aBird', new THREE.InstancedBufferAttribute(bird, 4));
+  geo.instanceCount = N;
+  const uniforms = { uTime: { value: 0 } };
+  const mat = new THREE.ShaderMaterial({
+    uniforms, side: THREE.DoubleSide, fog: false,
+    vertexShader: `
+      attribute float aWing; attribute vec4 aBird; uniform float uTime; varying float vShade;
+      void main() {
+        float a = uTime * aBird.y + aBird.z;
+        float sgn = aBird.y < 0.0 ? -1.0 : 1.0;
+        vec3 c = vec3(cos(a) * aBird.x, aBird.w + sin(uTime * 0.4 + aBird.z * 3.0) * 3.0, sin(a) * aBird.x);
+        vec3 f = vec3(-sin(a) * sgn, 0.0, cos(a) * sgn);
+        vec3 r = vec3(-f.z, 0.0, f.x);
+        float flap = sin(uTime * 6.0 + aBird.z * 5.0);
+        vec3 p = position * 1.5;
+        p.y += aWing * flap * 0.8 + abs(p.x) * 0.05;
+        p.y += p.x * -sgn * 0.12;                                     // a little bank into the turn
+        vec3 w = c + r * p.x + vec3(0.0, p.y, 0.0) + f * p.z;
+        vShade = 0.86 + 0.14 * flap * aWing;
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(w, 1.0);   // (the sky group follows the viewer)
+      }`,
+    fragmentShader: 'varying float vShade; void main() { gl_FragColor = vec4(vec3(1.0, 1.0, 1.0) * vShade, 1.0); }',
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -3;
+  return { mesh, uniforms };
+}
+
 export interface Sky {
   group: THREE.Group;
   /** Keep the sky centred on the viewer. */
@@ -170,7 +224,9 @@ export function buildSky(): Sky {
   sun.position.copy(SUN_DIR).multiplyScalar(DOME_R * 0.9);
   const clouds = cloudMesh();
   const islands = distantIslands();
-  group.add(dome, sun, islands, clouds);
+  const flock = gulls();
+  group.add(dome, sun, islands, clouds, flock.mesh);
+  let clock = 0;
   return {
     group,
     follow(x, y, z) {
@@ -179,6 +235,8 @@ export function buildSky(): Sky {
     },
     update(dt) {
       clouds.rotation.y += tuning.drive.cloudSpeed * dt;
+      clock += dt;
+      flock.uniforms.uTime.value = clock;
     },
   };
 }

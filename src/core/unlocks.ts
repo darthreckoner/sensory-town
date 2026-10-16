@@ -13,7 +13,7 @@ import { store } from './store';
 import { bus } from './events';
 import { toast } from '../ui/ui';
 import { CHARMS } from '../world/townLayout';
-import { allCatalogRewards, type ItemSlot, type Rarity } from '../art/gear/catalog';
+import { RARITY_ORDER, allCatalogRewards, type ItemSlot, type Rarity } from '../art/gear/catalog';
 
 export interface Reward {
   id: string;        // namespaced: 'wax.*', 'slime.*', 'squishy.*', 'car.*', 'outfit.*', 'build.*', 'skin.*', 'style.*', 'bling.*', 'glider.*', 'trail.*', 'emote.*', 'wrap.*', 'ride.*'
@@ -25,7 +25,7 @@ export interface Reward {
   // v3 locker
   rarity: Rarity;
   /** Locker slot + item id when this reward is a Locker item (the reveal card offers "Equip") */
-  slot?: ItemSlot | 'wrap' | 'style';
+  slot?: ItemSlot | 'wrap' | 'style' | 'face';
   itemId?: string;
 }
 
@@ -51,7 +51,7 @@ const LEGACY: Record<string, { icon: string; label: string; where: string; rarit
  * The ladder, in unlock order. Rarity climbs through it but never in a straight line: there is
  * a treat at almost every charm and the legendaries land at the end. Skins that wear v2 parts
  * (LED kicks, wings, crown) come AFTER those parts. Anything in the catalog that is missing from
- * this list is appended at the end (and warned about in dev).
+ * this list is spread evenly through it, rarest last (and warned about in dev, except wardrobe suits).
  */
 const LADDER: string[] = [
   'bling.bunny', 'trail.sparkles', 'skin.glitterRacer', 'emote.tada', 'wax.glitter', 'glider.umbrella',
@@ -61,17 +61,17 @@ const LADDER: string[] = [
   'skin.bobaBreeze', 'bling.catpack', 'style.glitterRacer.2', 'glider.butterfly', 'skin.studioSpark', 'wrap.pearl',
   'wax.chrome', 'skin.jellyJet', 'bling.butterfly', 'emote.heart', 'skin.cherryPop', 'trail.bubbles',
   'car.trail', 'skin.galaxyGamer', 'bling.jetpack', 'style.neonSkater.2', 'skin.moonlightMixer', 'glider.pizza',
-  'outfit.wings', 'ride.hoverboard', 'skin.roboRascal', 'emote.shuffle', 'bling.balloon', 'style.cometCat.2',
-  'skin.dinoDash', 'build.pool', 'bling.shell', 'skin.cosmicCheer', 'glider.cloud', 'car.chrome',
+  'outfit.wings', 'ride.hoverboard', 'skin.roboRascal', 'emote.shuffle', 'face.sticker.rainbow', 'bling.balloon', 'style.cometCat.2',
+  'skin.dinoDash', 'build.pool', 'bling.shell', 'skin.cosmicCheer', 'face.eyes.4', 'glider.cloud', 'car.chrome',
   'emote.robot', 'style.galaxyGamer.2', 'skin.dragonDrift', 'trail.confetti', 'slime.galaxy', 'bling.angel',
-  'skin.auroraSkies', 'glider.dragonfly', 'style.cosmicCheer.2', 'ride.icecream', 'skin.shadowSprite', 'emote.swing',
-  'style.dragonDrift.2', 'wrap.glitter', 'skin.solarSparkle', 'style.auroraSkies.2', 'wax.glow', 'skin.midnightMirage',
+  'skin.auroraSkies', 'glider.dragonfly', 'style.cosmicCheer.2', 'ride.icecream', 'face.makeup.4', 'skin.shadowSprite', 'face.sticker.glitter', 'emote.swing',
+  'style.dragonDrift.2', 'wrap.glitter', 'skin.solarSparkle', 'style.auroraSkies.2', 'face.eyecolor.pink', 'wax.glow', 'skin.midnightMirage',
   'bling.rainbowcape', 'emote.sway', 'trail.rainbow', 'outfit.crown', 'skin.prismParade',
 ];
 
 const WHERE: Record<string, string> = {
   outfit: 'Locker · Outfit', backBling: 'Locker · Back Bling', glider: 'Locker · Glider', contrail: 'Locker · Contrail',
-  emote: 'Locker · Emotes', ride: 'Locker · Ride', wrap: 'Locker · Ride Wrap', style: 'Locker · Outfit style',
+  emote: 'Locker · Emotes', ride: 'Locker · Ride', wrap: 'Locker · Ride Wrap', style: 'Locker · Outfit style', face: 'Locker · Custom · Face',
 };
 
 /** How many charms exist in the world right now. */
@@ -86,12 +86,14 @@ function buildRewards(): Reward[] {
     meta.set(c.reward, { icon: c.item.icon, label: c.item.name, where: WHERE[c.slot] ?? 'Locker', rarity: c.item.rarity, slot: c.slot, itemId: c.item.id });
   }
   const order = LADDER.filter((id) => meta.has(id));
-  const missing = [...meta.keys()].filter((id) => !order.includes(id));
+  const missing = [...meta.keys()].filter((id) => !order.includes(id)).sort((a, b) => RARITY_ORDER.indexOf(meta.get(a)!.rarity) - RARITY_ORDER.indexOf(meta.get(b)!.rarity));
   if (import.meta.env?.DEV) {
     for (const id of LADDER) if (!meta.has(id)) console.warn(`[unlocks] ladder id "${id}" is not in the catalog`);
-    if (missing.length) console.warn('[unlocks] not in the ladder, appended at the end:', missing);
+    const stray = missing.filter((id) => !id.startsWith('skin.suit_')); // wardrobe suits are spread through the ladder on purpose
+    if (stray.length) console.warn('[unlocks] not in the ladder, spread through it automatically:', stray);
   }
-  order.push(...missing);
+  // anything the ladder doesn't list (new wardrobe suits…) is spread evenly through it, rarest last — never dumped at the end
+  missing.forEach((id, i) => order.splice(Math.round(((i + 1) * (order.length + 1)) / (missing.length + 1)) - 1 + i, 0, id));
   const M = order.length;
   return order.map((id, k): Reward => {
     const m = meta.get(id)!;

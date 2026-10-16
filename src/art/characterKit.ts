@@ -574,8 +574,8 @@ export function getFaceKit(): FaceKit {
 // 'peace' (a real V: index + middle up, ring + pinky folded, thumb across them).
 // ═════════════════════════════════════════════════════════════════════════════
 export const HAND_S = 1.3;
-export type HandKind = 'relax' | 'open' | 'grip' | 'peace';
-export const HAND_KINDS: HandKind[] = ['relax', 'open', 'grip', 'peace'];
+export type HandKind = 'relax' | 'open' | 'grip' | 'peace' | 'heart';
+export const HAND_KINDS: HandKind[] = ['relax', 'open', 'grip', 'peace', 'heart'];
 
 export function handGeo(side: number, kind: HandKind = 'relax'): THREE.BufferGeometry {
   return cached(`hand|${side}|${kind}`, () => {
@@ -621,6 +621,13 @@ export function handGeo(side: number, kind: HandKind = 'relax'): THREE.BufferGeo
       for (let i = 0; i < 4; i++) finger(i, 1.25 + i * 0.03, 1.15, 0.02 * (1.5 - i));
       const t1 = P(0.026, -0.05, 0.03);
       thumb([tb, t1, P(0.032, -0.07, 0.008)]);
+    } else if (kind === 'heart') {
+      // heart hands: fingers together, curving in at the tips; the thumb swings out and down
+      // toward the wrist, so two hands read as a heart (fingertips meet on top, thumbs below)
+      const c1 = [0.1, 0.12, 0.15, 0.2], c2 = [0.2, 0.22, 0.26, 0.3];
+      for (let i = 0; i < 4; i++) finger(i, c1[i], c2[i], 0.01 * (1.5 - i));
+      const t1 = ptAdd(tb, unit(m * 0.05, 0.28, 0.96), 0.032);
+      thumb([tb, t1, ptAdd(t1, unit(m * 0.1, 0.62, 0.78), 0.026)]);
     } else {
       // peace: index + middle straight in a V, ring + pinky folded into the palm, thumb across them
       finger(0, 0.03, 0.02, 0.4);

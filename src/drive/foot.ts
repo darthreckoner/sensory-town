@@ -52,6 +52,15 @@ export class FootPhysics {
   // ── v3 movement (W4) ── hooks for sprint / glide landings (drive/movement.ts)
   /** multiplies the walking / running speed (sprint sets it a little above 1) */
   speedMul = 1;
+  /** true while sliding / sliding-jumping: the velocity is NOT pulled toward the stick (movement.ts / slide.ts own it) */
+  coast = false;
+  /** the real horizontal velocity (after the walls had their say) */
+  get velX(): number {
+    return this.vx;
+  }
+  get velZ(): number {
+    return this.vz;
+  }
   /** carry momentum into the walk (a glide landing, a mantle) */
   setVelocity(vx: number, vz: number): void {
     this.vx = vx;
@@ -152,7 +161,7 @@ export class FootPhysics {
       accel = d.footAccel * dt * 0.35;
     }
     const tvx = dirX * top, tvz = dirZ * top;
-    const k = 1 - Math.exp(-accel);
+    const k = this.coast && !this.swimming ? 0 : 1 - Math.exp(-accel); // v3 movement: a slide keeps its momentum
     this.vx += (tvx - this.vx) * k;
     this.vz += (tvz - this.vz) * k;
     this.speed = Math.hypot(this.vx, this.vz);

@@ -28,6 +28,7 @@ export const GIANT_MUSHROOMS: [number, number, number, string][] = [
 export function buildGrove(): GroveOut {
   const m = new Mesher();
   const ex = new THREE.Group();
+  const inst = new THREE.Group();                    // instanced meshes (bakeStatic leaves those alone, so they live beside the baked result)
   const colliders: Collider[] = [];
   const trees: GroveOut['trees'] = [];
   const G = (x: number, z: number): number => groundHeight(x, z);
@@ -71,13 +72,13 @@ export function buildGrove(): GroveOut {
   }
   // little ones: thousands of tiny glowing mushrooms around the floor
   {
-    const smallCap = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.5, 0.3, 0.5);
-    const smallStem = new THREE.CylinderGeometry(0.1, 0.14, 0.5, 6).translate(0, 0.25, 0);
+    const smallCap = new THREE.SphereGeometry(1, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.5, 0.3, 0.5);
+    const smallStem = new THREE.CylinderGeometry(0.1, 0.14, 0.5, 5, 1, true).translate(0, 0.25, 0);
     const sCaps = new InstanceBatch(smallCap, glowMat(), false, false);
     const sStems = new InstanceBatch(smallStem, mat.std('#f6ecd6', 0.8), false, false);
     const cols = ['#ff5e9c', '#9b6bff', '#3ec6e8', '#ffb02e', '#ff5470', '#7bff9a'];
     let n = 0;
-    for (let i = 0; i < 2600 && n < 380; i++) {
+    for (let i = 0; i < 2600 && n < 300; i++) {
       const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * (GROVE.r + 10);
       const x = GROVE.x + Math.cos(a) * r, z = GROVE.z + Math.sin(a) * r;
       const h = terrainHeight(x, z);
@@ -89,12 +90,15 @@ export function buildGrove(): GroveOut {
     }
     for (const b of [sStems, sCaps]) {
       const mesh = b.build();
-      if (mesh) ex.add(mesh);
+      if (mesh) {
+        mesh.name = 'vegetation'; // soft ground cover (walk-through), like bushes, for the world sweeps
+        inst.add(mesh);
+      }
     }
   }
   for (const b of [stems, caps, spots]) {
     const mesh = b.build();
-    if (mesh) ex.add(mesh);
+    if (mesh) inst.add(mesh);
   }
 
   // ── the grove's big tree house tree ──
@@ -202,6 +206,7 @@ export function buildGrove(): GroveOut {
   group.name = 'grove';
   group.add(m.build('grove-static'));
   group.add(bakeStatic(ex));
+  group.add(inst);
   group.add(fire);
   void trees;
   return {

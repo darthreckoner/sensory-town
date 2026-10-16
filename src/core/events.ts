@@ -138,6 +138,14 @@ export interface GameEvents {
   decorPlaced: { pos: V3; type: string };
   decorDeleted: { pos: V3; type: string };
 
+  // ── v3 emote (W5): the in-world emote wheel (drive/emotewheel.ts) ──
+  /** an emote started on the walker in the world (id from character.EMOTES; loop = it repeats until she moves, jumps or gets in a ride) */
+  emoteStarted: { id: string; loop: boolean; pos: V3 };
+  /** it ended: a one-shot finished ('done'), she moved / jumped ('moved'), got in a ride or left the scene ('ride'), or picked another emote ('swap') */
+  emoteStopped: { id: string; pos: V3; reason: 'done' | 'moved' | 'ride' | 'swap' };
+  /** the wheel opened / closed (the world holds still while it is open) */
+  emoteWheel: { open: boolean };
+
   // ── v3 movement (W4): sprint, mantle, glide, launch pads, the party bus, POI cards ──
   /** climbed a ledge (short hop-up) */
   mantle: { pos: V3 };
@@ -157,6 +165,14 @@ export interface GameEvents {
   busJump: { pos: V3 };
   /** a POI title card was shown */
   poiEntered: { id: string; name: string; pos: V3 };
+  /** slide: started / each frame while it lasts (speed01 = fraction of the top speed) / ended / a puff of dust or snow behind her */
+  slideStart: { pos: V3 };
+  slideUpdate: { speed01: number; snow: boolean };
+  slideStop: {};
+  slideSpray: { pos: V3; speed01: number; snow: boolean };
+  /** zipline: grabbed the pulley / rolled onto the landing pad */
+  zipStart: { pos: V3 };
+  zipEnd: { pos: V3 };
 }
 
 type Handler<T> = (payload: T) => void;

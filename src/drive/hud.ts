@@ -9,7 +9,8 @@ import { bindTap, el, nameTag } from '../ui/ui';
 import {
   BOUNDS, BOUTIQUE, BRIDGES, BUILD_YARD, DISTRICTS, LANDMARKS, LOOKOUT, PAVED, PIERS, PLOTS, ROAD_PATHS, WORKSHOP, type Plot,
 } from '../world/townLayout';
-import { LAKE, coastX } from '../world/heightfield';
+import { LAKE } from '../world/heightfield';
+import { MAP_REACH, MAP_SCALE, paintIsland } from './minimapBase'; // v3 world: the island's shoreline paints the map
 import type { House } from '../core/model';
 import type { Reward } from '../core/unlocks';
 import { clamp, wrapAngle } from './envUtils';
@@ -32,8 +33,10 @@ export interface MapFrame {
   z: number;
   heading: number;
   color: string;
-  /** set while walking: where the car is parked */
-  car: { x: number; z: number } | null;
+  /** set while walking: where the ride you drove last is parked (and its icon) */
+  car: { x: number; z: number; icon?: string } | null;
+  /** v3 rides: the other parked rides near the dial */
+  rides?: { x: number; z: number; icon: string }[];
   target: MapTarget | null;
   charms: { x: number; z: number }[];
   /** plots to pulse (the player owns no house yet) */
@@ -43,7 +46,7 @@ export interface MapFrame {
   t: number;
 }
 
-const BASE_SCALE = 2.5; // base canvas px per world unit
+const BASE_SCALE = MAP_SCALE; // base canvas px per world unit (v3 world: the whole island)
 
 export class Minimap {
   readonly el: HTMLDivElement;
@@ -53,7 +56,7 @@ export class Minimap {
   private px = 160;
   private k = 1;
   /** Half-size (world units) the base canvas covers. */
-  private readonly reach = BOUNDS + 80;
+  private readonly reach = MAP_REACH;
 
   constructor(parent: HTMLElement) {
     this.el = el('div', 'drive-minimap', parent) as HTMLDivElement;
@@ -84,27 +87,18 @@ export class Minimap {
     const X = (x: number): number => (x + R0) * B;
     const Z = (z: number): number => (z + R0) * B;
 
-    // outside the map: dark; inside: warm grass
-    g.fillStyle = '#2a3a3a';
-    g.fillRect(0, 0, S, S);
-    g.fillStyle = '#b9d98f';
-    g.fillRect(X(-BOUNDS), Z(-BOUNDS), BOUNDS * 2 * B, BOUNDS * 2 * B);
-    // district tints
+    // ── v3 world: the sea all round and the island's shoreline (see minimapBase.ts) ──
+    paintIsland(g);
+    // district tints (only where they stay on land)
     for (const d of DISTRICTS) {
-      g.fillStyle = d.id === 'downtown' ? 'rgba(180,176,190,0.5)' : d.id === 'beach' ? 'rgba(240,222,170,0.45)' : d.id === 'park' ? 'rgba(120,190,110,0.35)' : d.id === 'skate' ? 'rgba(190,190,200,0.4)' : 'rgba(150,200,120,0.25)';
+      if (d.id !== 'downtown' && d.id !== 'skate' && d.id !== 'homehills') continue;
+      g.fillStyle = d.id === 'downtown' ? 'rgba(180,176,190,0.5)' : d.id === 'skate' ? 'rgba(190,190,200,0.4)' : 'rgba(150,200,120,0.25)';
       g.beginPath();
       g.arc(X(d.x), Z(d.z), d.radius * 0.8 * B, 0, Math.PI * 2);
       g.fill();
     }
-    // the sea (east of the coast, below the park) and the lake
-    g.fillStyle = '#6fb6e8';
-    g.beginPath();
-    g.moveTo(X(coastX(-58)), Z(-58));
-    for (let z = -58; z <= BOUNDS; z += 4) g.lineTo(X(coastX(z)), Z(z));
-    g.lineTo(X(BOUNDS), Z(BOUNDS));
-    g.lineTo(X(BOUNDS), Z(-58));
-    g.closePath();
-    g.fill();
+    // the lake
+    g.fillStyle = '#6cc4e4';
     g.beginPath();
     g.ellipse(X(LAKE.x), Z(LAKE.z), LAKE.rx * B, LAKE.rz * B, 0, 0, Math.PI * 2);
     g.fill();
@@ -277,6 +271,20 @@ export class Minimap {
       g.font = `12px ${EMOJI_FONT}`;
       g.fillText(d.icon, rx, rz + 1);
     }
+    // v3 rides: every other parked ride in range, small
+    if (f.rides && f.rides.length) {
+      g.font = `${Math.round(7 * k)}px ${EMOJI_FONT}`;
+      for (const r of f.rides) {
+        const x = wx(r.x), z = wz(r.z);
+        if (Math.hypot(x - c, z - c) > c - 6) continue;
+        g.fillStyle = 'rgba(255,255,255,0.82)';
+        g.beginPath();
+        g.arc(x, z, 5 * (k / 2.2 + 0.3), 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#000';
+        g.fillText(r.icon, x, z + 1);
+      }
+    }
     // the parked car, when walking
     if (f.car) {
       const [x, z, pinned] = pin(wx(f.car.x), wz(f.car.z), 13);
@@ -285,7 +293,7 @@ export class Minimap {
       g.arc(x, z, pinned ? 10 : 7.5 * (k / 2.2 + 0.2), 0, Math.PI * 2);
       g.fill();
       g.font = `${Math.round(pinned ? 13 : 9 * k)}px ${EMOJI_FONT}`;
-      g.fillText('🚗', x, z + 1);
+      g.fillText(f.car.icon ?? '🚗', x, z + 1);
     }
     // the player: a chunky arrow in the car's colour
     g.translate(c, c);

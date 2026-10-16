@@ -36,6 +36,7 @@ import { emojiSprite, emojiTexture, clamp, lerpAngle, wrapAngle } from '../drive
 import * as Layout from '../world/townLayout';
 import type { DoorDef } from '../drive/types';
 import { BuildMode } from '../build/world3/mode';   // v3 build
+import { EmoteWheel } from '../drive/emotewheel';   // v3 emote
 import { Movement } from '../drive/movement';   // ── v3 movement ── over-the-shoulder cam, sprint, mantle, glide, pads, bus drop, POI cards
 
 // ── what survives leaving the town scene (Studio, Style, Build...) ──────────
@@ -153,6 +154,8 @@ export class DriveScene extends GameScene {
   private tags!: NameTags;
   private modeBtn!: HTMLButtonElement;
   private callBtn!: HTMLButtonElement;
+  private emote3!: EmoteWheel;   // v3 emote: the in-world emote wheel (😀 / Q)
+  private emoteBtn!: HTMLButtonElement;   // v3 emote
   private build3!: BuildMode;   // v3 build: build mode in the world (wall / floor / ramp / roof, decor)
   private mv!: Movement;   // ── v3 movement ──
   private winW = 1;
@@ -278,6 +281,7 @@ export class DriveScene extends GameScene {
       hud,
       foot: () => this.foot,
       onFoot: () => this.mode === 'foot',
+      busy: () => this.mv.busy,
       getOut: () => {
         if (this.mode === 'car') this.getOut();
         return this.mode === 'foot';
@@ -285,6 +289,17 @@ export class DriveScene extends GameScene {
     });
     const buildBtn = button(side, { icon: '🔨', cls: 'round drive-build' }, () => this.build3.toggle());
     buildBtn.title = 'Build (B)';
+    // ── v3 emote ── 😀 / Q: the emote wheel (on foot). Emotes play right here in the world; juice gives each its own tune.
+    this.emote3 = new EmoteWheel({
+      hud,
+      walker: () => this.walker,
+      foot: () => this.foot,
+      mv: () => this.mv,
+      onFoot: () => this.mode === 'foot',
+      canOpen: () => !this.leaving && this.openSheets === 0,
+    });
+    this.emoteBtn = button(side, { icon: '😀', cls: 'round drive-emote' }, () => this.emote3.toggle());
+    this.emoteBtn.title = 'Emotes (Q)';
     this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode(), onConfirm: () => this.confirmPrompt(), onCallCar: () => this.callCar() });
 
     // ── v3 movement ── the on-foot movement hub (camera, sprint, mantle, glide, launch pads, bus drop, POI cards): drive/movement.ts
@@ -313,6 +328,8 @@ export class DriveScene extends GameScene {
         this.updateMover();
         this.placeCamera(0, true);
       },
+      leaving: () => this.leaving,
+      isFoot: () => this.mode === 'foot',
       where: () => {
         where.x = this.mx;
         where.z = this.mz;
@@ -378,7 +395,7 @@ export class DriveScene extends GameScene {
     this.build3.enter(this.grid);   // ── v3 build ── the saved builds + decor join the world and the collision grid
 
     // doors (visual mats for walkers; the pads are drawn separately)
-    const doors = [...(this.env.doors ?? []), ...this.plotLayer.doors].filter((dd) => dd.scene !== 'build');   // v3 build: no door leads to the old Build scene
+    const doors = [...(this.env.doors ?? []), ...this.plotLayer.doors];   // (v3 build: a door whose scene is 'build' now just switches build mode on, see enterPlace)
     this.doorLayer.setDoors(doors);
     this.triggers = doors.map((def) => ({ def, armed: true }));
     this.triggers.push(
@@ -450,6 +467,7 @@ export class DriveScene extends GameScene {
 
     this.listen(window, 'keydown', (e) => this.controls.onKeyDown(e));
     this.listen(window, 'keyup', (e) => this.controls.onKeyUp(e));
+    this.listen(window, 'keydown', this.emote3.onKey, { capture: true });   // v3 emote: Q opens the wheel (before the camera-turn keys see it)
     this.listen(window, 'blur', () => this.controls.releaseAll());
     this.listen(
       window,
@@ -493,6 +511,7 @@ export class DriveScene extends GameScene {
     this.skid.clear();
     this.fx.clear();
     this.ripples.clear();
+    this.emote3.reset();   // v3 emote
     this.build3.exit();   // v3 build
     this.plotLayer?.group.removeFromParent();
     this.plotLayer = null;
@@ -549,6 +568,7 @@ export class DriveScene extends GameScene {
 
     this.placeCamera(dt, false);
     this.build3.update(dt, t);   // v3 build: ghost, placing, build-in animations
+    this.emote3.update();   // v3 emote: notices when the dance is over (moved, jumped, got in a ride)
     this.env.setViewer?.(this.camera.position.x, this.camera.position.y, this.camera.position.z);
     this.env.update(dt, t);
     tickBuildMaterials(t);
@@ -621,6 +641,19 @@ export class DriveScene extends GameScene {
     if (landed > 0) {
       bus.emit('carLand', { pos: { x: p.x, y: p.y + 0.3, z: p.z }, strength: clamp(landed / 8, 0.3, 3) });
       this.car.bump(landed * 0.9);
+    }
+    // ── v3 rides ── launch pads: a grounded ride that rolls over a pad is flung up (the boat ignores them). 0.6 × the walker's
+    // kick (tuning.movement3.padSpeed): a good big jump that still lands sanely. The pad's own squash + rings + boing come with the event.
+    if (p.grounded && !p.waterOnly && !this.leaving && this.dropY <= 0) {
+      const base = p.y - p.hover;
+      const pad = this.mv.pads.trigger(p.x, base, p.z) ?? this.mv.pads.trigger(p.x + Math.sin(p.heading) * 1.2, base, p.z - Math.cos(p.heading) * 1.2);
+      if (pad) {
+        const vy = tuning.movement3.padSpeed * 0.6;
+        p.launch(vy);
+        bus.emit('launchPad', { pos: { x: pad.x, y: pad.y + 0.4, z: pad.z }, strength: 1 });
+        bus.emit('carJump', { pos: { x: p.x, y: p.y + 1, z: p.z }, strength: clamp(vy / 8, 0.3, 2.5) });
+        this.car.bump(6);
+      }
     }
 
     // ── the car's body ──
@@ -1031,11 +1064,28 @@ export class DriveScene extends GameScene {
     return best;
   }
 
+  /** The parked rides near the minimap dial (the one you drive is the arrow / the car marker). */
+  private mapRides(): { x: number; z: number; icon: string }[] {
+    const out = this.mapRideList;
+    out.length = 0;
+    const reach = tuning.drive.minimapRadius + 4;
+    for (const w of this.rides) {
+      if (w === this.driving) continue;
+      if (Math.abs(w.x - this.mx) > reach || Math.abs(w.z - this.mz) > reach) continue;
+      out.push({ x: w.x, z: w.z, icon: RIDE_INFO[w.kind].icon });
+    }
+    return out;
+  }
+  private mapRideList: { x: number; z: number; icon: string }[] = [];
+
   /** On foot, near a parked ride: a big "Drive" bubble (tap, Enter or E hops in). */
   private updateRidePrompt(): void {
     const f = this.foot;
     let best: WorldRide | null = null;
-    if (this.mode === 'foot' && !this.leaving && !this.controls.suspended && !f.swimming && !this.mv.busy) best = this.nearestRide(f.x, f.z);
+    if (this.mode === 'foot' && !this.leaving && !this.controls.suspended && !this.mv.busy) {
+      const near = this.nearestRide(f.x, f.z);
+      if (near && (!f.swimming || near.kind === 'boat')) best = near;   // a swimmer can climb into a boat
+    }
     if (best === this.rideTarget) return;
     this.rideTarget = best;
     if (best) this.prompt.show(RIDE_INFO[best.kind].icon, 'Drive', () => this.confirmPrompt());
@@ -1064,6 +1114,7 @@ export class DriveScene extends GameScene {
   // ── hopping out / in ──────────────────────────────────────────────────────
   private toggleMode(): void {
     if (this.leaving || this.controls.suspended || this.mv.busy) return;   // v3 movement: not on the bus / in the air / mid-climb
+    if (this.mode === 'foot' && this.mv.tryZip()) return;   // v3 movement: E / F at a zipline post = Zip!
     if (this.mode === 'car') this.getOut();
     else this.getIn(this.rideTarget);
   }
@@ -1274,6 +1325,8 @@ export class DriveScene extends GameScene {
     if (ico) ico.textContent = car ? '🚶' : '🚪'; // on foot the 🚗 button calls the car; this one hops in
     this.modeBtn.title = car ? 'Get out (E)' : 'Get in (E)';
     this.callBtn.style.display = car ? 'none' : '';
+    this.emoteBtn.style.display = car ? 'none' : '';   // v3 emote: the wheel is for walking
+    if (car) this.emote3.reset();
     if (!car) {
       this.boostOn = false;
       this.boostLevel = 0;
@@ -1386,6 +1439,12 @@ export class DriveScene extends GameScene {
 
   private enterPlace(tr: Trigger, onFoot: boolean): void {
     const def = tr.def;
+    // ── v3 build ── the builder's office mat no longer opens the old Build scene: it switches build mode on right here
+    if (def.scene === 'build') {
+      tr.armed = false;   // asleep until you step off the mat, so switching build mode off again sticks
+      this.build3.toggle(true);
+      return;
+    }
     this.leaving = true;
     this.leaveT = 0;
     // where to appear when we come back
@@ -1395,8 +1454,7 @@ export class DriveScene extends GameScene {
     // exiting on foot from a pad that has a street exit: keep the car where it is
     const pos = { x: this.mx, y: 1, z: this.mz };
     if (def.scene === 'workshop') bus.emit('arriveWorkshop', { pos });
-    else if (def.scene === 'build') bus.emit('arriveBuild', { pos });
-    else bus.emit('uiTap', { kind: 'big' });
+    else bus.emit('uiTap', { kind: 'big' });   // (v3 build: the 'build' branch is gone, see the early return above)
     void scenes.go(def.scene as 'workshop' | 'dressup' | 'build', def.params);
   }
 
@@ -1435,7 +1493,8 @@ export class DriveScene extends GameScene {
     this.camera.position.copy(this.camPos);
 
     // FOV: a touch wider at speed, a big kick on boost (on foot: the sprint / launch / glide kicks of the movement rig)
-    const base = this.mode === 'car' ? d.cameraFov + d.cameraFovBoost * this.phys.speed01 + d.boostFov * this.boostLevel : d.cameraFov + 4 + this.mv.fov;
+    const rc = this.phys.cam;   // ── v3 rides ── a ride may set its own lens
+    const base = this.mode === 'car' ? rc.cameraFov + rc.cameraFovBoost * this.phys.speed01 + rc.boostFov * this.boostLevel : d.cameraFov + 4 + this.mv.fov;
     const fov = base * this.fovScale;
     if (Math.abs(fov - this.fovNow) > 0.05) {
       this.fovNow = fov;
@@ -1445,7 +1504,7 @@ export class DriveScene extends GameScene {
   }
 
   private placeChaseCamera(dt: number, snap: boolean): void {
-    const d = tuning.drive;
+    const d = this.phys.cam;   // ── v3 rides ── per-ride camera knobs: tuning.rides.<kind>.camera*
     const p = this.phys;
     const k = snap ? 1 : 1 - Math.exp(-d.cameraLag * dt);
     this.camHeading = lerpAngle(this.camHeading, p.heading, k);
@@ -1453,8 +1512,8 @@ export class DriveScene extends GameScene {
     const bx = -Math.sin(this.camHeading), bz = Math.cos(this.camHeading); // unit vector behind the camera heading
 
     // Never inside a building: shorten the arm when a box is in the way.
-    // a longer ride gets a longer chase arm (the hoverboard is filmed close, the ice-cream truck from further back)
-    const dist = d.cameraFollowDistance * clamp(0.55 + this.car.spec.length * 0.1, 0.8, 1.25) * (1 + this.boostLevel * 0.1);
+    // each ride has its own arm (tuning.rides.<kind>): the hoverboard and the cart are filmed close and low, the trucks from further back
+    const dist = d.cameraFollowDistance * (1 + this.boostLevel * 0.1);
     const tx = p.x + bx * dist, tz = p.z + bz * dist;
     const free = this.freeFraction(p.x, p.z, tx, tz, this.camBaseY + d.cameraHeight);
     const minFrac = clamp(d.cameraMinDistance / dist, 0.1, 1);
@@ -1463,7 +1522,7 @@ export class DriveScene extends GameScene {
     else if (target < this.occl) this.occl += (target - this.occl) * (1 - Math.exp(-16 * dt));
     else this.occl += (target - this.occl) * (1 - Math.exp(-2.5 * dt));
     const f = this.occl;
-    this.camWant.set(p.x + bx * dist * f, this.camBaseY + d.cameraHeight - this.boostLevel * 0.7 + (1 - f) * 4, p.z + bz * dist * f);
+    this.camWant.set(p.x + bx * dist * f, this.camBaseY + d.cameraHeight - this.boostLevel * Math.min(0.7, d.cameraHeight * 0.12) + (1 - f) * Math.min(4, d.cameraHeight * 0.7), p.z + bz * dist * f);
 
     const kp = snap ? 1 : 1 - Math.exp(-d.cameraLag * d.cameraPosLag * dt);
     this.camPos.lerp(this.camWant, kp);
@@ -1496,8 +1555,9 @@ export class DriveScene extends GameScene {
       if (b.y0 !== undefined && b.y0 > this.camPos.y + 1.2) continue; // v3: a wall on an upper storey is no concern of a lens down here
       const ox = b.hw + 0.8 - Math.abs(this.camPos.x - b.x), oz = b.hd + 0.8 - Math.abs(this.camPos.z - b.z);
       if (ox <= 0 || oz <= 0) continue;
-      if (b.h !== undefined && b.h - groundHeight(b.x, b.z) < 4.5) {
+      if (b.y0 === undefined && b.h !== undefined && b.h - groundHeight(b.x, b.z) < 4.5) {
         // a low wall or hedge: rise over it instead of sliding into the next corridor
+        // (v3: not for a player's build wall, y0 defined: rising over a storey's wall would put the lens above the room's ceiling; it is pushed in / out sideways instead)
         if (this.camPos.y < b.h + 0.4) this.camPos.y = b.h + 0.4;
       } else if (b.h !== undefined && this.camPos.y > b.h + 0.3) {
         continue; // above a roof (walking on the mall)
@@ -1632,7 +1692,8 @@ export class DriveScene extends GameScene {
         z: this.mz,
         heading: car ? this.phys.heading : this.foot.heading,
         color: '#' + this.car.color.getHexString(),
-        car: car ? null : { x: this.phys.x, z: this.phys.z },
+        car: car ? null : { x: this.phys.x, z: this.phys.z, icon: RIDE_INFO[this.car.kind].icon },
+        rides: this.mapRides(),
         target,
         charms: this.nearCharms,
         emptyPlots: this.ownsHouse ? null : this.emptyPlots,

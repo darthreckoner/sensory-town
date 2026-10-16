@@ -312,6 +312,22 @@ export function frecklesGeo(): THREE.BufferGeometry {
     return b.build();
   });
 }
+/** Glossy-lip makeup: a richer berry tint than the natural lips. */
+export function lipGlossColor(skin: string): string {
+  const c = new THREE.Color(skin);
+  const light = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b > 0.4;
+  c.lerp(new THREE.Color(light ? '#e04a6c' : '#a82a50'), 0.62);
+  return `#${c.getHexString()}`;
+}
+/** The shine on a glossy lower lip (mouth-bone space, baked white). */
+export function lipHighlightGeo(): THREE.BufferGeometry {
+  return cached('lipshine', () => {
+    const b = new GB(true, true);
+    b.e([-0.0024, -0.0032, 0.0068], [0.0045, 0.0011, 0.0006], [0, 0, 0.08], '#ffffff');
+    b.e([0.0036, -0.0036, 0.0066], [0.0014, 0.0009, 0.0005], undefined, '#ffffff');
+    return b.build();
+  });
+}
 /** Freckle color: the skin tone pushed toward a warm brown. */
 export function freckleColor(skinHex: string): THREE.Color {
   return new THREE.Color(skinHex).lerp(new THREE.Color('#7a3b1e'), 0.5);
@@ -386,15 +402,33 @@ export function getEyeMakeup(preset: number, shape: number): THREE.BufferGeometr
     const s = EYE_SHAPES[si];
     const parts: THREE.BufferGeometry[] = [];
     if (preset === 3) {
-      // shimmer lids: a soft rose-gold wash above the lash line, with a few gold sparkles
-      const cy = s.Hu + 0.0082, cx = 0.001;
-      const rose = new THREE.Color('#f2a9b4'), gold = new THREE.Color('#fbdca4');
-      parts.push(patch((rho, a) => {
-        const x = cx + s.A * 0.95 * rho * Math.cos(a);
-        return [x, cy + 0.0088 * rho * Math.sin(a) + s.tilt * (x - cx) * 0.8];
-      }, 3, 20, (r) => gold.clone().lerp(rose, Math.pow(r, 1.6))));
-      for (const [dx, dy, r] of [[-0.011, 0.0, 0.0012], [-0.003, 0.004, 0.0015], [0.006, 0.0005, 0.0011], [0.013, 0.0035, 0.0013], [0.0, -0.0035, 0.001]] as [number, number, number][]) {
-        const sp = new THREE.Shape().absarc(cx + dx, cy + dy + s.tilt * dx * 0.8, r, 0, TAU, false);
+      // shimmer lids: a soft rose-gold wash hugging the upper lid, with a few gold sparkles
+      const place = outline(s);
+      const pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = [];
+      const rose = new THREE.Color('#f2a0b6'), gold = new THREE.Color('#fbdca4');
+      const N = 20;
+      for (let i = 0; i <= N; i++) {
+        const a0 = (((4 + (172 * i) / N) * Math.PI) / 180);
+        const [ix, iy] = place(0.985, a0);
+        const [ox, oy] = place(1.0, a0);
+        const th = 0.0016 + 0.0078 * Math.pow(Math.sin(a0), 0.85);
+        for (const [x, y, c] of [[ix, iy, gold], [ox, oy + th, rose]] as [number, number, THREE.Color][]) {
+          pos.push(x, y, skinZ(x, y) + 0.0012);
+          uv.push(0, 0);
+          col.push(c.r, c.g, c.b);
+        }
+      }
+      for (let i = 0; i < N; i++) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+      const wash = new THREE.BufferGeometry();
+      wash.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      wash.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      wash.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      wash.setIndex(idx);
+      wash.computeVertexNormals();
+      parts.push(wash);
+      for (const [fx, ry, r] of [[-0.012, 0.0, 0.0012], [-0.004, 0.0032, 0.0015], [0.005, 0.0042, 0.0011], [0.012, 0.0028, 0.0013], [0.0, 0.0012, 0.001]] as [number, number, number][]) {
+        const [px, py] = place(0.99, Math.acos(Math.max(-1, Math.min(1, fx / s.A))));
+        const sp = new THREE.Shape().absarc(px, py + 0.0022 + ry, r, 0, TAU, false);
         const g = skinShape(sp, '#fff6cf');
         const p = g.attributes.position;
         for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) + 0.0006);
@@ -406,8 +440,8 @@ export function getEyeMakeup(preset: number, shape: number): THREE.BufferGeometr
       parts.push(new GB(true, true).add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lp.map((p) => new THREE.Vector3(p.x, p.y + 0.0004, p.z + 0.0006))), 18, s.lashR * 1.35, 4, false), { c: FACE_COL.lash }, true).build());
       const f = lp[0];
       parts.push(new GB(true, true).add(loft((t) => [f.x + 0.021 * t, f.y + 0.001 * t + 0.0105 * t * t, f.z - 0.002 * t], (t) => s.lashR * 1.35 * (1 - 0.82 * t), (t) => s.lashR * 1.2 * (1 - 0.82 * t), 0, 0.5, 9, 6), { c: FACE_COL.lash }, true).build());
-      const sx = s.A + 0.0125, sy = s.tilt * s.A + 0.0085;
-      parts.push(skinShape(new THREE.Shape(starPts(sx, sy, 0.0052, 0.0022)), '#ffc83a'));
+      const sx = s.A * 0.5, sy = -s.Hl - 0.0085 + s.tilt * sx;
+      parts.push(skinShape(new THREE.Shape(starPts(sx, sy, 0.0056, 0.0024)), '#ffc83a'));
     }
     return merge(parts);
   });
@@ -491,12 +525,16 @@ const rrect = (w: number, h: number, r: number): THREE.Shape => {
   return s;
 };
 
-const CHEEK = { th: 38, ph: -13 };
+const CHEEK = { th: 31, ph: -12.5 };
+const STICKER_SCALE = 1.22;
 export function getStickerGeo(id: string): THREE.BufferGeometry | null {
   if (!(STICKER_IDS as readonly string[]).includes(id)) return null;
   return cached(`sticker|${id}`, () => {
     const L: THREE.BufferGeometry[] = [];
-    const at = (g: THREE.BufferGeometry, th: number, ph: number, rot: number, color: string, lift = 0.0016) => L.push(drapeHead(g, th, ph, rot, color, lift));
+    const at = (g: THREE.BufferGeometry, th: number, ph: number, rot: number, color: string, lift = 0.0016) => {
+      g.scale(STICKER_SCALE, STICKER_SCALE, 1);
+      L.push(drapeHead(g, th, ph, rot, color, lift));
+    };
     switch (id) {
       case 'star':
         at(polyShape(starPts(0, 0, 0.0145, 0.0065)), CHEEK.th, CHEEK.ph, -12, '#ffcf3a');
@@ -544,16 +582,16 @@ export function getStickerGeo(id: string): THREE.BufferGeometry | null {
         const cols = ['#ffe14d', '#ff7fc8', '#7fe0ff', '#c9a6ff', '#ffffff'];
         let k = 0;
         for (const sd of [-1, 1]) {
-          for (const [th, ph, r] of [[30, -7, 0.0022], [34, -9.5, 0.0017], [38, -6, 0.0021], [41, -10, 0.0016], [33, -13, 0.0014], [37.5, -14, 0.0019], [44, -7.5, 0.0013], [28.5, -11, 0.0012]] as [number, number, number][]) {
+          for (const [th, ph, r] of [[23, -8, 0.0022], [27, -10.5, 0.0017], [31, -7, 0.0021], [34, -11, 0.0016], [26, -14, 0.0014], [30.5, -15, 0.0019], [37, -8.5, 0.0013], [21.5, -12, 0.0012]] as [number, number, number][]) {
             at(circleShape(0, 0, r), th * sd, ph, 0, cols[k++ % cols.length], 0.0017);
           }
         }
         break;
       }
       case 'bandage': {
-        at(shapeGeo(rrect(0.0385, 0.0125, 0.006)), 34, -9, 32, '#efc596');
-        at(shapeGeo(rrect(0.0145, 0.0112, 0.0008)), 34, -9, 32, '#fbe4c6', 0.0021);
-        for (const dx of [-0.0135, 0.0135]) for (const dy of [-0.0026, 0.0026]) at(circleShape(dx, dy, 0.0009), 34, -9, 32, '#d49b6b', 0.0021);
+        at(shapeGeo(rrect(0.0385, 0.0125, 0.006)), 28, -10, 32, '#efc596');
+        at(shapeGeo(rrect(0.0145, 0.0112, 0.0008)), 28, -10, 32, '#fbe4c6', 0.0021);
+        for (const dx of [-0.0135, 0.0135]) for (const dy of [-0.0026, 0.0026]) at(circleShape(dx, dy, 0.0009), 28, -10, 32, '#d49b6b', 0.0021);
         break;
       }
     }

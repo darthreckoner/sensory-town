@@ -5,13 +5,16 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Character, OUTFIT_CATALOG, type CatalogSlot } from '../art/character';
+import { WARDROBE_PRESETS, suggestedColor, suitOutfit } from '../art/wardrobeCatalog';
+import { getTop } from '../art/characterParts';
 import type { Outfit } from '../core/model';
 import { tuning } from '../tuning';
 
 const Q = new URLSearchParams(location.search);
-const slot = (Q.get('slot') ?? 'top') as CatalogSlot;
+const isSuit = Q.get('slot') === 'suit';
+const slot = (isSuit ? 'top' : Q.get('slot') ?? 'top') as CatalogSlot;
 const from = +(Q.get('from') ?? 0);
-const catLen = OUTFIT_CATALOG[slot].length;
+const catLen = isSuit ? WARDROBE_PRESETS.length : OUTFIT_CATALOG[slot].length;
 const n = Math.min(+(Q.get('n') ?? 8), Math.max(1, catLen - from));
 const view = Q.get('view') ?? 'front';
 const zoom = Q.get('zoom') ?? 'full';
@@ -67,12 +70,14 @@ const chars: Character[] = [];
 const labels: { el: HTMLElement; pos: THREE.Vector3; row: number }[] = [];
 const seated = view === 'sit';
 for (let i = 0; i < n; i++) {
-  const o = structuredClone(base);
+  let o = structuredClone(base);
   const st = from + i;
-  o[slot].style = st;
-  const colors = colArg === 'pal' ? undefined : colArg.split(',');
-  o[slot].color = colors ? colors[i % colors.length] : pal[(i * 7 + 3) % pal.length];
-  if (slot === 'hair' && !Q.has('hc')) o.hair.color = pal[[6, 0, 6, 11, 12, 6, 1, 6][i % 8]];
+  if (isSuit) o = suitOutfit(WARDROBE_PRESETS[st].id, base);
+  else o[slot].style = st;
+  const colors = colArg === 'pal' || colArg === 'sugg' ? undefined : colArg.split(',');
+  if (!isSuit) o[slot].color = colArg === 'sugg' ? suggestedColor(slot, st) : colors ? colors[i % colors.length] : pal[(i * 7 + 3) % pal.length];
+  if (!isSuit && slot === 'hair' && !Q.has('hc')) o.hair.color = pal[[6, 0, 6, 11, 12, 6, 1, 6][i % 8]];
+  if (isSuit && !Q.has('keephair')) o.hair = { style: WARDROBE_PRESETS[st].hair?.style ?? base.hair.style, color: WARDROBE_PRESETS[st].hair?.color ?? base.hair.color };
   const c = new Character(o, { seated });
   const col = i % cols, row = Math.floor(i / cols);
   c.group.position.set((col - (cols - 1) / 2) * spacing, 0, 0);
@@ -83,7 +88,7 @@ for (let i = 0; i < n; i++) {
   chars.push(c);
   const el = document.createElement('div');
   el.className = 'lab-label';
-  el.textContent = `${st} ${OUTFIT_CATALOG[slot][st]?.name ?? '?'}`;
+  el.textContent = isSuit ? WARDROBE_PRESETS[st].name : `${st} ${OUTFIT_CATALOG[slot][st]?.name ?? '?'}`;
   document.body.appendChild(el);
   labels.push({ el, pos: new THREE.Vector3((col - (cols - 1) / 2) * spacing, yr[0] - 0.01, 0), row });
 }
@@ -147,6 +152,54 @@ function frame(): void {
   requestAnimationFrame(frame);
 }
 (window as unknown as { __lab: unknown }).__lab = { chars, scene, camera, renderer, step };
+if (Q.has('cats')) {
+  // dev: material categories (= draw calls) each part adds on top of a plain base outfit
+  const baseO: Outfit = { skin: '#f6c9a8', hair: { style: 1, color: '#6e4a33' }, top: { style: 0, color: '#3d6bff' }, bottom: { style: 1, color: '#22304f' }, shoes: { style: 0, color: '#f6f6f4' }, accessory: { style: 0, color: '#ff2e88' } };
+  const cats = (o: Outfit): string[] => {
+    const c = new Character(o);
+    const out: string[] = [];
+    c.group.traverse((m) => { if ((m as THREE.SkinnedMesh).isSkinnedMesh && m.visible) out.push(m.name.replace('char-', '')); });
+    c.dispose();
+    return out.sort();
+  };
+  console.log('CATS base ' + JSON.stringify(cats(baseO)));
+  for (const s of ['hair', 'top', 'bottom', 'shoes', 'accessory'] as CatalogSlot[]) {
+    for (let i = 0; i < OUTFIT_CATALOG[s].length; i++) {
+      const o = structuredClone(baseO);
+      o[s].style = i;
+      console.log('CATS ' + s + ' ' + i + ' ' + OUTFIT_CATALOG[s][i].name + ' ' + JSON.stringify(cats(o)));
+    }
+  }
+}
+if (Q.has('dbg')) {
+  if (Q.has('piece')) {
+    const tp = getTop(+Q.get('piece')!, 0);
+    for (const k of ['torso', 'upper', 'lower'] as const) {
+      for (const pc of tp[k]) {
+        pc.geo.computeBoundingBox();
+        const b = pc.geo.boundingBox!;
+        console.log(`DBG piece ${k} role ${pc.role} y ${b.min.y.toFixed(2)}..${b.max.y.toFixed(2)} x ${b.min.x.toFixed(2)}..${b.max.x.toFixed(2)} z ${b.min.z.toFixed(2)}..${b.max.z.toFixed(2)}`);
+      }
+    }
+  }
+  // dev: report stray vertices far above the head (bind pose) and the draw-call count per character
+  chars.forEach((c, i) => {
+    let calls = 0;
+    c.group.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (!m.isSkinnedMesh || !m.visible) return;
+      calls++;
+      const p = m.geometry.attributes.position;
+      let hi = 0, top = 0;
+      const v = new THREE.Vector3();
+      c.group.updateMatrixWorld(true);
+      m.skeleton.update();
+      for (let k = 0; k < p.count; k++) { m.getVertexPosition(k, v); v.applyMatrix4(m.matrixWorld); if (v.y > 1.9) { hi++; if (hi < 3) console.log(`DBG   v ${v.x.toFixed(2)} ${v.y.toFixed(2)} ${v.z.toFixed(2)} bone ${m.geometry.attributes.skinIndex.getX(k)}`); } top = Math.max(top, v.y); }
+      if (hi) console.log(`DBG char ${i} mesh ${m.name} verts>1.9: ${hi} top ${top.toFixed(2)} of ${p.count}`);
+    });
+    console.log(`DBG char ${i} drawcalls ${calls}`);
+  });
+}
 if (seated) {
   const bench = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.82, 0.6), new THREE.MeshStandardMaterial({ color: '#6a6f86', roughness: 0.7 }));
   bench.position.set(0, 0.41, -0.18);

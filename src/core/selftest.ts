@@ -250,6 +250,132 @@ const TESTS: Record<string, () => Promise<Result>> = {
     return { name: 'callCar', pass: moved > 5 && dist >= 3.5 && dist <= 7.5 && dry && vanish === 1 && appear === 1 && d.dropY === 0, detail: `car moved ${moved.toFixed(0)} u, now ${dist.toFixed(1)} u from the walker, vanish=${vanish} appear=${appear}, settled=${d.dropY === 0}` };
   },
 
+  // ── v3 rides ──────────────────────────────────────────────────────────────
+  /** Every parked ride kind: walk up → "Drive" prompt → hop in (the right handling) → hop out leaves it parked where it was. */
+  async ridesParked() {
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    ensureFoot(d);
+    const kinds = ['sports', 'pickup', 'golfcart', 'hoverboard', 'icecream', 'boat'];
+    const notes: string[] = [];
+    let ok = true;
+    for (const kind of kinds) {
+      ensureFoot(d);
+      const w = d.rides.find((q: any) => q.kind === kind && q !== d.driving) ?? d.rides.find((q: any) => q.kind === kind);
+      if (!w) {
+        ok = false;
+        notes.push(kind + ': none parked');
+        continue;
+      }
+      d.foot.reset(w.x + 1.2, w.z, 0);
+      for (const tr of d.triggers ?? []) tr.armed = false; // a teleport must not walk through a door
+      scenes.step(8);
+      const prompt = !!d.rideTarget;
+      d.getIn(w);
+      scenes.step(20);
+      const inCar = d.mode === 'car' && d.car.kind === kind;
+      const handling = kind === 'hoverboard' ? d.phys.hover > 0 : kind === 'boat' ? d.phys.waterOnly : d.phys.hover === 0 && !d.phys.waterOnly;
+      const at = { x: w.x, z: w.z };
+      d.phys.vx = d.phys.vz = d.phys.fwdSpeed = 0;
+      d.toggleMode();
+      scenes.step(8);
+      const parked = d.mode === 'foot' && d.rides.includes(w) && Math.hypot(w.x - at.x, w.z - at.z) < 3;
+      const good = prompt && inCar && handling && parked;
+      if (!good) ok = false;
+      notes.push(`${kind}:${good ? 'ok' : `prompt=${prompt} in=${inCar} handling=${handling} parked=${parked}`}`);
+    }
+    for (const tr of d.triggers ?? []) tr.armed = false;
+    return { name: 'ridesParked', pass: ok, detail: notes.join(' | ') };
+  },
+
+  /** The Locker's boat: 🚗 / C drops it in open water, it floats and sails; it will not leave the water. */
+  async callBoat() {
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    ensureFoot(d);
+    const prev = store.profile.locker?.ride;
+    if (store.profile.locker) store.profile.locker.ride = 'boat';
+    d.foot.reset(113, -40, Math.PI / 2); // the shallows on the north beach, facing the sea
+    for (const tr of d.triggers ?? []) tr.armed = false;
+    d.lastCall = -1e9;
+    scenes.step(10);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'c', code: 'KeyC', bubbles: true }));
+    await sleep(1800);
+    const kind = d.car.kind;
+    const afloat = d.phys.waterOnly && d.phys.y < 0.2;
+    // sail: hold W for 3 s, the boat gets going and stays on the water
+    d.getIn(d.driving);
+    scenes.step(10);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', bubbles: true }));
+    await sleep(3000);
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', code: 'KeyW', bubbles: true }));
+    const speed = Math.abs(d.phys.fwdSpeed);
+    const wet = d.phys.waterOnly && d.phys.y < 0.2;
+    d.phys.vx = d.phys.vz = d.phys.fwdSpeed = 0;
+    scenes.step(10);
+    d.toggleMode();
+    scenes.step(10);
+    if (store.profile.locker && prev) store.profile.locker.ride = prev;
+    for (const tr of d.triggers ?? []) tr.armed = false;
+    return { name: 'callBoat', pass: kind === 'boat' && afloat && speed > 5 && wet && d.mode === 'foot', detail: `ride=${kind} afloat=${afloat} speed=${speed.toFixed(1)} onWater=${wet} mode=${d.mode}` };
+  },
+
+  // ── v3 emote ──────────────────────────────────────────────────────────────
+  /** The in-world emote wheel: Q opens it with the Locker's emotes, a tap plays one (and the camera swings to her front), walking ends it. Every emote has a tune. */
+  async emoteWheel() {
+    const { checkTunes, tuneFor } = await import('../juice/emoteMusic');
+    const { EMOTES } = await import('../art/character');
+    const bad = checkTunes();
+    const silent = EMOTES.filter((e) => !tuneFor(e.id)).map((e) => e.id);
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    ensureFoot(d);
+    for (const tr of d.triggers ?? []) tr.armed = false;
+    const { SPAWN } = await import('../world/townLayout');   // dry flat ground (an earlier test may have left her swimming)
+    d.foot.reset(SPAWN.x, SPAWN.z + 3, SPAWN.heading);
+    scenes.step(8);
+    const L = store.profile.locker;
+    const prevEmotes = L ? [...L.emotes] : [];
+    if (L) L.emotes = ['bounce', 'wave', 'cheer'];
+    const key = (code: string, type = 'keydown') => window.dispatchEvent(new KeyboardEvent(type, { key: code, code, bubbles: true, cancelable: true }));
+    let started = 0, stopped = 0;
+    const o1 = bus.on('emoteStarted', () => started++);
+    const o2 = bus.on('emoteStopped', () => stopped++);
+    key('KeyQ');
+    const opened = !!d.emote3?.open && d.controls.suspended === true;
+    const slots = [...document.querySelectorAll<HTMLElement>('.em3-slot')];
+    const filled = slots.filter((x) => !x.classList.contains('empty')).length;
+    const [cx, cy] = centerOf(slots[0]);
+    tapAt(cx, cy, 901);
+    scenes.step(2);
+    const closed = !d.emote3.open && d.controls.suspended === false;
+    const playing = d.walker.emoting;
+    scenes.step(90);
+    const swung = d.mv.emoteK > 0.5;
+    key('KeyW');
+    scenes.step(20);
+    const ended = d.walker.emoting === null && stopped === 1 && d.mv.emoteCam === false;
+    key('KeyW', 'keyup');
+    scenes.step(120);
+    const back = d.mv.emoteK < 0.05;
+    key('KeyQ');
+    key('Escape');
+    const escClosed = !d.emote3.open;
+    o1();
+    o2();
+    if (L) L.emotes = prevEmotes;
+    const pass = bad.length === 0 && silent.length === 0 && opened && slots.length === 6 && filled === 3 && closed && playing === 'bounce' && started === 1 && swung && ended && back && escClosed;
+    return {
+      name: 'emoteWheel',
+      pass,
+      detail: `tunes ok=${bad.length === 0} silent=[${silent}] open=${opened} slots=${slots.length}/filled ${filled} closed=${closed} playing=${playing} started=${started} camSwung=${swung} walkEnds=${ended} stopped=${stopped} camBack=${back} esc=${escClosed}${bad.length ? ' ' + bad.join('; ') : ''}`,
+    };
+  },
+
   /** Draw calls in town (spawn view) within the iPad budget. */
   async drawCallsTown() {
     await scenes.go('town');

@@ -130,14 +130,14 @@ function geometries() {
   palm.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
   palm.computeVertexNormals();
 
-  const bush = stripped(jitter(new THREE.IcosahedronGeometry(1, 1), 0.28, 90).translate(0, 0.35, 0));
+  const bush = stripped(jitter(new THREE.IcosahedronGeometry(1, 0), 0.34, 90).translate(0, 0.35, 0)); // v3: 20 triangles a bush (there are thousands)
   const rock = stripped(jitter(new THREE.IcosahedronGeometry(1, 0), 0.5, 120).translate(0, 0.2, 0));
 
   // little flower tuft: a few small coloured blobs on short stems
   const fl: THREE.BufferGeometry[] = [];
   for (let i = 0; i < 6; i++) {
     const a = i * 1.047, d = 0.35 + (i % 2) * 0.25;
-    const b = new THREE.IcosahedronGeometry(0.11, 0).translate(Math.cos(a) * d, 0.42 + (i % 3) * 0.08, Math.sin(a) * d);
+    const b = new THREE.OctahedronGeometry(0.15, 0).translate(Math.cos(a) * d, 0.42 + (i % 3) * 0.08, Math.sin(a) * d); // v3: 8 triangles a blossom (a flower field is hundreds of these)
     fl.push(stripped(b));
   }
   const flowers = mergeGeometries(fl, false);
@@ -146,15 +146,37 @@ function geometries() {
   return G;
 }
 
+// ── v3 world: wind. Crowns, fronds and flowers sway a little (vertex shader, driven by one shared time uniform). ──
+/** Seconds of world time; townEnv.update writes it every frame. */
+export const windTime = { value: 0 };
+function windy<T extends THREE.Material>(mt: T, amount: number): T {
+  mt.onBeforeCompile = (sh) => {
+    sh.uniforms.uWindT = windTime;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindT;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+        #else
+          vec3 ip = vec3(0.0);
+        #endif
+        float ww = sin(uWindT * 1.4 + ip.x * 0.23 + ip.z * 0.19) + 0.5 * sin(uWindT * 2.9 + ip.x * 0.7);
+        float hh = max(position.y, 0.0);
+        transformed.x += ww * ${amount.toFixed(3)} * hh;
+        transformed.z += ww * ${(amount * 0.6).toFixed(3)} * hh;`);
+  };
+  return mt;
+}
+
 // ── materials ───────────────────────────────────────────────────────────────
 let M: { leaf: THREE.Material; bark: THREE.Material; palm: THREE.Material; rock: THREE.Material; flower: THREE.Material } | null = null;
 function materials() {
   return (M ??= {
-    leaf: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true }),
+    leaf: windy(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true }), 0.035),
     bark: new THREE.MeshStandardMaterial({ color: '#6b4d36', roughness: 0.95, flatShading: true }),
-    palm: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide }),
+    palm: windy(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide }), 0.03),
     rock: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95, flatShading: true }),
-    flower: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, flatShading: true }),
+    flower: windy(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, flatShading: true }), 0.12),
   });
 }
 

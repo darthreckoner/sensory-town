@@ -24,6 +24,7 @@ const circle = (x: number, z: number, r: number): Collider => ({ kind: 'circle',
 export function buildSummit(): SummitOut {
   const m = new Mesher();
   const ex = new THREE.Group();
+  const inst = new THREE.Group();                    // instanced meshes (bakeStatic leaves those alone)
   const colliders: Collider[] = [];
   const rocks: SummitOut['rocks'] = [];
   const G = (x: number, z: number): number => groundHeight(x, z);
@@ -292,7 +293,7 @@ export function buildSummit(): SummitOut {
       placed++;
     }
     const mesh = batch.build();
-    if (mesh) ex.add(mesh);
+    if (mesh) inst.add(mesh);
   }
 
   // ── the summit marker: a cairn and a flag, right at the top ──
@@ -317,6 +318,7 @@ export function buildSummit(): SummitOut {
   group.name = 'summit';
   group.add(m.build('summit-static'));
   group.add(bakeStatic(ex));
+  group.add(inst);
   group.add(chairs);
   return {
     group,

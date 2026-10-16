@@ -8,7 +8,7 @@ export const PAL = {
   wetSand: '#c8b07c',
   rock: '#8a8478',
   concrete: '#a9a7b0',
-  asphalt: '#3a3d47',
+  asphalt: '#4a4e5e',
   trail: '#9a7a52',
   wood: '#b07a4f',
   sidewalk: '#cfccd4',

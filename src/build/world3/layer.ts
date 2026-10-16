@@ -117,8 +117,8 @@ export class BuildLayer {
     return anchor;
   }
 
-  /** A piece was added to the data: show it building in. */
-  add(p: BuildPiece, animate = true): void {
+  /** A piece was added to the data: show it building in (`delay` seconds from now, so a whole stamp can cascade). */
+  add(p: BuildPiece, animate = true, delay = 0): void {
     const ch = this.chunkFor(p);
     ch.ids.add(p.id);
     if (!animate) {
@@ -128,7 +128,7 @@ export class BuildLayer {
     const anchor = this.makeAnchor(p);
     this.group.add(anchor);
     const dur = tuning.build3.animSeconds;
-    this.live.set(p.id, { piece: p, anchor, t: 0, dur, kind: 'in' });
+    this.live.set(p.id, { piece: p, anchor, t: -delay, dur, kind: 'in' });
     this.applyAnim(this.live.get(p.id)!);
   }
 
@@ -158,7 +158,8 @@ export class BuildLayer {
   }
 
   private applyAnim(l: Live): void {
-    const k = Math.min(1, l.t / l.dur);
+    l.anchor.visible = l.t >= 0;
+    const k = Math.max(0, Math.min(1, l.t / l.dur));
     const e = easeOutBack(k);
     const sy = Math.max(0.05, e);
     const sxz = 1 + (1 - Math.min(1, e)) * 0.0 + Math.sin(k * Math.PI) * 0.035;
@@ -223,7 +224,7 @@ export class BuildLayer {
         this.ghost.removeFromParent();
       }
       this.ghost = this.makeAnchor(p);
-      ghostify(this.ghost, ok);
+      ghostify(this.ghost, ok, '#8fe6ff');   // a cool blue-white when it can go, red when not
       this.ghost.renderOrder = 5;
       this.group.add(this.ghost);
       this.ghostKey = key;

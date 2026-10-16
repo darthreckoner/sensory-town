@@ -27,6 +27,8 @@ export interface FootInput {
   mag: number;
   run: boolean;
   jump: boolean;
+  /** v3 movement: Ctrl / X / the SLIDE button held (a knee-slide while sprinting) */
+  slide: boolean;
 }
 
 export type ControlMode = 'car' | 'foot';
@@ -56,6 +58,7 @@ export class DriveControls {
   private readonly brakePedal: Pedal;
   private readonly boostPedal: Pedal;
   private readonly jumpPedal: Pedal;
+  private readonly slidePedal: Pedal; // v3 movement: SLIDE (on foot)
   private hornEl!: HTMLElement;
   private hornId: number | null = null;
   private readonly keys = new Set<string>();
@@ -74,7 +77,7 @@ export class DriveControls {
   /** While true (a sheet or menu is open) all input reads as zero. */
   suspended = false;
   private readonly car: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false, hop: false };
-  private readonly foot: FootInput = { dx: 0, dz: 0, mag: 0, run: false, jump: false };
+  private readonly foot: FootInput = { dx: 0, dz: 0, mag: 0, run: false, jump: false, slide: false };
 
   constructor(parent: HTMLElement, private readonly hooks: ControlHooks) {
     this.root = el('div', 'drive-controls passthrough mode-car', parent) as HTMLDivElement;
@@ -83,6 +86,7 @@ export class DriveControls {
     this.brakePedal = this.buildPedal('brake car-only', '▼', 'STOP');
     this.boostPedal = this.buildPedal('boost car-only', '⚡', 'BOOST');
     this.jumpPedal = this.buildPedal('jump foot-only', '⤒', 'JUMP');
+    this.slidePedal = this.buildPedal('slide foot-only', '⛷️', 'SLIDE'); // v3 movement
     this.buildHorn();
     this.applySizes();
   }
@@ -103,7 +107,7 @@ export class DriveControls {
     this.root.classList.toggle('mode-foot', m === 'foot');
     this.boostEdge = false;
     this.dYaw = this.dPitch = 0;
-    for (const p of [this.gasPedal, this.brakePedal, this.boostPedal, this.jumpPedal]) {
+    for (const p of [this.gasPedal, this.brakePedal, this.boostPedal, this.jumpPedal, this.slidePedal]) {
       p.id = null;
       p.down = false;
       p.el.classList.remove('pressed');
@@ -198,7 +202,7 @@ export class DriveControls {
     this.stickX = this.stickY = 0;
     this.joyKnob.style.transform = 'translate(0px, 0px)';
     this.joy.classList.remove('active');
-    for (const p of [this.gasPedal, this.brakePedal, this.boostPedal, this.jumpPedal]) {
+    for (const p of [this.gasPedal, this.brakePedal, this.boostPedal, this.jumpPedal, this.slidePedal]) {
       p.id = null;
       p.down = false;
       p.el.classList.remove('pressed');
@@ -250,7 +254,7 @@ export class DriveControls {
     const out = this.foot;
     if (this.suspended) {
       out.dx = out.dz = out.mag = 0;
-      out.run = out.jump = false;
+      out.run = out.jump = out.slide = false;
       return out;
     }
     const k = this.keys;
@@ -282,6 +286,7 @@ export class DriveControls {
     out.mag = mag;
     out.run = (keyMag > 0 && (k.has('ShiftLeft') || k.has('ShiftRight'))) || (keyMag === 0 && (mag >= d.runStick || (this.sprintLatch && mag > 0.05)));
     out.jump = k.has('Space') || this.jumpPedal.down;
+    out.slide = k.has('ControlLeft') || k.has('ControlRight') || k.has('KeyX') || this.slidePedal.down; // v3 movement
     this.boostEdge = false;
     return out;
   }
@@ -400,4 +405,5 @@ export class DriveControls {
 
 const DRIVE_KEYS = new Set([
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'KeyQ', 'KeyZ',
+  'ControlLeft', 'ControlRight', 'KeyX', // v3 movement: slide
 ]);

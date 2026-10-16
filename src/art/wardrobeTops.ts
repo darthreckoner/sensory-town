@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { bodyR, shell, torus, flare, type PB } from './characterKit';
 import {
   NECK, PI, blobRing, box, boltGeo, CIRCLE, decal, ELLIPSE, foreArm, fluffLathe, front, heartGeo, leafGeo, overShoulder, puffTube,
-  RECT, ribbedShell, ribbedTube, rnd, roles, starGeo, tube, upperArm, zAt, lathe, type Rarity,
+  RECT, ribbedShell, ribbedTube, rnd, roles, shoulderPad, starGeo, tube, upperArm, zAt, lathe, type Rarity,
 } from './wardrobeKit';
 
 const TAUish = 6.283;
@@ -100,7 +100,7 @@ export const TOP_V3: TopDef[] = [
       shell(m, 0.97, 1.33, off);
       t.ring(0.97, bodyR(0.97) + off + 0.002, 0.012);
       t.ring(1.33, bodyR(1.33) + off + 0.002, 0.012);
-      for (const s of [-1, 1]) overShoulder(m, 0.108 * s, 1.31, 1.31, off, 0.02);
+      for (const s of [-1, 1]) overShoulder(m, 0.14 * s, 1.3, 1.3, off, 0.019);
       for (let i = 0; i < 34; i++) {
         const y = 1.0 + rnd(i) * 0.31;
         const a = (rnd(i + 50) - 0.5) * TAUish;
@@ -108,6 +108,7 @@ export const TOP_V3: TopDef[] = [
         w.e([Math.sin(a) * R, y, Math.cos(a) * R], 0.0065);
       }
     },
+    arm: (pb, upper) => upper && shoulderPad(pb, 'main'),
   },
   // 13 ── Bolt Tee: oversized, big lightning bolt print
   {
@@ -167,8 +168,8 @@ export const TOP_V3: TopDef[] = [
       trim.ring(1.26, bodyR(1.26) + off + 0.002, 0.011);
       dark.ring(0.88, bodyR(0.88) + off + 0.002, 0.008);
       for (const s of [-1, 1]) {
-        overShoulder(main, 0.105 * s, 1.25, 1.25, off, 0.0155);
-        gold.e([0.105 * s, 1.245, zAt(1.245, off, 0.105, 0.014)], 0.0115);
+        overShoulder(main, 0.14 * s, 1.25, 1.25, off, 0.0155);
+        gold.e([0.14 * s, 1.245, zAt(1.245, off, 0.14, 0.014)], 0.0115);
       }
       box(trim, 0.085, 0.07, 0.012, 0.01, [0, 1.12, front(1.12, off, 0.009)]);
       dark.seg([-0.04, 1.155, front(1.155, off, 0.015)], [0.04, 1.155, front(1.155, off, 0.015)], 0.003);
@@ -298,7 +299,7 @@ export const TOP_V3: TopDef[] = [
       const pl = pb.at('plaid');
       shell(tank, 0.9, 1.34, off);
       tank.ring(1.34, bodyR(1.34) + off + 0.002, 0.01);
-      for (const s of [-1, 1]) overShoulder(tank, 0.105 * s, 1.32, 1.32, off, 0.017);
+      for (const s of [-1, 1]) overShoulder(tank, 0.14 * s, 1.32, 1.32, off, 0.017);
       // the flannel's body hangs behind the hip, its sleeves tie in front
       shell(pl, 0.96, 1.07, 0.038);
       pl.ring(0.96, bodyR(0.96) + 0.038, 0.01);
@@ -309,6 +310,7 @@ export const TOP_V3: TopDef[] = [
       pl.seg([0.09, 1.0, kz], [0.07, 0.84, kz + 0.02], 0.019);
       for (const [dx, dy] of [[0.14, 0.81], [0.07, 0.83]]) pl.e([dx, dy, kz], [0.02, 0.012, 0.02]);
     },
+    arm: (pb, upper) => upper && shoulderPad(pb, 'skin'),
   },
   // 21 ── Rain Jacket: glossy slicker, storm flap, toggles
   {
@@ -459,19 +461,17 @@ export const TOP_V3: TopDef[] = [
       trim.seg([0, 1.44, -0.06], [0.022, 1.33, -0.098], 0.0065);
       gold.add(torus(0.016, 0.004), { p: [0, 1.285, front(1.285, off, 0.01)] });
     },
+    arm: (pb, upper) => upper && shoulderPad(pb, 'skin'),
   },
   // 27 ── Hoops Jersey: sleeveless basketball tank, big "10"
   {
     name: 'Hoops Jersey', icon: '🏀', rarity: 'common', off: 0.03,
     torso(pb, off) {
       const { main, white } = roles(pb);
-      shell(main, 0.82, 1.36, off);
-      white.ring(0.82, bodyR(0.82) + off + 0.002, 0.01);
-      white.ring(1.36, bodyR(1.36) + off + 0.003, 0.0095);
-      for (const s of [-1, 1]) {
-        white.seg([0.138 * s, 1.34, 0.0], [0.152 * s, 1.0, 0.0], 0.0075);
-        overShoulder(main, 0.108 * s, 1.34, 1.34, off, 0.026);
-      }
+      shell(main, 0.9, 1.4, off);
+      white.ring(0.9, bodyR(0.9) + off + 0.002, 0.01);
+      white.ring(1.4, bodyR(1.4) + off + 0.003, 0.0095);
+      for (const s of [-1, 1]) white.seg([0.138 * s, 1.34, 0.0], [0.152 * s, 1.0, 0.0], 0.0075);
       const pr = pb.at('print');
       decal(pr, RECT(0.016, 0.1), 1.18, off, -0.035);
       const ring = new THREE.RingGeometry(0.02, 0.036, 16);
@@ -482,6 +482,7 @@ export const TOP_V3: TopDef[] = [
       r2.scale(0.8, 1.4, 1);
       decal(pr, r2, 1.17, off, -0.022, 0, true);
     },
+    arm: (pb, upper) => upper && shoulderPad(pb, 'main', 0.056),
   },
   // 28 ── Teddy Jacket: fluffy sherpa fleece
   {
@@ -572,3 +573,6 @@ export const TOP_V3: TopDef[] = [
 
 void flare;
 void heartGeo;
+
+import { SUIT_TOPS } from './wardrobeSuits';
+TOP_V3.push(...SUIT_TOPS); // full-body suit tops (wardrobeSuits.ts)

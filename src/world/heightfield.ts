@@ -108,13 +108,9 @@ function summitH(x: number, z: number): number {
   const rr = r * (1 + 0.14 * Math.sin(3 * th + 1) + 0.08 * Math.sin(5 * th + 2.3) + 0.05 * Math.sin(9 * th));
   const shelf = SUMMIT.shelf * (1 - smooth(SUMMIT.shelfR0, SUMMIT.shelfR1, r));
   const k = 1 - smooth(0, SUMMIT.peakR, rr);
-  const peak = SUMMIT.peak * Math.pow(k, 1.25);
-  const rocks = (vnoise(x / 26, z / 26, 71) - 0.5) * 8 * Math.sqrt(k) + (vnoise(x / 11, z / 11, 72) - 0.5) * 1.6 * k;
-  let h = shelf + peak + rocks;
-  const pd = Math.hypot(x - SUMMIT.pad.x, z - SUMMIT.pad.z);
-  const pw = 1 - smooth(SUMMIT.pad.r, SUMMIT.pad.r + 18, pd);
-  if (pw > 0) h = h * (1 - pw) + SUMMIT.pad.h * pw;
-  return h;
+  const peak = SUMMIT.peak * Math.pow(k, 1.05);
+  const rocks = (vnoise(x / 26, z / 26, 71) - 0.5) * 4.5 * Math.sqrt(k) + (vnoise(x / 11, z / 11, 72) - 0.5) * 1.2 * k;
+  return shelf + peak + rocks;
 }
 
 /** Bloom Meadow: soft rolling hills with a rounded crest under every windmill. */
@@ -190,6 +186,11 @@ function interior(x: number, z: number): number {
 
   // the new places
   h += summitH(x, z) * (1 - flat);
+  {
+    const pd = Math.hypot(x - SUMMIT.pad.x, z - SUMMIT.pad.z);       // the ski lodge's flat pad overrides everything under it
+    const pw = 1 - smooth(SUMMIT.pad.r, SUMMIT.pad.r + 18, pd);
+    if (pw > 0) h = h * (1 - pw) + SUMMIT.pad.h * pw;
+  }
   h += meadowH(x, z);
   h = groveH(x, z, h);
   h = Math.max(h, 0.25); // never flooded by accident
@@ -235,8 +236,8 @@ function rawHeight(x: number, z: number): number {
   const hb = WATER_Y + 0.7 * smooth(0, 22, s);
   const wi = smooth(30, 46, s);
   h = hb * (1 - wi) + (wi > 0 ? interior(x, z) * wi : 0);
-  // cliffs: a raised rim that rolls off inland
-  if (c > 0) h += c * (6 + 7 * vnoise(x / 45 + 11, z / 45, 33)) * smooth(0, 8, s) * (1 - 0.8 * smooth(24, 100, s));
+  // cliffs: a raised rim that rolls off inland (gone by 90 m in: the lake, the towns and the roads stay as designed)
+  if (c > 0) h += c * (6 + 7 * vnoise(x / 45 + 11, z / 45, 33)) * smooth(0, 8, s) * (1 - smooth(20, 90, s));
   return h;
 }
 

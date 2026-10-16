@@ -279,6 +279,27 @@ function buildChunk(cx: number, cz: number): THREE.Mesh {
   return m;
 }
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96 });
+// v3: painterly mottling finer than the 4 m vertex colours: three octaves of cheap value noise in world space
+// nudge the brightness (and a touch of warmth) so a big lawn reads as brush strokes, not a flat fill.
+terrainMat.onBeforeCompile = (sh) => {
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vTerrainW;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvTerrainW = (modelMatrix * vec4(position, 1.0)).xyz;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', `#include <common>
+      varying vec3 vTerrainW;
+      float th(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float tn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(th(i), th(i + vec2(1.0, 0.0)), f.x), mix(th(i + vec2(0.0, 1.0)), th(i + vec2(1.0, 1.0)), f.x), f.y); }`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        vec2 q = vTerrainW.xz;
+        float n = tn(q * 0.16) * 0.5 + tn(q * 0.62 + 7.3) * 0.32 + tn(q * 2.3 + 3.1) * 0.18;
+        float far = 1.0 - smoothstep(60.0, 220.0, length(cameraPosition - vTerrainW));
+        diffuseColor.rgb *= 1.0 + (n - 0.5) * 0.34 * mix(0.45, 1.0, far);
+        diffuseColor.r *= 1.0 + (n - 0.5) * 0.06;
+      }`);
+};
 
 // ── road geometry helpers ───────────────────────────────────────────────────
 /** Re-sample a polyline so no step is longer than `max`. */

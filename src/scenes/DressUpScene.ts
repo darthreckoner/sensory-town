@@ -26,6 +26,9 @@ import {
   clearEmote, equipMyStyle, equipSkin, getLocker, itemOwned, markCustom, owns, partRarity, resolveSkinOutfit, setBackBling, setContrail,
   setEmote, setGlider, setRide, setWrap, skinOwned, styleOwned, wrapOf,
 } from '../art/gear/lockerState';
+import { FACE_OPTIONS, randomFace, resolveFace } from '../art/characterFace';
+import { faceOwned, faceTag, setFace } from '../art/gear/lockerState';
+import { faceRewardOf, type FaceField } from '../art/gear/catalog';
 import { makeBackBling } from '../art/gear/backBling';
 import { makeGlider } from '../art/gear/gliders';
 import { makeContrail, type Contrail } from '../art/gear/contrails';
@@ -33,14 +36,15 @@ import { makeRidePreview } from '../art/gear/rides';
 import { disposeGear } from '../art/gear/gearKit';
 import { thumbs } from '../art/gear/thumbs';
 
-type CustomCat = CatalogSlot | 'skin' | 'looks';
+type CustomCat = CatalogSlot | 'skin' | 'face' | 'looks';
 const CUSTOM_CATS: { id: CustomCat; icon: string; label: string }[] = [
   { id: 'hair', icon: '💇', label: 'Hair' },
   { id: 'top', icon: '👕', label: 'Top' },
   { id: 'bottom', icon: '👖', label: 'Bottom' },
   { id: 'shoes', icon: '👟', label: 'Shoes' },
   { id: 'accessory', icon: '🕶️', label: 'Extras' },
-  { id: 'skin', icon: '🙂', label: 'Skin' },
+  { id: 'skin', icon: '🧑', label: 'Skin' },
+  { id: 'face', icon: '😊', label: 'Face' },
   { id: 'looks', icon: '💾', label: 'Looks' },
 ];
 const PART_SLOTS: CatalogSlot[] = ['hair', 'top', 'bottom', 'shoes', 'accessory'];
@@ -330,6 +334,10 @@ export class DressUpScene extends GameScene {
     this.timers = [];
     this.tryOn = null;
     const prof = store.profile;
+    // dev only: ?charms=N pretends N charms were found (to look at unlocked items), ?slot=glider opens that tab
+    const dq = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+    const fake = dq ? Number(dq.get('charms')) : 0;
+    if (fake > 0 && prof.charms.length < fake) store.update(() => { while (prof.charms.length < fake) prof.charms.push('dev' + prof.charms.length); });
     // wrap styles from older saves into the catalog
     const o = prof.outfit;
     let fixed = false;
@@ -381,6 +389,8 @@ export class DressUpScene extends GameScene {
       thumbs.dropQueued();
     });
     this.resize(window.innerWidth, window.innerHeight);
+    const dslot = dq?.get('slot') as LockerSlot | null;
+    if (dslot && SLOT_TABS.some((t) => t.id === dslot)) this.setSlot(dslot);
     this.later(420, () => {
       if (this.slot === 'outfit' || this.slot === 'custom') this.char?.playEmote('wave') || this.char?.wave();
     });
@@ -490,8 +500,16 @@ export class DressUpScene extends GameScene {
     this.clearRide();
     this.rideKey = key;
     this.rideObj = makeRidePreview(kind, w);
-    this.rideObj.scale.setScalar(1);
     this.turn.add(this.rideObj);
+    this.frameRide();
+  }
+  /** Back the camera off to fit whatever ride is on the plinth (an ice-cream truck is taller than a hoverboard). */
+  private frameRide(): void {
+    if (!this.rideObj || this.slot !== 'wrap') return;
+    const box = new THREE.Box3().setFromObject(this.rideObj);
+    const r = box.getBoundingSphere(new THREE.Sphere()).radius;
+    this.targetDist = clamp(r * 3.4, 6.2, 13);
+    this.focusLook = Math.max(0.8, box.getCenter(new THREE.Vector3()).y);
   }
   private clearRide(): void {
     if (!this.rideObj) return;
@@ -569,7 +587,7 @@ export class DressUpScene extends GameScene {
     this.char?.stopEmote();
     this.tryOn = null;
     this.slot = s;
-    this.rotGoal = s === 'backBling' ? this.nearest(Math.PI) : this.nearest(0);
+    this.rotGoal = this.nearest(this.homeAngle(s));
     this.focusSlot();
     this.syncStage();
     this.setGlow(this.currentRarity(s));
@@ -577,6 +595,11 @@ export class DressUpScene extends GameScene {
     this.panel.scrollTop = 0;
     this.renderPanel();
     if (s === 'wrap') this.pulse = 0.6;
+  }
+
+  /** Where the turntable rests: the back for back blings, a 3/4 view for rides, the front for the rest. */
+  private homeAngle(s: LockerSlot = this.slot): number {
+    return s === 'backBling' ? Math.PI : s === 'wrap' ? 0.55 : 0;
   }
 
   /** Nearest angle ≡ `a` (mod 2π) to the current rotation. */
@@ -622,8 +645,8 @@ export class DressUpScene extends GameScene {
   }
 
   /** Show an item in the banner. */
-  private showInfo(item: GearItem | { name: string; rarity: Rarity }, state: 'equipped' | 'owned' | 'locked' | 'info', need = 0, extra = ''): void {
-    this.info?.set(item.name, item.rarity, state, need, extra);
+  private showInfo(item: GearItem | { name: string; rarity: Rarity }, state: 'equipped' | 'owned' | 'locked' | 'info', need = 0, extra = '', ownedText?: string): void {
+    this.info?.set(item.name, item.rarity, state, need, extra, ownedText);
   }
 
   // ── Outfit (skins + styles) ──────────────────────────────────────────────
@@ -635,26 +658,19 @@ export class DressUpScene extends GameScene {
     const selId = t ? t.id : L.skin;
     const selStyle = t ? (t.style ?? 0) : L.skinStyle;
     const sel = selId === 'custom' ? null : skinById(selId);
+    const skinNeed = (sk: SkinDef) => Math.max(charmsNeeded(sk.reward ?? ''), ...(sk.needs ?? []).map((r) => charmsNeeded(r)), 1);
 
-    const grid = el('div', 'lk-grid tall', p);
-    // my style (the piece-by-piece look)
-    const mine = L.skin === 'custom' ? store.profile.outfit : L.customOutfit ?? store.profile.outfit;
-    lockerCard(grid, {
-      name: 'My Style', icon: '✨', rarity: 'common', tall: true, on: !t && L.skin === 'custom', sub: 'Custom',
-      thumbKey: `my:${JSON.stringify(mine)}`, thumb: outfitThumb(mine),
-    }, () => this.wearMyStyle());
-    for (const sk of SKINS) {
-      const owned = skinOwned(sk);
-      const need = owned ? 0 : Math.max(charmsNeeded(sk.reward ?? ''), ...(sk.needs ?? []).map((r) => charmsNeeded(r)), 1);
-      const o = resolveSkinOutfit(sk, 0, tone);
-      lockerCard(grid, {
-        name: sk.name, icon: sk.icon, rarity: sk.rarity, tall: true, need, on: !t && L.skin === sk.id,
-        thumbKey: `skin:${sk.id}:0:${tone}`, thumb: outfitThumb(o),
-      }, () => this.pickSkin(sk));
-    }
-    // styles of the selected skin
+    // banner for the selected look
     if (sel) {
-      el('div', 'label lk-sub-t', p, `${sel.name} · styles`);
+      const owned = skinOwned(sel);
+      const sOwned = styleOwned(sel, selStyle);
+      const need = !owned ? skinNeed(sel) : charmsNeeded(styleReward(sel.id, selStyle) ?? '');
+      const equipped = !t && L.skin === sel.id;
+      this.showInfo({ name: sel.name, rarity: styleRarity(sel, selStyle) }, owned && sOwned ? (equipped ? 'equipped' : 'owned') : 'locked', need, sel.styles[selStyle]?.name ?? '');
+    } else this.showInfo({ name: 'My Style', rarity: 'common' }, L.skin === 'custom' ? 'equipped' : 'owned', 0, 'Your own mix');
+
+    // styles of the selected skin sit right under the banner (so they are never scrolled away)
+    if (sel) {
       const row = el('div', 'lk-styles', p);
       sel.styles.forEach((s, n) => {
         const r = styleRarity(sel, n);
@@ -667,19 +683,27 @@ export class DressUpScene extends GameScene {
         if (!owned) el('span', 'pad', b, '🔒');
         bindTap(b, () => this.pickStyleOfSkin(sel, n));
       });
-      const o = resolveSkinOutfit(sel, selStyle, tone);
-      void o;
-    } else {
-      el('div', 'label lk-hint', p, 'Pick an outfit, then a style');
     }
-    // banner
-    if (sel) {
-      const owned = skinOwned(sel);
-      const sOwned = styleOwned(sel, selStyle);
-      const need = !owned ? Math.max(charmsNeeded(sel.reward ?? ''), ...(sel.needs ?? []).map((r) => charmsNeeded(r)), 1) : charmsNeeded(styleReward(sel.id, selStyle) ?? '');
-      const equipped = !t && L.skin === sel.id;
-      this.showInfo({ name: `${sel.name}`, rarity: styleRarity(sel, selStyle) }, owned && sOwned ? (equipped ? 'equipped' : 'owned') : 'locked', need, sel.styles[selStyle]?.name ?? '');
-    } else this.showInfo({ name: 'My Style', rarity: 'common' }, L.skin === 'custom' ? 'equipped' : 'owned', 0, 'Your own mix');
+
+    const grid = el('div', 'lk-grid tall', p);
+    // my style (the piece-by-piece look)
+    const mine = L.skin === 'custom' ? store.profile.outfit : L.customOutfit ?? store.profile.outfit;
+    lockerCard(grid, {
+      name: 'My Style', icon: '✨', rarity: 'common', tall: true, on: !t && L.skin === 'custom', sub: 'Custom',
+      thumbKey: `my:${JSON.stringify(mine)}`, thumb: outfitThumb(mine),
+    }, () => this.wearMyStyle());
+    // owned first, then by rarity, so a new kid sees her outfits at the top and the shiny locked ones below
+    const sorted = [...SKINS].sort((a, b) => Number(!skinOwned(a)) - Number(!skinOwned(b)) || rarityRank(a.rarity) - rarityRank(b.rarity));
+    for (const sk of sorted) {
+      const owned = skinOwned(sk);
+      lockerCard(grid, {
+        name: sk.name, icon: sk.icon, rarity: sk.rarity, tall: true, need: owned ? 0 : skinNeed(sk), on: !t && L.skin === sk.id,
+        thumbKey: `skin:${sk.id}:0:${tone}:${faceTag()}`, thumb: outfitThumb(resolveSkinOutfit(sk, 0, tone)),
+      }, () => this.pickSkin(sk));
+    }
+    if (!sel) el('div', 'label lk-hint', p, 'Pick an outfit, then a style');
+    const own = SKINS.filter(skinOwned).length;
+    el('div', 'label lk-hint', p, `${own} / ${SKINS.length} outfits collected`);
   }
 
   private pickSkin(sk: SkinDef): void {
@@ -924,7 +948,7 @@ export class DressUpScene extends GameScene {
       }, () => this.pickRide(r.id));
     }
     const ride = RIDES.find((r) => r.id === kind)!;
-    this.showInfo(ride, !itemOwned(ride) ? 'locked' : L.ride === ride.id ? 'equipped' : 'owned', charmsNeeded(ride.reward ?? ''), L.ride === ride.id ? 'My ride' : '');
+    this.showInfo(ride, !itemOwned(ride) ? 'locked' : L.ride === ride.id ? 'equipped' : 'owned', charmsNeeded(ride.reward ?? ''), L.ride === ride.id ? 'My ride' : '', 'READY TO ROLL');
     if (itemOwned(ride) && L.ride !== ride.id) {
       button(p, { icon: '⭐', label: 'Make this my ride', cls: 'blue' }, () => {
         setRide(ride.id);
@@ -997,6 +1021,10 @@ export class DressUpScene extends GameScene {
       swatches(p, tuning.art.skinTones, outfit.skin, (c) => this.pickSkinTone(c), 'dr-skin');
       return;
     }
+    if (this.customCat === 'face') {
+      this.renderFace(p);
+      return;
+    }
     if (this.customCat === 'looks') {
       this.renderLooks(p);
       return;
@@ -1026,6 +1054,69 @@ export class DressUpScene extends GameScene {
     const none = slot === 'accessory' && outfit.accessory.style === 0;
     colorsBox.style.display = none ? 'none' : '';
     hint.style.display = none ? '' : 'none';
+  }
+
+  // ── Face: eyes · eye colour · brows · freckles · makeup · stickers ───────
+  private renderFace(p: HTMLElement): void {
+    const f = resolveFace(store.profile.outfit.face);
+    const need = (field: FaceField, id: unknown): number => {
+      const r = faceRewardOf(field, id);
+      return r && !faceOwned(field, id) ? Math.max(1, charmsNeeded(r)) : 0;
+    };
+    const cards = (title: string, field: 'eyes' | 'brows' | 'makeup' | 'sticker', current: unknown): void => {
+      el('div', 'label lk-sub-t', p, title);
+      const grid = el('div', 'lk-grid parts', p);
+      for (const it of FACE_OPTIONS[field]) {
+        const n = need(field, it.id);
+        lockerCard(grid, { name: it.name, icon: it.icon, rarity: it.rarity, need: n, on: current === it.id }, () => this.pickFace(field, it.id, it.name, it.rarity, n));
+      }
+    };
+    cards('Eyes', 'eyes', f.eyes);
+    el('div', 'label lk-sub-t', p, 'Eye colour');
+    const row = el('div', 'lk-ecols', p);
+    for (const c of FACE_OPTIONS.eyeColor) {
+      const n = need('eyeColor', c.id);
+      const b = el('button', `lk-ecol${(c.value ?? '').toLowerCase() === f.eyeColor.toLowerCase() ? ' on' : ''}${n ? ' locked' : ''}`, row);
+      rarityVars(b, c.rarity);
+      b.style.setProperty('--ec', c.value ?? '#8e5c38');
+      el('i', 'iris', b);
+      el('span', 'nm', b, escapeHtml(c.name));
+      if (n) el('span', 'pad', b, '🔒');
+      bindTap(b, () => this.pickFace('eyeColor', c.id, c.name + ' eyes', c.rarity, n, c.value));
+    }
+    cards('Brows', 'brows', f.brows);
+    el('div', 'label lk-sub-t', p, 'Freckles');
+    const fr = el('div', 'lk-fins', p);
+    for (const it of FACE_OPTIONS.freckles) {
+      const b = el('button', `lk-fin${f.freckles === it.id ? ' on' : ''}`, fr);
+      rarityVars(b, it.rarity);
+      el('span', 'ico', b, it.icon);
+      el('span', 'nm', b, escapeHtml(it.name));
+      bindTap(b, () => this.pickFace('freckles', it.id, it.name, it.rarity, 0));
+    }
+    cards('Makeup', 'makeup', f.makeup);
+    cards('Face stickers', 'sticker', f.sticker);
+  }
+
+  private pickFace(field: FaceField, id: number | string | boolean | null, name: string, rarity: Rarity, need: number, hex?: string): void {
+    const char = this.char;
+    if (!char) return;
+    if (need > 0) {
+      bus.emit('uiTap', { kind: 'soft' });
+      bus.emit('placementBlocked', {});
+      toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to unlock ${name}`);
+      return;
+    }
+    this.pushHistory();
+    if (field === 'eyeColor') setFace({ eyeColor: hex });
+    else setFace({ [field]: id } as never);
+    char.setOutfit(store.profile.outfit); // the face diff is live (and plays the happy reaction)
+    const pos = char.slotAnchor('hair');
+    pos.y -= 0.16;
+    pos.add(this.camera.position.clone().sub(pos).normalize().multiplyScalar(0.4));
+    bus.emit('lockerEquipped', { slot: 'face', id: String(id), rarity, pos: v3(pos) });
+    this.setGlow(rarity, true);
+    this.renderPanel();
   }
 
   // ── Looks: 4 saved outfits ───────────────────────────────────────────────
@@ -1325,6 +1416,25 @@ export class DressUpScene extends GameScene {
       default:
         break;
     }
+    if (this.slot === 'custom' && this.customCat === 'face') {
+      // a surprise face (only things she owns)
+      this.pushHistory();
+      const r = randomFace();
+      const cur = store.profile.outfit.face ?? {};
+      const hexId = FACE_OPTIONS.eyeColor.find((c) => (c.value ?? '').toLowerCase() === (r.eyeColor ?? '').toLowerCase())?.id;
+      setFace({
+        eyes: faceOwned('eyes', r.eyes) ? r.eyes : cur.eyes,
+        eyeColor: hexId === undefined || faceOwned('eyeColor', hexId) ? r.eyeColor : cur.eyeColor,
+        brows: r.brows,
+        freckles: r.freckles,
+        makeup: faceOwned('makeup', r.makeup) ? r.makeup : cur.makeup,
+        sticker: r.sticker === null || faceOwned('sticker', r.sticker) ? r.sticker : cur.sticker,
+      });
+      char.setOutfit(store.profile.outfit);
+      this.pulse = 0.8;
+      this.renderPanel();
+      return;
+    }
     this.pushHistory();
     const cur = store.profile.outfit;
     const next = structuredClone(cur);
@@ -1496,7 +1606,7 @@ export class DressUpScene extends GameScene {
     thumbs.pump(LK.thumbBudgetMs);
 
     // spin with inertia; drift back to the home angle when left alone
-    const home = this.slot === 'backBling' ? Math.PI : 0;
+    const home = this.homeAngle();
     if (this.rotGoal !== null && !this.dragging) {
       this.rot += (this.rotGoal - this.rot) * (1 - Math.exp(-6 * dt));
       if (Math.abs(this.rotGoal - this.rot) < 0.01) this.rotGoal = null;
@@ -1556,7 +1666,7 @@ export class DressUpScene extends GameScene {
     const close = smooth((D.zoomMax - this.dist) / (D.zoomMax - D.zoomMin));
     const want = this.focusLook ?? lerp(D.lookYWide, D.lookYClose, close);
     this.lookY += (want - this.lookY) * k;
-    this.camera.position.set(0, this.lookY + 0.22 + this.dist * 0.075, this.dist);
+    this.camera.position.set(0, this.lookY + (LK.slotElev[this.slot] ?? 0.22) + this.dist * 0.075, this.dist);
     this.camera.lookAt(0, this.lookY, 0);
 
     // living stage: glow follows the rarity colour, rays turn, sparkles drift

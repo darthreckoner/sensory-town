@@ -195,7 +195,8 @@ export const ACC_V3: AccDef[] = [
     make: () => base({
       fixed: true,
       head: pieces('accv3|goggles', (pb) => {
-        const frame = pb.at('main'), dark = pb.at('dark'), white = pb.at('white'), lens = pb.at('lens');
+        // frame in matte plastic ('fabric') so the goggles only add the lens category
+        const frame = pb.at('main', 'fabric'), dark = pb.at('dark', 'fabric'), white = pb.at('white', 'fabric'), lens = pb.at('lens');
         for (const s of [-1, 1]) {
           const { p, n } = facePoint(25 * s, 3, 0.02);
           const q = frameQ(n.clone().lerp(new THREE.Vector3(0, 0, 1), 0.3));
@@ -204,12 +205,11 @@ export const ACC_V3: AccDef[] = [
             frame.add(rbox(w, h, 0.024, 0.005), { p: at(dx, dy), q }, true);
           }
           lens.add(rbox(0.09, 0.062, 0.006, 0.02), { p: at(0, 0, 0.006), q }, true);
-          white.add(rbox(0.106, 0.082, 0.012, 0.03), { p: at(0, 0, -0.016), q }, true);
         }
         dark.seg([-0.012, 0.01, 0.094], [0.012, 0.01, 0.094], 0.012);
         frame.seg([-0.045, 0.006, 0.098], [0.045, 0.006, 0.098], 0.006);
         dark.add(torus(0.112, 0.012), { p: [0, 0.012, -0.006], r: [PI / 2, 0, 0], s: [1, 1.14, 1] });
-        pb.at('cyan').seg([-0.02, 0.0, 0.108], [0.02, 0.0, 0.108], 0.0035);
+        pb.at('cyan', 'fabric').seg([-0.02, 0.0, 0.108], [0.02, 0.0, 0.108], 0.0035);
       }),
     }),
   },
@@ -264,9 +264,9 @@ export const ACC_V3: AccDef[] = [
     make: () => base({
       topLift: 0.04,
       head: pieces('accv3|headset', (pb) => {
-        const m = pb.at('main'), dark = pb.at('dark'), led = pb.at('led');
+        const m = pb.at('main', 'fabric'), dark = pb.at('dark', 'fabric'), led = pb.at('led');
         headband(dark, 0.118, 0.0085);
-        pb.at('trim').add(torus(0.118, 0.0095, 1.0), { p: [0, -0.01, -0.004], s: [1, 1.38, 1], r: [0, 0, PI / 2 - 0.5] });
+        pb.at('trim', 'fabric').add(torus(0.118, 0.0095, 1.0), { p: [0, -0.01, -0.004], s: [1, 1.38, 1], r: [0, 0, PI / 2 - 0.5] });
         for (const s of [-1, 1]) {
           m.e([0.115 * s, -0.012, -0.004], [0.026, 0.05, 0.046]);
           dark.ringAt([0.105 * s, -0.012, -0.004], [s, 0, 0], 0.04, 0.012);
@@ -320,10 +320,10 @@ export const ACC_V3: AccDef[] = [
     name: 'Choker', icon: '📿', rarity: 'common',
     make: () => base({
       body: pieces('accv3|choker', (pb) => {
-        pb.at('dark', 'satin').add(torus(0.056, 0.0075), { p: [0, U(1.436), -0.004], r: [PI / 2, 0, 0], s: [1, 0.78, 1] });
+        pb.at('dark', 'satin').add(torus(0.06, 0.0095), { p: [0, U(1.446), -0.004], r: [PI / 2, 0, 0], s: [1, 0.78, 1] });
         const g = pb.at('gold');
-        g.add(starGeo(0.0125, 0.006), { p: [0, U(1.4215), 0.047] });
-        g.e([0, U(1.4335), 0.0425], 0.0045);
+        g.add(starGeo(0.0145, 0.007), { p: [0, U(1.43), 0.052] });
+        g.e([0, U(1.444), 0.048], 0.005);
       }),
     }),
   },
@@ -405,9 +405,13 @@ export const ACC_V3: AccDef[] = [
     make: () => base({
       body: pieces('accv3|mantle', (pb) => {
         const m = pb.at('main', 'fabric'), t = pb.at('trim', 'fabric'), w = pb.at('white', 'fabric'), g = pb.at('gold'), ink = pb.at('ink', 'fabric');
-        const prof: [number, number][] = [[0.098, U(1.425)], [0.152, U(1.37)], [0.2, U(1.26)], [0.232, U(1.12)], [0.243, U(1.0)]];
+        // profile runs bottom to top so the lathe faces outward
+        const prof: [number, number][] = ([[0.098, U(1.425)], [0.152, U(1.37)], [0.2, U(1.26)], [0.232, U(1.12)], [0.243, U(1.0)]] as [number, number][]).reverse();
         const c = new THREE.SplineCurve(prof.map(([r, y]) => new THREE.Vector2(r, y)));
         m.add(new THREE.LatheGeometry(c.getPoints(10), 22, PI - 1.4, 2.8), { s: [1, 1, 0.8] }, true);
+        // lining: the same sheet seen from the inside (reversed profile) in the trim color
+        const inner = new THREE.SplineCurve(prof.slice().reverse().map(([r, y]) => new THREE.Vector2(r - 0.004, y)));
+        t.add(new THREE.LatheGeometry(inner.getPoints(10), 22, PI - 1.4, 2.8), { s: [1, 1, 0.8] }, true);
         t.add(new THREE.LatheGeometry([new THREE.Vector2(0.243, U(1.0)), new THREE.Vector2(0.247, U(1.012))], 22, PI - 1.4, 2.8), { s: [1, 1, 0.8] }, true);
         blobRing(w, U(1.41), 0.092, 14, [0.034, 0.026, 0.034], 0, 0.78);
         blobRing(w, U(1.385), 0.118, 16, [0.032, 0.024, 0.032], 0, 0.78);
@@ -428,7 +432,7 @@ export const ACC_V3: AccDef[] = [
       const a = base({ topLift: 0 });
       a.wings = true;
       a.back = pieces('accv3|fairywings', (pb) => {
-        const wing = pb.at('wing'), trim = pb.at('trim'), white = pb.at('white');
+        const wing = pb.at('wing'), trim = pb.at('trim', 'fabric'), white = pb.at('white', 'fabric');
         const upper = new THREE.Shape();
         upper.moveTo(0, 0);
         upper.bezierCurveTo(0.06, 0.2, 0.2, 0.38, 0.33, 0.34);
@@ -464,7 +468,7 @@ export const ACC_V3: AccDef[] = [
       const a = base({});
       a.wings = true;
       a.back = pieces('accv3|batwings', (pb) => {
-        const wing = pb.at('wing'), dark = pb.at('dark');
+        const wing = pb.at('wing'), dark = pb.at('dark', 'fabric');
         const sh = new THREE.Shape();
         sh.moveTo(0, 0);
         sh.bezierCurveTo(0.08, 0.2, 0.28, 0.36, 0.46, 0.32);
@@ -699,3 +703,6 @@ void box;
 void blobRing;
 void dome;
 void hoodEdge;
+
+import { SUIT_ACCS } from './wardrobeSuits';
+ACC_V3.push(...SUIT_ACCS); // full-body suit head gear + cape (wardrobeSuits.ts)

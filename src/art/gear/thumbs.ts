@@ -12,6 +12,8 @@ export interface ThumbSubject {
   view?: [number, number, number];
   /** override the auto fit (needed for skinned characters, whose bounds are the bind pose) */
   fit?: { center: [number, number, number]; radius: number };
+  /** tall and thin (a character): fit by height only */
+  narrow?: boolean;
   dispose?: () => void;
 }
 type Maker = () => ThumbSubject | null;
@@ -34,7 +36,7 @@ const LUT = (() => {
 
 class Thumbs {
   private cache = new Map<string, string>();
-  private queue: { key: string; make: Maker; cb: (url: string) => void; alive: () => boolean }[] = [];
+  private queue: { key: string; make: Maker; cb: (url: string) => void; alive: () => boolean; urgent: boolean }[] = [];
   private pending = new Map<string, ((url: string) => void)[]>();
   private rt: THREE.WebGLRenderTarget | null = null;
   private scene: THREE.Scene | null = null;
@@ -47,7 +49,7 @@ class Thumbs {
   }
 
   /** Ask for a picture; `cb` fires immediately when cached, otherwise from a later frame. `alive()` false drops the request. */
-  request(key: string, make: Maker, cb: (url: string) => void, alive: () => boolean = () => true): void {
+  request(key: string, make: Maker, cb: (url: string) => void, alive: () => boolean = () => true, urgent = false): void {
     const hit = this.cache.get(key);
     if (hit) {
       cb(hit);
@@ -59,7 +61,9 @@ class Thumbs {
       return;
     }
     this.pending.set(key, [cb]);
-    this.queue.push({ key, make, cb: (u) => this.pending.get(key)?.forEach((f) => f(u)), alive });
+    const job = { key, make, cb: (u: string) => this.pending.get(key)?.forEach((f) => f(u)), alive, urgent };
+    if (urgent) this.queue.unshift(job);
+    else this.queue.push(job);
   }
 
   /** Render queued pictures for up to `budgetMs` (always at least one). Call from the scene's update(). */
@@ -83,8 +87,8 @@ class Thumbs {
 
   /** Forget queued (not yet rendered) requests, e.g. when a tab is re-rendered. */
   dropQueued(): void {
-    for (const j of this.queue) this.pending.delete(j.key);
-    this.queue.length = 0;
+    for (const j of this.queue) if (!j.urgent) this.pending.delete(j.key);
+    this.queue = this.queue.filter((j) => j.urgent);
   }
 
   private setup(): THREE.Scene {
@@ -131,7 +135,8 @@ class Thumbs {
         center = box.getCenter(new THREE.Vector3());
         radius = box.getBoundingSphere(new THREE.Sphere()).radius;
       }
-      const half = Math.min((FOV / 2) * (Math.PI / 180), Math.atan(Math.tan((FOV / 2) * (Math.PI / 180)) * (W / H)));
+      const vHalf = (FOV / 2) * (Math.PI / 180);
+      const half = subject.narrow ? vHalf : Math.min(vHalf, Math.atan(Math.tan(vHalf) * (W / H)));
       const dist = (radius / Math.sin(half)) * 1.04;
       const dir = new THREE.Vector3(...(subject.view ?? [0.35, 0.22, 1])).normalize();
       this.cam.position.copy(center).addScaledVector(dir, dist);

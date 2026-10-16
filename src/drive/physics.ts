@@ -218,6 +218,10 @@ export class CarPhysics {
   get hover(): number {
     return this.tune.hover;
   }
+  /** This ride's tuning (tuning.drive overridden by tuning.rides.<kind>): the chase camera reads its per-ride knobs here. */
+  get cam(): typeof tuning.drive {
+    return this.tune;
+  }
   get waterOnly(): boolean {
     return !!this.tune.waterOnly;
   }
@@ -233,6 +237,14 @@ export class CarPhysics {
     }
     if (d.hover > 0 && g < WATER_Y) g = WATER_Y; // skims the shallows
     return g;
+  }
+
+  /** v3 rides: fling the ride up (a launch pad) — it leaves the ground at `vy` m/s and keeps rolling. */
+  launch(vy: number): void {
+    this.vy = vy;
+    this.grounded = false;
+    this.airTime = 0;
+    this.onBuild = false;
   }
 
   /** Park the ride at (x, z). `surfY`: the surface it stands on (so a ride left on a built floor stays on it); omitted: the ground, or a low built floor. */

@@ -116,7 +116,7 @@ export function buildScenery(inp: SceneryIn): { veg: Vegetation; build: ReturnTy
 
   // the island bounding box (generous); candidates off the island fail the height test at once
   const X0 = -260, X1 = 260, Z0 = -380, Z1 = 290;
-  const MAX = 3300;
+  const MAX = 2900;
   let count = 0;
   for (let i = 0; i < 90000 && count < MAX; i++) {
     const x = X0 + rng() * (X1 - X0), z = Z0 + rng() * (Z1 - Z0);

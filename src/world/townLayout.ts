@@ -45,10 +45,16 @@ export const ISLAND_DISCS: IslandDisc[] = [
 /** Sandcastle Bay: east of coastX(z) is sea for z between these (fading over `fade` metres at each end). */
 export const BAY = { z0: -52, z1: 66, fade: 14 };
 
+/** Sandcastle Bay's landmark: a giant sandcastle on the far shore (gate faces the sea). */
+export const SANDCASTLE = { x: 188, z: 86, yaw: Math.PI };
+
+/** The rectangle the world sweeps (core/worldcheck.ts) cover by default: the island plus a margin of sea [x0, z0, x1, z1]. */
+export const WORLD_AREA: [number, number, number, number] = [-252, -362, 252, 282];
+
 /** Sprinkle Summit: a steep snowy peak on a gently sloping shelf, a ski lodge on a flat pad reached by a road. */
 export const SUMMIT = {
-  x: 62, z: -262, shelf: 12, peak: 62, peakR: 92, shelfR0: 92, shelfR1: 158,
-  pad: { x: 62, z: -166, r: 30, h: 11.2 },
+  x: 62, z: -262, shelf: 12, peak: 54, peakR: 100, shelfR0: 100, shelfR1: 166,
+  pad: { x: 62, z: -166, r: 30, h: 12 },
   lodge: { x: 62, z: -181, w: 28, d: 15 },     // front (door) faces south
 };
 /** Bloom Meadow: rolling flower hills, windmills on the crests, a tethered hot-air balloon. */
@@ -63,7 +69,7 @@ export const GROVE = { x: -150, z: 125, r: 80, pond: { x: -131, z: 144, r: 13 } 
 export const SANDS = {
   x: 150, z: 140, r: 82,
   park: { x: 160, z: 150, ring: 23, w: 8 },       // the lazy river: a ring canal around a resort island
-  arches: [[112, 178, 0.4], [196, 112, -0.9], [128, 112, 0.0]] as [number, number, number][],
+  arches: [[112, 178, 0.4], [196, 112, -0.9], [92, 150, Math.PI / 2]] as [number, number, number][],
 };
 
 // ── Road network ────────────────────────────────────────────────────────────
@@ -417,6 +423,7 @@ export const LANDMARKS: Landmark[] = [
   { id: 'mushrooms', name: 'Giant Mushrooms', icon: '🍄', x: GROVE.x, z: GROVE.z, radius: 14 },
   { id: 'arch', name: 'Rock Arch', icon: '🪨', x: SANDS.arches[0][0], z: SANDS.arches[0][1], radius: 12 },
   { id: 'lazyriver', name: 'Lazy River', icon: '🛟', x: SANDS.park.x, z: SANDS.park.z, radius: 30 },
+  { id: 'sandcastle', name: 'Giant Sandcastle', icon: '🏰', x: SANDCASTLE.x, z: SANDCASTLE.z, radius: 16 },
 ];
 
 /** Pickup / drop-off spots (on or next to a road, always drivable). */
@@ -493,6 +500,39 @@ export const CHARMS: Charm[] = [
   { id: 'co2', x: -140, z: 100 },
   { id: 'co3', x: 40, z: 120 },
   { id: 'co4', x: -140, z: -70 },
+  // ── v3 world: charms on rooftops, landmarks and glide-only spots (y = metres above the ground there) ──
+  // Sparkle Square rooftops (reach them with a ramp or a glide)
+  { id: 'dt9', x: 21, z: -26.4, y: 11.8 },              // over the Studio roof
+  { id: 'dt10', x: -26, z: -15.6, y: 14.2 },            // over the Cinema roof
+  { id: 'dt11', x: -58, z: -50, y: 59 },                // the tallest tower: glide in from the Lookout
+  // Cozy Hills / Wonder Lookout
+  { id: 'hh6', x: -64, z: 2.5, y: 14 },                 // up on the entrance gate sign
+  { id: 'lk5', x: -99, z: -125, y: 10.5 },              // the top of the flagpole
+  // Sandcastle Bay
+  { id: 'bp7', x: 145.5, z: 12, y: 20 },                // the lighthouse lantern
+  { id: 'bp8', x: 166, z: -14 },                        // the rock in the bay: swim out
+  { id: 'bp9', x: 188, z: 86, y: 17 },                  // over the giant sandcastle's keep
+  // Sprinkle Summit
+  { id: 'sm1', x: 62, z: -170 },                        // the lodge porch
+  { id: 'sm2', x: 62, z: -181, y: 14.5 },               // over the lodge roof
+  { id: 'sm3', x: 92, z: -214 },                        // a ledge on the way up
+  { id: 'sm4', x: 62, z: -262 },                        // the very top (glide off after!)
+  { id: 'sm5', x: 124, z: -288, y: 24 },                // out over the far cliffs: glide-only
+  // Bloom Meadow
+  { id: 'me1', x: 6, z: 166, y: 15.5 },                 // the first windmill's cap
+  { id: 'me2', x: 44, z: 198, y: 12.2 },                // the hot-air balloon basket
+  { id: 'me3', x: 30, z: 240 },                         // the far flower hill
+  // Glow Grove
+  { id: 'gr1', x: -118, z: 118, y: 9 },                 // the tree house
+  { id: 'gr2', x: -150, z: 128, y: 17 },                // on top of the biggest mushroom
+  { id: 'gr3', x: -168, z: 126 },                       // the winding trail's far bend
+  // Sunny Sands
+  { id: 'sd1', x: 112, z: 178, y: 15.8 },               // the top of the big rock arch
+  { id: 'sd2', x: 160, z: 150, y: 11.5 },               // the slide tower platform
+  { id: 'sd3', x: 140, z: 172 },                        // the river bank
+  // the far beaches
+  { id: 'co5', x: -226, z: -4 },
+  { id: 'co6', x: 30, z: 256 },
 ];
 
 // ── Stunts (ramps, pipes, banks, rollers) ──────────────────────────────────
@@ -529,8 +569,8 @@ export interface Bridge { id: string; ax: number; az: number; bx: number; bz: nu
 export const BRIDGES: Bridge[] = [
   { id: 'lake', ax: 54, az: -100, bx: 122, bz: -100, w: 8, peak: 3.2, endY: 0.4 },
   // v3: footbridges across the Sunny Sands lazy river (drawn by drive/sands.ts)
-  { id: 'canal_w', ax: SANDS.park.x - 31, az: SANDS.park.z, bx: SANDS.park.x - 15, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
-  { id: 'canal_e', ax: SANDS.park.x + 15, az: SANDS.park.z, bx: SANDS.park.x + 31, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
+  { id: 'canal_w', ax: SANDS.park.x - 34, az: SANDS.park.z, bx: SANDS.park.x - 12, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
+  { id: 'canal_e', ax: SANDS.park.x + 12, az: SANDS.park.z, bx: SANDS.park.x + 34, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
 ];
 
 /** Piers (flat decks over the water). */
@@ -582,6 +622,29 @@ export function isReserved(x: number, z: number): boolean {
 // Positions are final-ish: the island is being reshaped around them (see DESIGN.md v3).
 import type { VehicleKind } from '../core/model';
 
+/**
+ * v3 free building: is this spot off limits for a player's build? Roads (plus a shoulder), plazas and pads,
+ * the buildings and landmarks the world already has, and anything outside the world. (Sea and steep slopes
+ * are the caller's call: heightfield.isWater / groundHeight.) Unlike isReserved there is no "neighbourhood".
+ */
+export function isBuildBlocked(x: number, z: number, pad = 0): boolean {
+  if (Math.abs(x) > BOUNDS - 2 || Math.abs(z) > BOUNDS - 2) return true;
+  if (onRoad(x, z, SIDEWALK + 0.4 + pad)) return true;
+  for (const r of PAVED) if (Math.abs(x - r.x) < r.w / 2 + 1 + pad && Math.abs(z - r.z) < r.d / 2 + 1 + pad) return true;
+  for (const l of LANDMARKS) if (Math.hypot(x - l.x, z - l.z) < l.radius + pad) return true;
+  if (Math.hypot(x - WORKSHOP.pad.x, z - WORKSHOP.pad.z) < 7 + pad) return true;
+  if (Math.hypot(x - BUILD_YARD.pad.x, z - BUILD_YARD.pad.z) < 9 + pad) return true;
+  if (Math.abs(x - BOUTIQUE.center.x) < BOUTIQUE.size.w / 2 + 2 + pad && Math.abs(z - BOUTIQUE.center.z) < BOUTIQUE.size.d / 2 + 2 + pad) return true;
+  for (const t of NO_BUILD_EXTRA) if (Math.hypot(x - t.x, z - t.z) < t.r + pad) return true;
+  return false;
+}
+/** Extra no-build circles for the new places' big props (the water park island, the arches, the lodge). */
+const NO_BUILD_EXTRA = [
+  { x: SANDS.park.x, z: SANDS.park.z, r: SANDS.park.ring + SANDS.park.w },
+  ...SANDS.arches.map(([x, z]) => ({ x, z, r: 15 })),
+  { x: SUMMIT.lodge.x, z: SUMMIT.lodge.z, r: 19 },
+];
+
 /** Every place with a title card: the old districts plus the new POIs. `r` = metres from (x, z) that count as "in" it. */
 export interface Poi { id: string; name: string; x: number; z: number; r: number }
 export const POIS: Poi[] = [
@@ -603,10 +666,10 @@ export const RIDE_SPAWNS: RideSpawn[] = [
   // Sparkle Square
   { kind: 'sports', x: 11, z: -10, heading: 0 },
   { kind: 'icecream', x: -36, z: 3.5, heading: Math.PI / 2 },
-  { kind: 'hoverboard', x: 31, z: -10, heading: 0 },
+  { kind: 'hoverboard', x: 27, z: -10, heading: 0 },
   // Cozy Hills
   { kind: 'golfcart', x: -82, z: 8, heading: -Math.PI / 2 },
-  { kind: 'pickup', x: -56, z: 26, heading: Math.PI },
+  { kind: 'pickup', x: -110, z: 8.5, heading: Math.PI / 2 },
   // Rascal Ramps
   { kind: 'hoverboard', x: -20, z: 86, heading: 0 },
   { kind: 'sports', x: 3, z: 88, heading: 0 },
@@ -616,32 +679,32 @@ export const RIDE_SPAWNS: RideSpawn[] = [
   { kind: 'boat', x: 126, z: 2, heading: Math.PI / 2 },
   // Giggle Gardens
   { kind: 'pickup', x: 50, z: -78, heading: Math.PI },
-  { kind: 'boat', x: 100, z: -92, heading: 1.2 },
+  { kind: 'boat', x: 84, z: -112, heading: 1.2 },
   // Wonder Lookout
-  { kind: 'sports', x: -92, z: -64, heading: -Math.PI / 2 },
+  { kind: 'sports', x: -100, z: -38, heading: 0 },
   // Sprinkle Summit
-  { kind: 'pickup', x: 62, z: -178, heading: 0 },
+  { kind: 'pickup', x: 74, z: -164, heading: Math.PI },
   // Bloom Meadow
   { kind: 'golfcart', x: 40, z: 160, heading: 0 },
   { kind: 'icecream', x: 56, z: 150, heading: Math.PI },
   // Glow Grove
   { kind: 'hoverboard', x: -146, z: 108, heading: 0 },
   // Sunny Sands
-  { kind: 'sports', x: 140, z: 118, heading: 0 },
+  { kind: 'sports', x: 118, z: 107, heading: 0.85 },
   { kind: 'boat', x: 150, z: 40, heading: 0 },
 ];
 
 /** Bouncy launch pads (centre of each pad). */
 export const LAUNCH_PADS: { x: number; z: number }[] = [
-  { x: 96, z: 40 },       // beach: bounce out over the bay
+  { x: 91.5, z: 48 },     // beach boardwalk: bounce out over the bay
   { x: -3, z: 56 },       // south end of Center Avenue
   { x: -20, z: 120 },     // Rascal Ramps
-  { x: 72, z: -82 },      // Giggle Gardens, by the lake
-  { x: 60, z: -182 },     // Sprinkle Lodge: bounce toward the peak
+  { x: 68, z: -78 },      // Giggle Gardens, by the lake
+  { x: 50, z: -166 },     // Sprinkle Lodge forecourt: bounce toward the peak
   { x: 30, z: 160 },      // Bloom Meadow hilltop
   { x: 150, z: 120 },     // Sunny Sands dune
   { x: -150, z: 100 },    // Glow Grove clearing
-  { x: -112, z: -112 },   // Wonder Lookout plateau
+  { x: -97, z: -118 },    // Wonder Lookout plateau
 ];
 
 /** The party bus: a straight line high across the island (y metres above sea level). */

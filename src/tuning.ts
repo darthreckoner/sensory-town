@@ -124,8 +124,8 @@ export const tuning = {
     faceFrontDelay: 7,         // seconds idle before the character turns back to the front
     faceFrontSpeed: 3.2,
     autoFocus: true,           // tapping a category glides the camera to that body part
-    focusDist: { hair: 3.0, accessory: 3.0, skin: 4.6, top: 3.9, bottom: 4.5, shoes: 3.6, looks: 5.6 } as Record<string, number>,
-    focusLookY: { hair: 1.66, accessory: 1.66, skin: 1.0, top: 1.28, bottom: 0.62, shoes: 0.3, looks: 0.98 } as Record<string, number>,
+    focusDist: { hair: 3.0, accessory: 3.0, skin: 4.6, top: 3.9, bottom: 4.5, shoes: 3.6, looks: 5.6, face: 2.7 } as Record<string, number>,
+    focusLookY: { hair: 1.66, accessory: 1.66, skin: 1.0, top: 1.28, bottom: 0.62, shoes: 0.3, looks: 0.98, face: 1.62 } as Record<string, number>,
     spinSoundEvery: 0.16,      // seconds between swish sounds while spinning
     surpriseStaggerMs: 120,    // delay between pieces when rolling a random outfit
     undoMax: 40,
@@ -152,8 +152,10 @@ export const tuning = {
   // ── v3 locker (W2): the Locker's lobby stage, per-slot cameras, face light, reveal card ──
   locker: {
     /** camera distance / look-at height per Locker slot */
-    slotDist: { outfit: 5.4, backBling: 3.7, glider: 7.6, contrail: 7.2, emote: 5.4, wrap: 7.4, custom: 5.6 } as Record<string, number>,
-    slotLookY: { outfit: 0.98, backBling: 1.2, glider: 1.5, contrail: 1.15, emote: 1.0, wrap: 1.0, custom: 0.98 } as Record<string, number>,
+    slotDist: { outfit: 5.3, backBling: 4.2, glider: 9.4, contrail: 7.2, emote: 5.0, wrap: 7.6, custom: 5.6 } as Record<string, number>,
+    slotLookY: { outfit: 0.97, backBling: 1.18, glider: 2.2, contrail: 1.15, emote: 1.0, wrap: 1.0, custom: 0.98 } as Record<string, number>,
+    /** extra camera height per slot (the glider tab looks down on the canopy) */
+    slotElev: { glider: 1.5 } as Record<string, number>,
     /** warm fill so the face is the best-lit thing on screen (+ a soft hair rim from behind) */
     faceLight: { color: '#ffd9bd', intensity: 55, range: 10, angle: 0.32, penumbra: 0.9, x: 1.1, y: 2.7, z: 3.6, rim: 1.4 },
     coolRim: { color: '#9fc4ff', intensity: 40, x: -2.4, y: 2.6, z: -2.2 },
@@ -296,8 +298,8 @@ export const tuning = {
     // world
     cloudSpeed: 0.0035,
     scenerySeed: 20261016,
-    cullTerrain: 330,          // terrain chunks farther than this hide (v3: the haze fully hides them by then)
-    cullVegetation: 230,
+    cullTerrain: 370,          // terrain chunks farther than this hide (v3: the haze fully hides them by then)
+    cullVegetation: 200,
     // ── v3 rides: defaults every ride starts from (tuning.rides.<kind> overrides them) ──
     hover: 0,                  // ride height above the ground (the hoverboard floats)
     hopSpeed: 0,               // Space hops (hoverboard) with this upward speed; 0 = no hop
@@ -315,25 +317,32 @@ export const tuning = {
   // physics: topSpeed, acceleration, brakeForce, reverseSpeed, coastDrag, turnRate, turnSpeedFull, turnMinAuthority, turnSpeedLoss,
   // grip, steerResponse, boostSpeed, boostAccel, drift*, gravity, climbLimit, slopeGravity, airSteer, waterLimit, carRadius, carCircleOffset,
   // hover, hopSpeed, waterOnly, shoreLimit; looks: susK, susC, bumpKick, lean, wobble, pitchK.
+  // chase camera: cameraFollowDistance (m behind), cameraHeight (m up), cameraLookHeight (m above the rider), cameraLookAhead (m ahead of the ride),
+  // cameraMinDistance (closest it may be pushed in), cameraPosLag (higher = stiffer), cameraFov.
   rides: {
-    sports: { topSpeed: 25, acceleration: 13, brakeForce: 28, turnRate: 2.5, grip: 8, driftGrip: 0.22, driftYaw: 1.35, boostSpeed: 1.55, boostAccel: 2.8 },
+    sports: { cameraFollowDistance: 8.8, cameraHeight: 3.8, cameraLookHeight: 1.2, cameraLookAhead: 4, cameraMinDistance: 3.6, cameraPosLag: 2.3, topSpeed: 25, acceleration: 13, brakeForce: 28, turnRate: 2.5, grip: 8, driftGrip: 0.22, driftYaw: 1.35, boostSpeed: 1.55, boostAccel: 2.8 },
     pickup: {
+      cameraFollowDistance: 10.5, cameraHeight: 4.4, cameraLookHeight: 2.0, cameraLookAhead: 4.5, cameraMinDistance: 4.5,
       topSpeed: 19, acceleration: 9.5, brakeForce: 24, turnRate: 2.0, turnSpeedFull: 4.5, grip: 10.5, climbLimit: 1.55, slopeGravity: 3.5, waterLimit: -1.0,
       carRadius: 1.15, carCircleOffset: 1.3, boostSpeed: 1.35, susK: 95, susC: 5, bumpKick: 3.4, lean: 0.17, pitchK: 0.08,
     },
     golfcart: {
+      cameraFollowDistance: 5.2, cameraHeight: 2.5, cameraLookHeight: 1.45, cameraLookAhead: 3.2, cameraMinDistance: 3.2, cameraPosLag: 3.2, cameraFov: 58, cameraFovBoost: 3,
       topSpeed: 10.5, acceleration: 8, brakeForce: 22, reverseSpeed: 5, turnRate: 3.1, turnSpeedFull: 1.6, turnMinAuthority: 0.6, turnSpeedLoss: 0.08, grip: 15,
       carRadius: 0.85, carCircleOffset: 0.6, boostSpeed: 1.3, susK: 120, susC: 8, lean: 0.12, collideMinSpeed: 2,
     },
     hoverboard: {
+      cameraFollowDistance: 4.5, cameraHeight: 2.2, cameraLookHeight: 1.3, cameraLookAhead: 3, cameraMinDistance: 2.8, cameraPosLag: 3.6, cameraFov: 60, cameraFovBoost: 5,
       topSpeed: 21, acceleration: 15, brakeForce: 20, reverseSpeed: 6, turnRate: 3.0, turnSpeedFull: 3, grip: 5.2, driftGrip: 0.3, hover: 0.42, hopSpeed: 6.6, gravity: 22,
       climbLimit: 1.3, waterLimit: -1.15, airSteer: 0.95, carRadius: 0.55, carCircleOffset: 0.5, boostSpeed: 1.45, lean: 0.34, susK: 80, susC: 6, pitchK: 0.12,
     },
     icecream: {
+      cameraFollowDistance: 12.5, cameraHeight: 5.6, cameraLookHeight: 2.2, cameraLookAhead: 4.5, cameraMinDistance: 5,
       topSpeed: 15.5, acceleration: 6.2, brakeForce: 16, turnRate: 1.6, turnSpeedFull: 5, grip: 7, carRadius: 1.2, carCircleOffset: 1.4, boostSpeed: 1.28,
       wobble: 0.22, susK: 60, susC: 3, lean: 0.28, bumpKick: 3, pitchK: 0.07,
     },
     boat: {
+      cameraFollowDistance: 8.5, cameraHeight: 3.4, cameraLookHeight: 1.1, cameraLookAhead: 4, cameraMinDistance: 3.8,
       topSpeed: 21, acceleration: 9, brakeForce: 12, reverseSpeed: 4, coastDrag: 0.7, turnRate: 1.9, turnSpeedFull: 3, turnMinAuthority: 0.3, grip: 2.4,
       driftGrip: 0.6, waterOnly: 1, shoreLimit: -0.6, boostSpeed: 1.5, carRadius: 1.0, carCircleOffset: 1.4, lean: 0.22, susK: 70, susC: 4,
     },
@@ -410,6 +419,21 @@ export const tuning = {
     decorReach: 3.6,           // decor ghost distance in front of the player (m)
     decorMax: 600,
     stepUp: 0.62,              // surfaceBelow() tolerance (matches tuning.drive.stepUp)
+  },
+
+  // ── v3 emote (W5): the in-world emote wheel, its camera swing and music ─────────────────
+  emote3: {
+    camYawOff: 0.42,           // rad: the lens swings to her FRONT, a little off-axis (a three-quarter view)
+    camPitch: 0.1,             // rad: lens elevation above the pivot while emoting
+    camArm: 0.82,              // arm length x (a bit closer, she fills the frame)
+    camShoulder: 0,            // shoulder offset x (0 = she is centred)
+    camIn: 4.2,                // 1/s: how fast the view swings round ...
+    camOut: 5,                 // ... and back
+    camDelay: 0.12,            // s after the tap before the swing starts (the wheel is closing)
+    musicVol: 0.85,            // emote music level (x tuning.audio.music)
+    duck: 0.22,                // the town music drops to this fraction while an emote plays
+    maxLoopSeconds: 60,        // a looping emote tune ends by itself after this long (nobody dances for a minute)
+    wheelFade: 0.14,           // s: wheel open / close animation
   },
 
   // ── Workshop: squishy ─────────────────────────────────────────────────────
@@ -564,6 +588,10 @@ export const tuning = {
     camSettle: 7,              // 1/s: easing after hopping out of the car
     camOccIn: 18,              // 1/s: the lens comes in fast when something is in the way ...
     camOccOut: 3,              // ... and eases back out slowly
+    camSqueezeRise: 4.2,       // m the lens rises when the arm is fully squeezed by the town (an alley, a hedge): it looks down over it
+    camSqueezeRiseBuilt: 1.3,  // ... but inside something the player built the lens stays low, close behind the shoulder
+    camMinFrac: 0.28,          // the arm never shrinks below this fraction in the town ...
+    camMinFracBuilt: 0.2,      // ... or this inside a build
     camRecenterDelay: 0.8,     // s after the last drag before the view swings in behind a forward-walking player
     camRecenterRate: 1.4,
     lookZoneMinX: 0.4,         // touch: a look-drag only starts to the right of this fraction of the screen width
@@ -579,6 +607,27 @@ export const tuning = {
     sprintMul: 1.14,           // on top of drive.runSpeed
     doubleTapMs: 320,          // double-tap the move stick (second press held) to sprint
     sprintDustEvery: 0.16,     // s between dust puffs behind a sprinting walker
+    // slide (sprint + Ctrl / X / the SLIDE button)
+    slideMinSpeed: 5.5,        // m/s you must be running to start a slide
+    slideBoost: 1.12,          // speed multiplier (plus 1.2 m/s) on the way in
+    slideFriction: 2.6,        // m/s^2 of drag on the flat
+    slideGravity: 13,          // m/s^2 per unit of slope: downhill speeds you up, uphill drags
+    slideMax: 24,              // m/s
+    slideEndSpeed: 2.6,        // slower than this and you stand back up
+    slideTurn: 1.7,            // rad/s the stick can bend the slide
+    slideLean: 1.15,           // rad she leans back (the fallback pose)
+    slideCooldown: 0.45,
+    slideSprayEvery: 0.05,     // s between puffs of dust / snow
+    fovSlide: 8,               // FOV kick at slideMax speed
+    // ziplines
+    zipRadius: 2.7,            // m from a start post's foot that offers "Zip!"
+    zipStart: 3,               // m/s as you push off
+    zipGravity: 5.5,           // m/s^2 along the cable per unit of downhill slope
+    zipMax: 16,
+    zipMinSpeed: 4.5,
+    zipLiftSeconds: 0.45,      // the hop up to the pulley
+    zipGlideAlt: 5.5,          // letting go this high above the ground opens the glider
+    fovZip: 8,
     // mantle (climb a ledge you run into)
     mantleMin: 0.7,            // ledge heights (m above the feet) that trigger a mantle
     mantleMax: 1.9,

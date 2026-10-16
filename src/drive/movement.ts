@@ -21,6 +21,8 @@ import { FootCam } from './footcam';
 import { Glide, landLevel, surfaceY } from './glide';
 import { LaunchPads } from './launchpads';
 import { Mantle } from './mantle';
+import { Slide } from './slide';
+import { ZipLines } from './zipline';
 import { PoiCards } from './poi';
 
 export interface MovementHost {
@@ -37,28 +39,50 @@ export interface MovementHost {
   toFootMode(): void;
   /** go back to the car (Skip, or leaving mid-ride) */
   toCarMode(): void;
+  /** a scene change is in flight (or a sweep is teleporting the walker): nothing here may launch her */
+  leaving(): boolean;
+  /** walking (not in a ride) */
+  isFoot(): boolean;
   /** where the player is (car or feet) */
   where(): { x: number; z: number };
   /** point the drag-look somewhere */
   setLook(yaw: number, pitch: number): void;
 }
 
+// "Was that a real person tapping?" The bus intro only starts after real input, never from a script (the self-test and the
+// sweeps call scenes.go('town') directly). Tracked from boot (this module loads with DriveScene), before the scene exists.
+let lastTrusted = 0;
+if (typeof window !== 'undefined') {
+  const trust = (e: Event): void => {
+    if (e.isTrusted) lastTrusted = performance.now();
+  };
+  window.addEventListener('pointerdown', trust, { capture: true });
+  window.addEventListener('keydown', trust, { capture: true });
+  // dev only: pretend a real tap just happened (scripted checks of the intro: __movementTrust(); scenes.go('town'))
+  if (import.meta.env.DEV) (window as unknown as { __movementTrust: () => void }).__movementTrust = () => (lastTrusted = performance.now());
+}
+
 export class Movement {
   readonly cam: FootCam;
   readonly glide: Glide;
   readonly mantle = new Mantle();
+  readonly slide = new Slide();
+  readonly zip: ZipLines;
   readonly pads: LaunchPads;
   readonly bus: BusDrop;
   readonly poi: PoiCards;
   /** running flat out this frame (the camera widens, dust flies) */
   sprinting = false;
+  /** ── v3 emote ── set by drive/emotewheel.ts while the walker dances: the lens swings round to her front, and back when it ends */
+  emoteCam = false;
+  private emoteK = 0;
+  private emoteHold = 0;
 
   private jumpPrev = false;
   private jumpEdge = false;
   private peakY = 0;
   private posed = false;
   private fresh = false;
-  private lastTrusted = 0;
   private flyAwayT = -1;
   private readonly look = { yaw: 0, pitch: 0 };
 
@@ -71,23 +95,19 @@ export class Movement {
       onSkip: () => this.onBusSkip(),
     });
     this.poi = new PoiCards(h.ui);
-    h.scene.add(this.glide.root, this.pads.group, this.bus.group);
-    // "was this a real person tapping?" (the bus intro only starts after real input, never from a script)
-    const trust = (e: Event): void => {
-      if (e.isTrusted) this.lastTrusted = performance.now();
-    };
-    window.addEventListener('pointerdown', trust, { capture: true });
-    window.addEventListener('keydown', trust, { capture: true });
+    this.zip = new ZipLines(h.ui);
+    this.zip.attach(h.walker);
+    h.scene.add(this.glide.root, this.pads.group, this.bus.group, this.zip.group);
   }
 
   // ── state ─────────────────────────────────────────────────────────────────
   /** the bus ride or a flight: the touch / key shortcuts that change vehicle are off */
   get busy(): boolean {
-    return this.bus.active || this.glide.active || this.mantle.active;
+    return this.bus.active || this.glide.active || this.mantle.active || this.zip.active;
   }
   /** off the ground and not under the foot physics (doors and mats must not trigger) */
   get airborne(): boolean {
-    return this.bus.active || this.glide.active;
+    return this.bus.active || this.glide.active || this.zip.active;
   }
   /** extra FOV (degrees) for DriveScene's camera */
   get fov(): number {
@@ -107,7 +127,7 @@ export class Movement {
     return bus.on('sceneChange', ({ from, to }) => {
       if (to !== 'town' || !this.fresh) return;
       this.fresh = false;
-      if ((from === 'dressup' || from === 'picker') && performance.now() - this.lastTrusted < 5000) this.startBus();
+      if ((from === 'dressup' || from === 'picker') && performance.now() - lastTrusted < 5000) this.startBus();
     });
   }
 
@@ -133,6 +153,9 @@ export class Movement {
     }
     this.glide.cancel();
     this.mantle.cancel();
+    this.slide.cancel(this.h.foot);
+    this.slide.restore(w);
+    this.zip.cancel(w);
     this.glide.restoreWalker(w);
     this.posed = false;
     this.flyAwayT = -1;
@@ -202,6 +225,52 @@ export class Movement {
     f.setVelocity(0, 0);
   }
 
+  // ── ziplines ──────────────────────────────────────────────────────────────
+  /** E / F (or a tap on the bubble) at a start post: grab the pulley. */
+  tryZip(): boolean {
+    const f = this.h.foot;
+    const z = this.zip.ready;
+    if (!z || this.busy || !this.h.isFoot() || this.h.leaving()) return false;
+    this.slide.cancel(f);
+    this.zip.start(z, f);
+    this.cam.kick(4);
+    return true;
+  }
+
+  private endZip(how: 'arrived' | 'dropped'): void {
+    const f = this.h.foot;
+    const w = this.h.walker;
+    const zl = this.zip;
+    const z = zl.zip!;
+    const m = tuning.movement3;
+    if (how === 'arrived') {
+      f.x = zl.feet.x;
+      f.z = zl.feet.z;
+      f.y = surfaceY(f.x, f.z, zl.feet.y + 1.5);
+      f.vy = 0;
+      f.grounded = true;
+      f.setVelocity(z.dx * Math.min(zl.v, 6), z.dz * Math.min(zl.v, 6));
+    } else {
+      f.x = zl.feet.x;
+      f.y = zl.feet.y;
+      f.z = zl.feet.z;
+      f.vy = 3.5;
+      f.grounded = false;
+      f.setVelocity(z.dx * zl.v * 0.85, z.dz * zl.v * 0.85);
+      this.slide.keepMomentum(f); // coast through the air
+      this.peakY = f.y;
+    }
+    zl.finish(w, how);
+    this.posed = true; // afterFoot stands her back up
+    if (how === 'dropped') {
+      this.cam.kick(5);
+      if (f.y - landLevel(f.x, f.z, f.y) >= m.zipGlideAlt) {
+        this.glide.fall();
+        this.glide.applyPose(w, 0);
+      }
+    }
+  }
+
   // ── per frame, on foot ────────────────────────────────────────────────────
   /** Returns true when this module owns the walker this frame (skip the foot physics). */
   footFrame(dt: number, inp: FootInput): boolean {
@@ -214,8 +283,10 @@ export class Movement {
     f.speedMul = push ? m.sprintMul : 1;
     this.sprinting = push && f.grounded && !f.swimming && f.speed > 3;
 
+    if ((this.bus.active || this.glide.active || this.mantle.active || this.zip.active) && this.slide.active) this.slide.cancel(f);
     if (this.bus.active) {
-      this.rideBus(dt);
+      if (this.jumpEdge) this.bus.jump(); // Space = JUMP! on a keyboard
+      if (this.bus.active) this.rideBus(dt);
       return true;
     }
     if (this.glide.active) {
@@ -230,11 +301,27 @@ export class Movement {
       }
       return true;
     }
+    if (this.zip.active) {
+      const z = this.zip;
+      const steer = inp.mag > 0.1 ? (inp.dx * Math.cos(z.heading) + inp.dz * Math.sin(z.heading)) * inp.mag : 0;
+      const end = z.update(dt, this.jumpEdge, steer);
+      f.x = z.feet.x;
+      f.y = z.feet.y;
+      f.z = z.feet.z;
+      f.heading = z.heading;
+      f.speed = z.v;
+      f.vy = 0;
+      f.grounded = false;
+      if (end) this.endZip(end);
+      return true;
+    }
     if (this.mantle.active) {
       this.mantle.update(dt, f);
       return true;
     }
-    if (f.grounded && !f.swimming && this.mantle.tryStart(f, inp.dx, inp.dz, inp.mag, dt, this.h.grid())) return true;
+    // slide: sprint + Ctrl / X / the SLIDE button (it steers the foot physics through coast + setVelocity)
+    this.slide.update(dt, f, inp, this.jumpEdge, this.sprinting, false);
+    if (!this.slide.active && f.grounded && !f.swimming && this.mantle.tryStart(f, inp.dx, inp.dz, inp.mag, dt, this.h.grid())) return true;
     return false;
   }
 
@@ -248,6 +335,11 @@ export class Movement {
       const c = this.h.camPos;
       w.group.rotation.set(0, Math.atan2(c.x - f.x, c.z - f.z), 0);
       w.setMove(0, true);
+      return;
+    }
+    if (this.zip.active) {
+      this.zip.applyPose(w, dt);
+      this.posed = true;
       return;
     }
     if (this.glide.active) {
@@ -268,7 +360,8 @@ export class Movement {
       w.group.rotation.y = Math.PI - f.heading;
       return;
     }
-    w.setSprint(this.sprinting);
+    const sliding = this.slide.applyPose(w, f, dt); // a knee-slide leans her back, hips low
+    w.setSprint(this.sprinting && !sliding && !this.slide.active);
 
     // a long fall opens the glider
     if (f.grounded || f.swimming) this.peakY = f.y;
@@ -281,7 +374,7 @@ export class Movement {
       return;
     }
     // boing
-    if (f.grounded && !f.swimming) {
+    if (f.grounded && !f.swimming && !this.h.leaving()) {
       const pad = this.pads.trigger(f.x, f.y, f.z);
       if (pad) {
         this.glide.launch(f.x, f.y, f.z, m.padSpeed, f.heading);
@@ -299,6 +392,12 @@ export class Movement {
   // ── every frame (car or feet) ─────────────────────────────────────────────
   tick(dt: number, t: number): void {
     const p = this.h.where();
+    // ── v3 emote ── (eases the front-view weight in and out; placeCam reads it)
+    const em = tuning.emote3;
+    this.emoteHold = this.emoteCam ? this.emoteHold + dt : 0;
+    const goal = this.emoteCam && this.emoteHold > em.camDelay ? 1 : 0;
+    this.emoteK += (goal - this.emoteK) * (1 - Math.exp(-(goal ? em.camIn : em.camOut) * dt));
+    if (this.emoteK < 0.001 && !goal) this.emoteK = 0;
     this.pads.update(dt, t, p.x, p.z);
     this.glide.post(dt);
     if (!this.bus.active && this.glide.phase === 'none') this.glide.poseGlider();
@@ -313,7 +412,8 @@ export class Movement {
         }
       }
     }
-    const alt = this.bus.active ? 80 : this.glide.active ? this.glide.altitude() : 0;
+    this.zip.tick(dt, this.h.foot, this.h.isFoot() && !this.busy && !this.h.leaving(), () => void this.tryZip());
+    const alt = this.bus.active ? 80 : this.glide.active ? this.glide.altitude() : this.zip.active ? 20 : 0;
     this.poi.update(dt, p.x, p.z, alt);
   }
 
@@ -327,6 +427,10 @@ export class Movement {
       o.yaw = lerpAngle(yaw, this.glide.heading, 1 - Math.exp(-(this.glide.gliding ? 2.6 : 3.4) * dt));
       const pt = this.glide.phase === 'dive' ? 0.62 : this.glide.phase === 'rise' ? 0.4 : 0.3;
       o.pitch = pitch + (pt - pitch) * (1 - Math.exp(-1.8 * dt));
+    } else if (this.zip.active && !dragging && dragIdle > 0.25) {
+      // the view swings in behind the rider along the cable
+      o.yaw = lerpAngle(yaw, this.zip.heading, 1 - Math.exp(-2.8 * dt));
+      o.pitch = pitch + (0.3 - pitch) * (1 - Math.exp(-1.6 * dt));
     }
     return o;
   }
@@ -335,6 +439,7 @@ export class Movement {
     const f = this.h.foot;
     const m = tuning.movement3;
     let arm = 1, sho = 1, piv = 1, fov = this.sprinting ? m.fovSprint : 0, occlude = true, air = false;
+    if (this.slide.active) fov = Math.max(fov, m.fovSlide * Math.min(1, this.slide.speed / 14));
     let x = f.x, y = f.y, z = f.z, swim = f.swim01;
     if (this.bus.active) {
       x = this.bus.stand.x;
@@ -346,6 +451,13 @@ export class Movement {
       fov = m.fovBus;
       occlude = false;
       swim = 0;
+    } else if (this.zip.active) {
+      arm = 1.35;
+      sho = 0.7;
+      fov = m.fovZip;
+      occlude = false;
+      swim = 0;
+      air = true;
     } else if (this.glide.active) {
       arm = this.glide.gliding ? 1.55 : 1.4;
       sho = 0.7;
@@ -353,6 +465,15 @@ export class Movement {
       occlude = false;
       swim = 0;
       air = true;
+    }
+    // ── v3 emote ── dancing: swing round to her front (three-quarter view, a touch closer, she is centred); back again when it ends
+    if (this.emoteK > 0.002 && !this.bus.active && !this.glide.active) {
+      const e = tuning.emote3;
+      const k = this.emoteK * this.emoteK * (3 - 2 * this.emoteK);
+      yaw = lerpAngle(yaw, f.heading + Math.PI + e.camYawOff, k);
+      pitch += (e.camPitch - pitch) * k;
+      arm *= 1 + (e.camArm - 1) * k;
+      sho *= 1 + (e.camShoulder - 1) * k;
     }
     this.cam.place(dt, snap, { x, y, z, swim01: swim, yaw, pitch, arm, shoulder: sho, pivot: piv, fov, occlude, air });
   }

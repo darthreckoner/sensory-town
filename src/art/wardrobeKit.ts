@@ -9,8 +9,8 @@ import { B, D2R, TAU, bodyR, facePoint, torus, tubeGeo, GB, type PB, type V3t } 
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
-/** Low-poly rounded box (one bevel segment). The returned geometry is fresh: pass `owned`. */
-export const rbox = (w: number, h: number, d: number, r = 0.02): THREE.BufferGeometry => roundedBoxFull(w, h, d, r, 1);
+/** Low-poly rounded box (one bevel segment). materials.roundedBox is cached, so hand out a fresh copy (safe to pass as `owned`). */
+export const rbox = (w: number, h: number, d: number, r = 0.02): THREE.BufferGeometry => roundedBoxFull(w, h, d, r, 1).clone();
 /** Add a rounded box at p (optionally rotated). */
 export function box(gb: GB, w: number, h: number, d: number, r: number, p: V3t, rot?: V3t): void {
   gb.add(rbox(w, h, d, r), { p, r: rot }, true);
@@ -230,6 +230,82 @@ export function legTube(gb: GB, thigh: boolean, yT: number, yB: number, rT: numb
   } else gb.add(tubeGeo(yT, yB, rT, rB, 14), {}, true);
   if (thigh && yT > 0) legJoint(gb, true, rT);
   if (!thigh) legJoint(gb, false, rT);
+}
+/**
+ * Fish-scale surface: a dense lathe whose radius carries rows of overlapping scale bumps (staggered
+ * columns). r(y) = base radius; y0..y1 may be any range (torso heights, or negative for limbs).
+ */
+export function scaleLathe(gb: GB, r: (y: number) => number, y0: number, y1: number, n = 14, rowH = 0.04, amp = 0.006): void {
+  const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
+  const rowsV = Math.max(3, Math.round(((hi - lo) / rowH) * 3));
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= rowsV; i++) {
+    const y = lo + ((hi - lo) * i) / rowsV;
+    pts.push(new THREE.Vector2(r(y), y));
+  }
+  const g = new THREE.LatheGeometry(pts, n * 3);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const a = Math.atan2(x, z);
+    const rr = Math.hypot(x, z);
+    const jr = Math.floor((y - lo) / rowH);
+    let h = 0;
+    for (let dj = -1; dj <= 1; dj++) {
+      const j = jr + dj;
+      const stag = j & 1 ? 0.5 : 0;
+      const col = Math.round((a / TAU) * n - stag);
+      let da = ((col + stag) / n) * TAU - a;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      const dx = (da * rr) / ((TAU * rr) / n * 0.62);
+      const dy = (y - (lo + (j + 0.5) * rowH)) / (rowH * 0.95);
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 1) h = Math.max(h, Math.pow(1 - d2, 0.4) - j * 0.0);
+    }
+    const k = (rr + amp * h) / Math.max(rr, 1e-4);
+    p.setX(i, x * k);
+    p.setZ(i, z * k);
+  }
+  g.computeVertexNormals();
+  gb.add(g, {}, true);
+}
+/**
+ * Checker / gingham: flat quads on every other cell of a rows x n grid wrapped around a tube
+ * (radius r(y), y from yTop down to yBot). One small geometry, no per-cell meshes.
+ */
+export function checkTube(gb: GB, yTop: number, yBot: number, r: (y: number) => number, n = 22, cell = 0.026, lift = 0.0015, phase = 0): void {
+  const rows = Math.max(1, Math.round((yTop - yBot) / cell));
+  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], idx: number[] = [];
+  let v = 0;
+  for (let j = 0; j < rows; j++) {
+    const y0 = yTop - ((yTop - yBot) * j) / rows, y1 = yTop - ((yTop - yBot) * (j + 1)) / rows;
+    for (let i = 0; i < n; i++) {
+      if (((i + j + phase) & 1) !== 0) continue;
+      const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
+      for (const [a, y] of [[a0, y0], [a1, y0], [a1, y1], [a0, y1]] as [number, number][]) {
+        const R = r(y) + lift;
+        pos.push(Math.sin(a) * R, y, Math.cos(a) * R);
+        nrm.push(Math.sin(a), 0, Math.cos(a));
+        uv.push(0, 0);
+      }
+      idx.push(v, v + 3, v + 2, v, v + 2, v + 1);
+      v += 4;
+    }
+  }
+  if (!v) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  gb.add(g, {}, true);
+}
+/**
+ * Sleeveless tops: the arm's rounded end cap shows as a flat "disc" at the shoulder. A little pad (arm space,
+ * upper arm only) covers it: role 'skin' = a smooth bare shoulder, role 'main' = a tiny strap pad in the top's color.
+ */
+export function shoulderPad(pb: PB, role: 'skin' | 'main' = 'skin', r = 0.052): void {
+  pb.at(role).e([0, -0.003, 0], [r, r * 0.97, r]);
 }
 /** Convenience: get role builders from a PB. */
 export interface Roles {

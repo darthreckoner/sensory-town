@@ -6,6 +6,9 @@
 // An item with no `reward` is owned from the start.
 import type { Hex, VehicleKind } from '../../core/model';
 import { EMOTES as CHAR_EMOTES } from '../character';
+import { OUTFIT_CATALOG } from '../characterParts';
+import { WARDROBE_SUITS } from '../wardrobeCatalog';
+import { FACE_OPTIONS } from '../characterFace';
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
@@ -118,13 +121,14 @@ export const WRAP_FINISHES: GearItem[] = [
 export type PartSpec = string | string[];
 export interface SkinStyle {
   name: string;
-  /** colours: [hair, top, bottom, shoes, accessory] */
+  /** colours: [hair, top, bottom, shoes, accessory] ('' = keep what the player wears, for suits without hair / head gear) */
   c: [Hex, Hex, Hex, Hex, Hex];
   /** a special style is its own charm reward (`style.<skin>.<n>`) and shows one rarity higher */
   special?: boolean;
 }
 export interface SkinDef extends GearItem {
-  parts: { hair: PartSpec; top: PartSpec; bottom: PartSpec; shoes: PartSpec; accessory: PartSpec };
+  /** hair undefined = keep the player's hair (full-body suits); accessory null = no accessory */
+  parts: { hair?: PartSpec; top: PartSpec; bottom: PartSpec; shoes: PartSpec; accessory: PartSpec | null };
   styles: SkinStyle[];
   /** v2 part rewards this look wears (the skin is only wearable once those are unlocked) */
   needs?: string[];
@@ -233,6 +237,68 @@ export const SKINS: SkinDef[] = [
   ], ['outfit.crown']),
 ];
 
+// ── full-body suits from the wardrobe catalog become skins too (astronaut, onesies, racer, chef …) ──
+function shiftHue(hex: Hex, deg: number): Hex {
+  if (!hex) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (d < 0.12) return hex; // greys / whites / blacks stay
+  const sat = d / (1 - Math.abs(2 * l - 1));
+  let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (((h * 60 + deg) % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * sat, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  const [rr, gg, bb] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(rr)}${to(gg)}${to(bb)}`;
+}
+function suitSkins(): SkinDef[] {
+  const nm = (slot: 'hair' | 'top' | 'bottom' | 'shoes' | 'accessory', style: number) => OUTFIT_CATALOG[slot][style]?.name ?? OUTFIT_CATALOG[slot][0].name;
+  return WARDROBE_SUITS.map((s) => {
+    const base: SkinStyle['c'] = [s.hair?.color ?? '', s.top.color, s.bottom.color, s.shoes.color, s.accessory?.color ?? ''];
+    const remix = (deg: number): SkinStyle['c'] => base.map((c) => shiftHue(c, deg)) as SkinStyle['c'];
+    return {
+      ...item('skin', 'suit_' + s.id, s.name, s.icon, s.rarity, true, s.blurb),
+      parts: {
+        hair: s.hair ? nm('hair', s.hair.style) : undefined,
+        top: nm('top', s.top.style),
+        bottom: nm('bottom', s.bottom.style),
+        shoes: nm('shoes', s.shoes.style),
+        accessory: s.accessory ? nm('accessory', s.accessory.style) : null,
+      },
+      styles: [{ name: 'Original', c: base }, { name: 'Remix', c: remix(48) }, { name: 'Flip', c: remix(-70) }],
+    };
+  });
+}
+SKINS.push(...suitSkins());
+
+// ── face items on the charm ladder (the rest of the face options are free) ──
+export type FaceField = 'eyes' | 'eyeColor' | 'brows' | 'freckles' | 'makeup' | 'sticker';
+export interface FaceReward {
+  reward: string;
+  field: FaceField;
+  /** the value stored in Outfit.face (eyes/makeup: a number; sticker: an id; eyeColor: the colour id from FACE_OPTIONS) */
+  id: number | string;
+  item: GearItem;
+}
+const FACE_SUFFIX: Record<FaceField, string> = { eyes: ' eyes', eyeColor: ' eyes', brows: ' brows', freckles: '', makeup: '', sticker: ' sticker' };
+function faceReward(field: FaceField, id: number | string, reward: string): FaceReward[] {
+  const it = FACE_OPTIONS[field].find((i) => i.id === id);
+  if (!it) return [];
+  return [{ reward, field, id, item: { id: reward, name: it.name + FACE_SUFFIX[field], icon: it.icon === '🎨' ? '👁️' : it.icon, rarity: it.rarity } }];
+}
+export const FACE_REWARDS: FaceReward[] = [
+  ...faceReward('sticker', 'rainbow', 'face.sticker.rainbow'),
+  ...faceReward('eyes', 4, 'face.eyes.4'),
+  ...faceReward('makeup', 4, 'face.makeup.4'),
+  ...faceReward('sticker', 'glitter', 'face.sticker.glitter'),
+  ...faceReward('eyeColor', 'pink', 'face.eyecolor.pink'),
+];
+/** The unlock id gating a face option (undefined = free). */
+export function faceRewardOf(field: FaceField, id: unknown): string | undefined {
+  return FACE_REWARDS.find((f) => f.field === field && f.id === id)?.reward;
+}
+
 /** Unlock id of a skin style (style 0 and non-special styles come with the skin). */
 export function styleReward(skinId: string, n: number): string | undefined {
   const s = SKINS.find((x) => x.id === skinId);
@@ -262,8 +328,9 @@ export function skinById(id: string): SkinDef | undefined {
 }
 
 /** Every unlock id the catalog knows (unlocks.ts checks the ladder covers them all). */
-export function allCatalogRewards(): { reward: string; item: GearItem; slot: ItemSlot | 'wrap' | 'style' }[] {
-  const out: { reward: string; item: GearItem; slot: ItemSlot | 'wrap' | 'style' }[] = [];
+export function allCatalogRewards(): { reward: string; item: GearItem; slot: ItemSlot | 'wrap' | 'style' | 'face' }[] {
+  const out: { reward: string; item: GearItem; slot: ItemSlot | 'wrap' | 'style' | 'face' }[] = [];
+  for (const f of FACE_REWARDS) out.push({ reward: f.reward, item: f.item, slot: 'face' });
   (Object.keys(SLOT_ITEMS) as ItemSlot[]).forEach((slot) => {
     for (const it of SLOT_ITEMS[slot]) if (it.reward) out.push({ reward: it.reward, item: it, slot });
   });

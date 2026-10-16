@@ -82,6 +82,13 @@ function lock(b: GB, a: V3t, to: V3t, rTop: number, rBot: number, zScale = 0.5, 
 /** Side-swept fringe over the forehead. */
 function fringe(h: HairBuild, flip = 1, y = 0.62): void {
   const b = h.front;
+  E(b, [-0.34 * flip, y, 0.8], [0.52, 0.26, 0.3], [0.1, 0, 0.5 * flip]);
+  E(b, [0.0, y + 0.06, 0.82], [0.5, 0.26, 0.3], [0.1, 0, -0.1 * flip]);
+  E(b, [0.36 * flip, y - 0.02, 0.78], [0.46, 0.25, 0.3], [0.1, 0, -0.5 * flip]);
+}
+/** v3: a thinner side-swept fringe (no roll across the forehead) for the new styles. */
+function softFringe(h: HairBuild, flip = 1, y = 0.62): void {
+  const b = h.front;
   E(b, [-0.36 * flip, y - 0.04, 0.78], [0.46, 0.19, 0.28], [0.1, 0, 0.55 * flip]);
   E(b, [0.0, y + 0.02, 0.82], [0.44, 0.19, 0.28], [0.12, 0, -0.2 * flip]);
   E(b, [0.38 * flip, y - 0.05, 0.78], [0.4, 0.17, 0.28], [0.1, 0, -0.6 * flip]);
@@ -89,7 +96,13 @@ function fringe(h: HairBuild, flip = 1, y = 0.62): void {
 /** Curtain bangs: two swoops that part in the middle and frame the face. */
 function curtains(h: HairBuild, y = 0.7): void {
   for (const s of [-1, 1]) {
-    // a soft center part: each side sweeps down and out to the temple (no roll across the forehead)
+    E(h.front, [0.3 * s, y, 0.78], [0.5, 0.2, 0.28], [0.1, 0, -0.35 * s]);
+    E(h.base, [0.68 * s, y - 0.28, 0.62], [0.3, 0.4, 0.28], [0.05, 0, 0.12 * s]);
+  }
+}
+/** v3: curtain bangs with a soft center part: each side sweeps down and out to the temple (no roll across the forehead). */
+function softCurtains(h: HairBuild, y = 0.7): void {
+  for (const s of [-1, 1]) {
     E(h.front, [0.5 * s, y - 0.06, 0.74], [0.4, 0.16, 0.27], [0.12, 0, -0.62 * s]);
     E(h.front, [0.27 * s, y + 0.02, 0.82], [0.24, 0.11, 0.22], [0.1, 0, -0.4 * s]);
     E(h.base, [0.7 * s, y - 0.3, 0.6], [0.28, 0.42, 0.28], [0.05, 0, 0.12 * s]);
@@ -151,10 +164,11 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     h.topY = 0.16;
     h.hairR = 1.2;
   },
-  // 4 Long waves — mid-back length, soft S-waves, side-swept fringe
+  // 4 Long waves — mid-back length, soft S-waves, flat side-swept fringe
   (h) => {
     capN(h.base, 1.03);
-    fringe(h, 1, 0.7);
+    E(h.front, [0.12, 0.7, 0.8], [0.72, 0.12, 0.17], [0.12, 0, -0.5]);
+    E(h.front, [-0.45, 0.62, 0.76], [0.3, 0.1, 0.15], [0.1, 0, 0.45]);
     for (const s of [-1, 1]) E(h.base, [0.7 * s, 0.38, 0.6], [0.28, 0.42, 0.28], [0.05, 0, 0.12 * s]);
     // back curtain with waves, down to the shoulder blades
     lock(h.base, [0, 0.0, -0.075], [0, -0.47, -0.085], 0.104, 0.096, 0.5, 0.011, 2.2, 14);
@@ -261,7 +275,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 12 Scrunch Pony — high pony with a big scrunchie, long wavy swinging tail, side-swept fringe
   (h) => {
     capN(h.base, 1.0, 0.08);
-    fringe(h, 1, 0.7);
+    softFringe(h, 1, 0.7);
     h.accent.ringAt(hp([0, 0.8, -0.74]), [0, 0.45, -0.9], 0.05, 0.028);
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * TAU;
@@ -281,7 +295,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 13 Pigtails — two high tails with ties
   (h) => {
     capN(h.base, 1.0, 0.06);
-    curtains(h, 0.7);
+    softCurtains(h, 0.7);
     const t = new GB();
     for (const s of [-1, 1]) {
       const b = hp([0.8 * s, 0.5, -0.42]);
@@ -302,7 +316,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 14 Half-Up — top knot, long waves down the back
   (h) => {
     capN(h.base, 1.03);
-    curtains(h, 0.68);
+    softCurtains(h, 0.68);
     P(h.vol, [0, 1.12, -0.35], 0.42);
     h.accent.ringAt(hp([0, 0.9, -0.34]), [0, 0.8, -0.3], 0.044, 0.02);
     lock(h.base, [0, 0.0, -0.075], [0, -0.5, -0.09], 0.1, 0.07, 0.5, 0.009, 2, 14);
@@ -316,7 +330,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 15 Beaded Braids — long box braids with beads
   (h) => {
     capN(h.base, 1.02);
-    curtains(h, 0.66);
+    softCurtains(h, 0.66);
     const yaws = [66, 96, 124, 152, 178];
     for (const s of [-1, 1]) {
       yaws.forEach((yaw, i) => {
@@ -348,7 +362,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 17 Side Shave — shaved on one side, a long swoop on the other
   (h) => {
-    E(h.dark, [0, -0.08, -0.12], [1.035, 0.86, 1.02]);
+    E(h.dark, [0, 0.04, -0.12], [1.045, 0.92, 1.04]);
     E(h.base, [0.24, 0.5, -0.05], [0.8, 0.7, 0.95]);
     E(h.base, [0.3, 0.88, 0.2], [0.7, 0.34, 0.7], [0, 0, -0.2]);
     E(h.front, [0.22, 0.66, 0.8], [0.72, 0.28, 0.3], [0.1, 0, -0.45]);
@@ -362,7 +376,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 18 Clip Waves — long waves pinned with hair clips
   (h) => {
     capN(h.base, 1.03);
-    curtains(h, 0.66);
+    softCurtains(h, 0.66);
     lock(h.base, [0, 0.0, -0.075], [0, -0.47, -0.085], 0.104, 0.096, 0.5, 0.011, 2.2, 14);
     for (const s of [-1, 1]) {
       lock(h.base, [s * 0.1, -0.02, 0.0], [s * 0.1, -0.33, 0.085], 0.034, 0.03, 0.8, 0.006, 2);
@@ -391,7 +405,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 20 Bubble Pony — low tail cinched into bubbles
   (h) => {
     capN(h.base, 1.0, 0.06);
-    curtains(h, 0.7);
+    softCurtains(h, 0.7);
     E(h.base, [0, 0.1, -0.85], [0.42, 0.42, 0.34]);
     const t = new GB();
     const o = hp([0, 0.1, -0.85]);
@@ -408,7 +422,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 21 Messy Bun — big loose bun, escaping strands
   (h) => {
     capN(h.base, 1.0, 0.06);
-    curtains(h, 0.7);
+    softCurtains(h, 0.7);
     P(h.vol, [0.08, 1.3, -0.3], 0.7);
     P(h.vol, [-0.25, 1.22, -0.18], 0.42);
     P(h.vol, [0.4, 1.18, -0.45], 0.4);
@@ -433,7 +447,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 23 Side Braid — one thick braid over the shoulder
   (h) => {
     capN(h.base, 1.02);
-    fringe(h, 1, 0.68);
+    softFringe(h, 1, 0.68);
     E(h.base, [0, -0.3, -0.3], [0.95, 0.8, 0.72]);
     braid(h.base, [-0.085, -0.03, 0.012], [-0.125, -0.46, 0.125], 0.034, 12);
     h.accent.e([-0.126, -0.47, 0.127], [0.036, 0.03, 0.036]);
@@ -444,18 +458,19 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 24 Sleek Long — waist-length straight, center part
   (h) => {
     capN(h.base, 1.02, 0.08);
-    curtains(h, 0.74);
+    softCurtains(h, 0.74);
     lock(h.base, [0, 0.0, -0.075], [0, -0.62, -0.09], 0.103, 0.072, 0.48, 0.0, 1, 16);
     for (const s of [-1, 1]) {
-      lock(h.base, [0.094 * s, -0.01, -0.02], [0.104 * s, -0.5, 0.0], 0.034, 0.02, 1.0, 0, 1);
-      lock(h.base, [0.088 * s, -0.02, 0.04], [0.098 * s, -0.42, 0.075], 0.024, 0.016, 0.7, 0, 1);
+      lock(h.base, [0.094 * s, -0.01, -0.02], [0.108 * s, -0.5, 0.01], 0.034, 0.02, 1.0, 0, 1);
+      // a front lock that falls over the shoulder and lies on top of the chest (not inside it)
+      lock(h.base, [0.088 * s, -0.02, 0.04], [0.112 * s, -0.36, 0.125], 0.026, 0.016, 0.7, 0, 1);
     }
     h.topY = 0.15;
     h.hairR = 1.14;
   },
   // 25 Fauxhawk — shaved sides, a spiky ridge down the middle
   (h) => {
-    E(h.dark, [0, -0.05, -0.12], [1.04, 0.84, 1.03]);
+    E(h.dark, [0, 0.05, -0.12], [1.045, 0.93, 1.04]);
     E(h.base, [0, 0.5, -0.1], [0.4, 0.75, 0.98]);
     for (let i = 0; i < 7; i++) {
       const z = 0.75 - i * 0.28;

@@ -25,6 +25,7 @@ import { disposeBaked } from '../bake';
 import { BuildLayer } from './layer';
 import { MATS } from './geo';
 import { DecorLayer, DECOR_COLORS, decorCatalog, decorObject, decorRadius } from './decor';
+import { STARTERS, layoutBox, turnLayout, type Starter } from './starters';
 
 const B = tuning.build3;
 
@@ -38,6 +39,8 @@ export interface BuildHost {
   onFoot(): boolean;
   /** try to hop out of the car; true when the player is on foot afterwards */
   getOut(): boolean;
+  /** on the party bus, gliding or mid-climb: build mode waits (optional) */
+  busy?(): boolean;
 }
 
 type Tool = 'build' | 'edit' | 'delete' | 'decor';
@@ -113,6 +116,7 @@ export class BuildMode {
   private decorPanel!: HTMLElement;
   private decorList!: HTMLElement;
   private decorSel!: HTMLElement;
+  private starterPanel!: HTMLElement;
   private hintT = 0;
   private placeBtn!: HTMLElement;
 
@@ -128,6 +132,8 @@ export class BuildMode {
     host.scene.add(this.ring);
     this.buildUi();
     window.addEventListener('keydown', this.onKey);
+    // test hook (dev / ?selftest): window.__build3 = { mode, space, surfaceBelow, anchorY }
+    if (typeof location !== 'undefined' && (import.meta.env?.DEV || /selftest/.test(location.search))) (window as unknown as Record<string, unknown>).__build3 = { mode: this, space: buildSpace, surfaceBelow, anchorY, pieceFrame };
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -166,6 +172,10 @@ export class BuildMode {
   /** 🔨: switch build mode (hops out of the car first when needed). */
   toggle(on = !this.active): void {
     if (on === this.active) return;
+    if (on && this.host.busy?.()) {
+      toast('Land first, then build 🔨');
+      return;
+    }
     if (on && !this.host.onFoot() && !this.host.getOut()) return;
     this.setActive(on);
   }
@@ -215,6 +225,13 @@ export class BuildMode {
       this.setActive(false);
       return;
     }
+    if (this.host.busy?.()) {
+      // on the bus / in the air / mid-climb: nothing to build with yet
+      this.layer.setGhost(null, true);
+      this.clearDecorGhost();
+      this.target = null;
+      return;
+    }
     // the look direction (flat)
     this.host.camera.getWorldDirection(this.v3);
     const l = Math.hypot(this.v3.x, this.v3.z);
@@ -234,7 +251,8 @@ export class BuildMode {
       }
       this.updateInfo();
     } else {
-      this.layer.setGhost(null, true);
+      // while a piece is open in the Edit panel it glows (a see-through copy over it)
+      this.layer.setGhost(this.tool === 'edit' && this.selPiece ? this.selPiece : null, true);
       this.target = null;
     }
     if (this.tool === 'decor') this.updateDecorGhost();
@@ -561,7 +579,7 @@ export class BuildMode {
     const item: WorldDecor = { id: 'ghost', type: this.decorDef.type, x: pos.x, y: pos.y, z: pos.z, rot: this.decorRot, color: this.decorColor, ownerId: store.profile.id };
     const g = decorObject(item);
     if (!g) return;
-    ghostify(g, ok);
+    ghostify(g, ok, '#8fe6ff');
     this.host.scene.add(g);
     this.decorGhost = g;
     this.decorGhostKey = key;
@@ -763,7 +781,59 @@ export class BuildMode {
     this.refreshUi();
   }
 
+  private toggleStarters(): void {
+    const open = !this.starterPanel.classList.contains('show');
+    this.setTool('build');
+    if (open) this.starterPanel.classList.add('show');
+  }
+
+  /** Raise a ready-made little house (or ramp park) in front of the player, door toward them. */
+  private stampStarter(st: Starter): void {
+    const f = this.host.foot();
+    const ax: 0 | 1 | 2 | 3 = Math.abs(this.fwd.x) > Math.abs(this.fwd.y) ? (this.fwd.x > 0 ? 1 : 3) : this.fwd.y < 0 ? 0 : 2;
+    const lay = turnLayout(st.pieces, ax);                 // the layout faces south; turned so its door faces you
+    const bx = layoutBox(lay);
+    const along = ax % 2 === 0 ? bx.z1 - bx.z0 + 1 : bx.x1 - bx.x0 + 1;
+    const vx = ax === 1 ? 1 : ax === 3 ? -1 : 0, vz = ax === 2 ? 1 : ax === 0 ? -1 : 0;
+    const dist = TILE * 0.9 + (along * TILE) / 2;
+    const tx = f.x + vx * dist, tz = f.z + vz * dist;
+    const ox = Math.round(tx / TILE - 0.5 - (bx.x0 + bx.x1) / 2), oz = Math.round(tz / TILE - 0.5 - (bx.z0 + bx.z1) / 2);
+    const baseIy = Math.max(0, Math.floor((f.y - anchorY(Math.floor(tx / TILE), Math.floor(tz / TILE)) + 0.4) / STOREY));
+    const order = { floor: 0, ramp: 1, wall: 2, roof: 3 } as const;
+    const list = lay
+      .map((p) => ({ ...p, ix: ox + p.dx, iy: baseIy + p.iy, iz: oz + p.dz }))
+      .sort((a, b) => a.iy - b.iy || order[a.kind] - order[b.kind]);
+    const pieces: BuildPiece[] = list.map((p) => ({ id: uid('b_'), kind: p.kind, mat: p.mat, ix: p.ix, iy: p.iy, iz: p.iz, dir: p.dir, ...(p.edit ? { edit: p.edit } : {}), ownerId: store.profile.id }));
+    if (buildSpace.size + pieces.length > B.maxPieces) {
+      toast("That's a lot of building! Remove some pieces first");
+      return;
+    }
+    const bad = pieces.find((p) => !buildSpace.free(p) || this.inStatic(p) || groundHeight(pieceFrame(p).x, pieceFrame(p).z, false, true) < WATER_Y - STOREY);
+    if (bad) {
+      const fr = pieceFrame(bad);
+      bus.emit('buildBlocked', { pos: { x: fr.x, y: fr.y + 0.8, z: fr.z } });
+      toast('No room for that here. Try an open spot.');
+      return;
+    }
+    pieces.forEach((p, i) => {
+      store.update((d) => {
+        (d.town.builds ??= []).push(p);
+      });
+      buildSpace.add(p);
+      this.layer.add(p, true, i * 0.05);
+      if (i % 4 === 0) {
+        const fr = pieceFrame(p);
+        window.setTimeout(() => bus.emit('buildPlaced', { pos: { x: fr.x, y: fr.y + 0.6, z: fr.z }, kind: p.kind, mat: p.mat }), i * 50);
+      }
+    });
+    const ids = pieces.map((p) => p.id);
+    this.push({ undo: () => ids.forEach((id) => void this.removePiece(id, id === ids[0])) });
+    this.starterPanel.classList.remove('show');
+    this.showHint(`${st.icon} ${st.name} is going up! Edit it, add decor, make it yours.`, 5);
+  }
+
   private closePanels(): void {
+    this.starterPanel?.classList.remove('show');
     this.editPanel?.classList.remove('show');
     this.decorPanel?.classList.remove('show');
     this.decorSel?.classList.remove('show');
@@ -797,8 +867,9 @@ export class BuildMode {
     this.hint = el('div', 'b3-hint', root);
     this.info = el('div', 'b3-info', root);
 
-    // the bar
-    this.bar = el('div', 'b3-bar interactive', root);
+    // the dock: the bar at the bottom, the starter / decor panels stacked above it (so they never overlap)
+    const dock = el('div', 'b3-dock', root);
+    this.bar = el('div', 'b3-bar interactive', dock);
     const kinds = el('div', 'b3-row', this.bar);
     for (const k of KIND_UI) {
       this.kindBtns.set(k.kind, this.mkBtn(kinds, 'kind', k.icon, k.label, () => this.setKind(k.kind), k.key));
@@ -812,6 +883,7 @@ export class BuildMode {
     this.toolBtns.set('edit', this.mkBtn(tools, 'tool', '✏️', 'Edit', () => this.setTool(this.tool === 'edit' ? 'build' : 'edit'), 'G'));
     this.toolBtns.set('delete', this.mkBtn(tools, 'tool', '🗑️', 'Delete', () => this.setTool(this.tool === 'delete' ? 'build' : 'delete'), 'X'));
     this.toolBtns.set('decor', this.mkBtn(tools, 'tool', '🛋️', 'Decor', () => this.setTool(this.tool === 'decor' ? 'build' : 'decor'), 'V'));
+    this.mkBtn(tools, 'tool', '🏠', 'Starter', () => this.toggleStarters());
     this.mkBtn(tools, 'undo', '↶', 'Undo', () => this.undo(), 'U');
     this.mkBtn(tools, 'done', '✓', 'Done', () => this.setActive(false), 'B');
 
@@ -858,8 +930,23 @@ export class BuildMode {
     for (const p of PRESETS) this.mkBtn(pre, 'preset', p.icon, p.label, () => this.applyPreset(p.id));
     this.mkBtn(this.editPanel, 'done wide', '✓', 'Done', () => this.closePanels());
 
+    // starter houses
+    this.starterPanel = el('div', 'b3-panel b3-starter interactive', dock);
+    el('div', 'ttl', this.starterPanel, 'Raise a starter');
+    const cards = el('div', 'cards', this.starterPanel);
+    for (const st of STARTERS) {
+      const c = el('button', 'card', cards);
+      el('span', 'ico', c, st.icon);
+      el('span', 'nm', c, st.name);
+      el('span', 'bl', c, `${st.blurb} · ${st.pieces.length} pieces`);
+      bindTap(c, () => {
+        bus.emit('uiTap', { kind: 'big' });
+        this.stampStarter(st);
+      });
+    }
+
     // decor shelf
-    this.decorPanel = el('div', 'b3-panel b3-decor interactive', root);
+    this.decorPanel = el('div', 'b3-panel b3-decor interactive', dock);
     this.decorList = el('div', 'list', this.decorPanel);
     const ctl = el('div', 'b3-row ctl', this.decorPanel);
     this.mkBtn(ctl, 'tool', '⟳', 'Turn', () => this.rotateDecor(), 'R');

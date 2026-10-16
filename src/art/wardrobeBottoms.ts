@@ -20,6 +20,15 @@ const SL = B.shinLen;
 function puffLeg(gb: ReturnType<typeof roles>['main'], yT: number, yB: number, r: number, bumps: number, amp: number): void {
   puffTube(gb, yB, yT, bumps, amp, () => r, 14, 4);
 }
+/** Dark bike shorts under a short skirt (so no bare pelvis shows below the hem). */
+const underShorts = (pb: PB): void => {
+  const d = pb.at('dark');
+  d.e([0, 0.86, 0], [0.125, 0.06, 0.125]);
+  shell(d, 0.82, 0.98, 0.006);
+};
+const shortsLeg = (pb: PB, thigh: boolean): void => {
+  if (thigh) legTube(pb.at('dark'), true, 0.04, -0.13, 0.088, 0.086);
+};
 const waist = (pb: PB, off: number, ring = 0.011, role: 'dark' | 'trim' = 'dark'): void => {
   pb.at(role).ring(HIP_TOP - 0.006, bodyR(HIP_TOP) + off + 0.004, ring);
 };
@@ -35,10 +44,11 @@ export const BOTTOM_V3: BottomDef[] = [
   // 8 ── Tutu: three stiff tulle layers
   {
     name: 'Tutu', icon: '🩰', rarity: 'rare',
+    leg: (pb, thigh) => shortsLeg(pb, thigh),
     torso(pb) {
       const { main, trim } = roles(pb);
       const R0 = bodyR(HIP_TOP) + 0.014;
-      crotch(pb.at('dark'));
+      underShorts(pb);
       flare(main, [[R0, HIP_TOP], [0.2, 0.97], [0.27, 0.905], [0.285, 0.88]], 8, 32);
       flare(trim, [[R0 + 0.004, HIP_TOP - 0.012], [0.21, 0.94], [0.285, 0.865], [0.305, 0.845]], 8, 32);
       flare(main, [[R0 + 0.008, HIP_TOP - 0.024], [0.22, 0.91], [0.3, 0.83], [0.325, 0.805]], 8, 32);
@@ -108,9 +118,10 @@ export const BOTTOM_V3: BottomDef[] = [
   // 12 ── Kilt: short plaid wrap with a gold pin and a studded belt
   {
     name: 'Kilt', icon: '🎸', rarity: 'uncommon',
+    leg: (pb, thigh) => shortsLeg(pb, thigh),
     torso(pb) {
       const { trim, gold, dark } = roles(pb);
-      crotch(dark);
+      underShorts(pb);
       flare(pb.at('plaid'), [[bodyR(HIP_TOP) + 0.014, HIP_TOP], [0.175, 0.96], [0.215, 0.89], [0.23, 0.835]], 8, 34, 16);
       trim.ring(HIP_TOP - 0.004, bodyR(HIP_TOP) + 0.02, 0.016);
       dark.ring(0.835, 0.231, 0.006);
@@ -170,9 +181,10 @@ export const BOTTOM_V3: BottomDef[] = [
   // 15 ── Skater Skirt: short circle skirt, hem stripe
   {
     name: 'Skater Skirt', icon: '🛹', rarity: 'common',
+    leg: (pb, thigh) => shortsLeg(pb, thigh),
     torso(pb) {
       const { main, trim, white } = roles(pb);
-      crotch(pb.at('dark'));
+      underShorts(pb);
       flare(main, [[bodyR(HIP_TOP) + 0.014, HIP_TOP], [0.2, 0.96], [0.265, 0.895], [0.29, 0.855]], 8, 36);
       trim.ring(HIP_TOP - 0.004, bodyR(HIP_TOP) + 0.019, 0.014);
       white.ring(0.858, 0.289, 0.006);
@@ -256,3 +268,6 @@ export const BOTTOM_V3: BottomDef[] = [
 
 void PI;
 void torus;
+
+import { SUIT_BOTTOMS } from './wardrobeSuits';
+BOTTOM_V3.push(...SUIT_BOTTOMS); // full-body suit legs (wardrobeSuits.ts)

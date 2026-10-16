@@ -15,6 +15,7 @@ import { buildPark } from '../drive/park';
 import { buildSkate } from '../drive/skate';
 import { buildLookout } from '../drive/lookout';
 import { buildScenery } from '../drive/scenery';
+import { windTime } from '../drive/vegetation';
 import { buildSummit } from '../drive/summit';
 import { buildMeadow } from '../drive/meadow';
 import { buildGrove } from '../drive/grove';
@@ -135,6 +136,7 @@ export function buildTownEnvironment(): TownEnv {
     },
     update(dt, t) {
       sky.update(dt);
+      windTime.value = t; // v3 world: the trees sway
       terrain.water.update(t);
       for (const p of pieces) if (p.group.visible) p.update?.(dt, t);
     },

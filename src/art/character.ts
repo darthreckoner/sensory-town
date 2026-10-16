@@ -26,10 +26,14 @@ import { tuning } from '../tuning';
 import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
+import { eyeTints, faceKey, frecklesGeo, freckleColor, getBrowGeo, getEyeKit, getEyeMakeup, getStickerGeo, lipGlossColor, lipHighlightGeo, resolveFace } from './characterFace';
 import { clampStyle, getAccessory, getBottom, getShoes, getTop, OUTFIT_CATALOG, type CatalogSlot } from './characterParts';
 
 export { OUTFIT_CATALOG };
 export { colorGap, contrastColor, MIN_ACCENT_GAP };
+// v3 face customization (the Locker's Custom → Face tab reads FACE_OPTIONS; Outfit.face stores the picks)
+export { EYE_COLORS, EYE_SHAPES, FACE_OPTIONS, STICKER_IDS, eyeCoverage, faceKey, randomFace, resolveFace } from './characterFace';
+export type { FaceItem, FaceRarity, ResolvedFace } from './characterFace';
 export type { CatalogSlot };
 export type { CatalogItem } from './characterParts';
 /** Emotes: `playEmote(id)` loops (loop = true) until `stopEmote()`, or plays once. Movement cancels them. */
@@ -196,6 +200,9 @@ type MountSlot = 'top' | 'bottom' | 'shoes' | 'skin' | 'accessory';
 type SlotKey = 'body' | 'hair' | 'accessory' | 'top' | 'bottom' | 'shoes';
 const SLOT_KEYS: SlotKey[] = ['body', 'hair', 'top', 'bottom', 'shoes', 'accessory'];
 type ArmPose = { sx: number; sz: number; ex: number; ez: number; wr: number; wf: number; wx: number }; // wrist: wr roll (1 = palm to the front), wf flex (fingers toward the palm), wx deviation (fingers forward / back)
+// wrist roll that turns the palm to the camera when the arm is raised in FRONT of the body (the arm's x rotation flips the hand)
+const PEACE_ROLL = -1;
+const HEART_ROLL = -1;
 const HIPS = { wr: 0, wf: 0, wx: -1.05 }; // wrist angles for hands on hips
 const WING_PIVOT = new THREE.Vector3(0.05, 1.3 - TY, -0.095);
 
@@ -249,7 +256,7 @@ export class Character {
   private mouthIn = new THREE.Bone();
   private mouthY = 0;
   // hands: one bone per variant under each wrist (scale 0.001 = hidden), index 0 = +x arm
-  private handBones: Record<HandKind, Bone[]> = { relax: [], open: [], grip: [], peace: [] };
+  private handBones: Record<HandKind, Bone[]> = { relax: [], open: [], grip: [], peace: [], heart: [] };
   private handKind: HandKind[] = ['relax', 'relax'];
   private handsBuilt = new Set<HandKind>(['relax']); // hand variants are built on first use (keeps a character light)
   private swayers: Swayer[] = [];
@@ -274,6 +281,8 @@ export class Character {
   private swimPhase = Math.random() * 6;
   private glideTarget = 0;
   private glideW = 0;
+  private skyTarget = 0;
+  private skyW = 0;
   /** Where a glider's grip sits while gliding (origin = the point between the hands, canopy above). */
   readonly gliderAnchor = new THREE.Object3D();
   /** Upper-back mount for back blings (origin at the mount, +Z points away from the back). */
@@ -342,6 +351,8 @@ export class Character {
       if (prev.skin !== next.skin) dirty.add('skin');
       for (const k of ['hair', 'top', 'bottom', 'shoes', 'accessory'] as const) if (!same(prev[k], next[k])) dirty.add(k);
     }
+    // face options (eyes, brows, freckles, makeup, stickers) live in the body mesh: always diffed
+    if (faceKey(prev.face) !== faceKey(next.face)) dirty.add('skin');
     // hair and accessory depend on each other (hats hide hair volume, crowns sit on hair);
     // chains and bags sit on the top
     if (dirty.has('hair') || dirty.has('accessory') || dirty.has('top')) {
@@ -438,6 +449,18 @@ export class Character {
   get gliding(): boolean {
     return this.glideTarget > 0.5;
   }
+  /**
+   * Skydiving, belly down: arms out to the sides and slightly bent, legs spread and bent back,
+   * back arched, head up looking forward. Blends in and out over ~0.2 s. The pose is authored in
+   * the character's own (upright) frame: the caller still tilts the group belly-down (the head
+   * leads, the belly faces the ground); the limbs, the arched back and the neck are posed here.
+   */
+  setSkydive(on: boolean): void {
+    this.skyTarget = on ? 1 : 0;
+  }
+  get skydiving(): boolean {
+    return this.skyTarget > 0.5;
+  }
   /** A distinct sprint (full run pose, faster arms, more lean); call alongside setMove. */
   setSprint(on: boolean): void {
     this.gait.sprintT = on ? 1 : 0;
@@ -458,7 +481,7 @@ export class Character {
    */
   playEmote(id: string): boolean {
     const info = EMOTES.find((e) => e.id === id);
-    if (!info || this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5) return false;
+    if (!info || this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5) return false;
     this.poseAnim = null;
     if (id === 'wave') this.waveAnim = { t: 0, dur: tuning.dressup.waveSeconds };
     this.emote = { id, t: 0, dur: id === 'wave' ? tuning.dressup.waveSeconds : EMOTE_SECONDS[id] ?? 0, loop: info.loop, stopping: false };
@@ -627,6 +650,7 @@ export class Character {
     // ── idle life: shift weight from foot to foot, a little hip sway ──
     this.swimW += (this.swimTarget - this.swimW) * (1 - Math.exp(-dt / 0.07));
     this.glideW += (this.glideTarget - this.glideW) * (1 - Math.exp(-dt / 0.12));
+    this.skyW += (this.skyTarget - this.skyW) * (1 - Math.exp(-dt / 0.07));
     {
       const idleW = this.seated ? 0 : (1 - G.w) * (1 - G.air) * (1 - this.swimW) * (1 - this.glideW) * (1 - Math.max(G.crouch, G.land));
       const ws = Math.sin(T * 0.31) * 0.7 + Math.sin(T * 0.77 + 1.3) * 0.3;
@@ -691,7 +715,7 @@ export class Character {
           blend(A[0], -1.0, 0.32, -1.5, 0.0, w);
           blend(A[1], -0.1, 0.72, 0, -1.42, w);
           wristTo(A[1], HIPS.wr, HIPS.wf, w, HIPS.wx);
-          wristTo(A[0], 1, 0, w);
+          wristTo(A[0], PEACE_ROLL, 0, w);
           if (w > 0.5) hk[0] = 'peace';
           headZ -= 0.12 * w;
           headY += 0.12 * w;
@@ -775,7 +799,7 @@ export class Character {
       const em = this.emote;
       em.t += dt;
       if (!em.loop && !em.stopping && em.t >= em.dur) em.stopping = true;
-      if (this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5) em.stopping = true;
+      if (this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5) em.stopping = true;
       const yawLeft = em.id === 'twirl' ? Math.ceil(this.emoteYaw / TAU - 1e-4) * TAU - this.emoteYaw : 0;
       const hold = em.stopping && yawLeft > 0.03; // a twirl finishes its turn
       this.emoteW += ((em.stopping && !hold ? 0 : 1) - this.emoteW) * (1 - Math.exp(-dt / (em.stopping && !hold ? 0.16 : 0.12)));
@@ -825,10 +849,10 @@ export class Character {
           case 'heart': { // hands together in a heart in front of the chest, swaying
             const pulse = 1 + 0.5 * Math.max(0, Math.sin(t * 5.2));
             A.forEach((_, i) => {
-              arm(i, -0.45, 0.12, -2.3, -0.55);
-              wristTo(A[i], 1, 0, ew);
+              arm(i, -0.75, 0.14, -2.05, -0.6);
+              wristTo(A[i], HEART_ROLL, 0, ew);
             });
-            hk[0] = hk[1] = 'open';
+            hk[0] = hk[1] = 'heart';
             rollZ = mix(rollZ, Math.sin(t * 2.6) * 0.07);
             headZ = mix(headZ, Math.sin(t * 2.6) * 0.12);
             rigY = mix(rigY, Math.sin(t * 5.2) * 0.012 * pulse);
@@ -1020,6 +1044,33 @@ export class Character {
       rigX = lerp(rigX, 0, gw);
       smile = Math.max(smile, 0.5 * gw);
       open = Math.max(open, 0.35 * gw);
+    }
+    // ── v3: skydive (belly down: arms out + bent, legs spread and bent back, arched back, head up) ──
+    if (this.skyW > 0.002) {
+      const kw = this.skyW;
+      const wind = Math.sin(T * 23) * 0.04, wind2 = Math.sin(T * 19 + 1.7) * 0.04;
+      A.forEach((a, i) => {
+        blend(a, -0.25 + (i === 0 ? wind : wind2), 1.42 + 0.06 * Math.sin(T * 7 + i), 0, 0.72 + (i === 0 ? wind2 : wind), kw);
+        wristTo(a, 0, 0, kw);
+      });
+      if (kw > 0.4) hk[0] = hk[1] = 'open';
+      L.forEach((l, i) => {
+        l.hx = lerp(l.hx, 0.22 + (i === 0 ? wind2 : wind) * 1.5, kw);
+        l.hz = lerp(l.hz, 0.34 + 0.03 * Math.sin(T * 6 + i), kw);
+        l.kx = lerp(l.kx, 1.05 + 0.08 * Math.sin(T * 9 + i * 2), kw);
+      });
+      leanX = lerp(leanX, -0.22, kw); // a gentle arch
+      headX = lerp(headX, -1.15, kw); // neck extended: the face looks forward (the group is belly-down)
+      headY = lerp(headY, Math.sin(T * 1.3) * 0.08, kw);
+      headZ = lerp(headZ, 0, kw);
+      rollZ = lerp(rollZ, Math.sin(T * 2.1) * 0.05, kw);
+      twistY = lerp(twistY, 0, kw);
+      rigRollZ = lerp(rigRollZ, 0, kw);
+      rigX = lerp(rigX, 0, kw);
+      rigY = lerp(rigY, 0, kw);
+      smile = Math.max(smile, 0.85 * kw);
+      open = Math.max(open, 0.7 * kw);
+      squint = Math.max(squint, 0.35 * kw);
     }
     this.backMount.visible = this.glideW < 0.5;
 
@@ -1315,7 +1366,10 @@ export class Character {
     ch.length = 0;
     const skinHex = warmSkin(this.outfit.skin);
     const skin = new THREE.Color(skinHex);
-    const lip = new THREE.Color(lipColor(skinHex));
+    const fo = resolveFace(this.outfit.face);
+    const glossy = fo.makeup === 2;
+    const lip = new THREE.Color(glossy ? lipGlossColor(skinHex) : lipColor(skinHex));
+    const lipCat: Cat = glossy ? 'eyes' : 'skin';
     const mline = new THREE.Color(mouthColor(skinHex));
     const add = (bone: THREE.Object3D, geo: THREE.BufferGeometry, color: THREE.Color | null = skin, cat: Cat = 'skin', extra?: THREE.Matrix4, key?: string, bone2?: THREE.Object3D) =>
       this.chunk('body', bone, geo, cat, color, extra, key, bone2);
@@ -1329,20 +1383,39 @@ export class Character {
       add(arm.elbow, limbGeo(0.037, 0.028, B.armLow));
       for (const k of this.handsBuilt) add(this.handBones[k][i], handGeo(arm.s, k));
     });
-    add(this.headBody, headGeo());
+    add(this.headBody, headGeo(fo.makeup === 1 ? 1 : fo.makeup === 3 ? 2 : 0));
     const kit = getFaceKit();
     add(this.headBody, kit.ear, skin, 'skin', earMatrix(1), 'earR');
     add(this.headBody, kit.ear, skin, 'skin', earMatrix(-1), 'earL');
     add(this.headBody, kit.nose, skin, 'skin', noseMatrix(), 'nose');
-    this.eyes.forEach((e) => add(e, kit.eye, null, 'eyes'));
-    this.irises.forEach((e, i) => add(e, kit.iris[i], null, 'eyes'));
+    // eyes: shape + color (the iris discs are tinted by the chunk color), makeup around them
+    const ek = getEyeKit(fo.eyes);
+    const tints = eyeTints(fo.eyeColor);
+    const emk = getEyeMakeup(fo.makeup, fo.eyes);
+    this.eyes.forEach((e) => {
+      add(e, ek.eye, null, 'eyes');
+      if (emk) add(e, emk, null, 'eyes');
+    });
+    this.irises.forEach((e, i) => {
+      add(e, ek.irisOuter, tints.outer, 'eyes');
+      add(e, ek.irisInner, tints.inner, 'eyes');
+      add(e, ek.detail[i], null, 'eyes');
+    });
+    // brows follow the hair color (a bit darker so they stay natural)
+    const bc = new THREE.Color(this.outfit.hair.color).lerp(new THREE.Color('#2a1d17'), 0.6);
+    const browGeo = getBrowGeo(fo.brows);
+    for (const b of this.brows) add(b, browGeo, bc, 'gloss');
+    if (fo.freckles) add(this.headBody, frecklesGeo(), freckleColor(skinHex), 'skin');
+    const stk = fo.sticker ? getStickerGeo(fo.sticker) : null;
+    if (stk) add(this.headBody, stk, null, 'eyes');
     // mouth: lips (subtle tint) over a dark line. Each half-lip blends between the mouth bone
     // and its corner bone, so the lips bend smoothly into a smile
     this.corners.forEach((c, i) => {
-      add(this.mouthAnim, kit.upLip[i], lip, 'skin', undefined, undefined, c);
+      add(this.mouthAnim, kit.upLip[i], lip, lipCat, undefined, undefined, c);
       add(this.mouthAnim, kit.line[i], mline, 'gloss', undefined, undefined, c);
     });
-    this.lowCorners.forEach((c, i) => add(this.lipLow, kit.loLip[i], lip, 'skin', undefined, undefined, c));
+    this.lowCorners.forEach((c, i) => add(this.lipLow, kit.loLip[i], lip, lipCat, undefined, undefined, c));
+    if (glossy) add(this.lipLow, lipHighlightGeo(), null, 'eyes'); // a little shine on the lower lip
     add(this.mouthIn, kit.grin, new THREE.Color(FACE_COL.grin), 'gloss');
     add(this.mouthIn, kit.teeth, new THREE.Color(FACE_COL.teeth), 'gloss', mat4(new THREE.Vector3(0, 0, 0.0002)), 'teeth');
     add(this.mouthIn, kit.tongue, new THREE.Color(FACE_COL.tongue), 'gloss', mat4(new THREE.Vector3(0, 0, 0.0002)), 'tongue');
@@ -1370,10 +1443,6 @@ export class Character {
       add(t.geo, hc, this.tail);
       this.swayers.push({ obj: this.tail, side: t.side, phase: 0, tilt: t.tilt });
     }
-    // brows follow the hair color (a bit darker so they stay natural)
-    const bc = new THREE.Color(o.hair.color).lerp(new THREE.Color('#2a1d17'), 0.6);
-    const kit = getFaceKit();
-    for (const b of this.brows) add(kit.brow, bc, b);
   }
 
   private buildAccessory(): void {
@@ -1450,6 +1519,14 @@ export class Character {
   private refreshMeshes(): void {
     const per = new Map<Cat, Chunk[]>();
     for (const slot of SLOT_KEYS) for (const c of this.slotChunks[slot]) (per.get(c.cat) ?? per.set(c.cat, []).get(c.cat)!).push(c);
+    // keep to <= 8 draw calls: in the (rare) worst mix — plaid + LED + metal + a glass / glow / wing accessory +
+    // lacquered accessory parts — the lacquered accessory bucket folds into the shared gloss one
+    if (per.size > 8 && per.has('acc')) {
+      const g = per.get('gloss') ?? [];
+      for (const c of per.get('acc')!) g.push({ ...c, cat: 'gloss' });
+      per.delete('acc');
+      per.set('gloss', g);
+    }
     for (const cat of ALL_CATS) {
       const list = per.get(cat);
       const geo = list ? assembleGeometry(list) : null;

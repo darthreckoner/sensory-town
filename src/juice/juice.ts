@@ -68,7 +68,7 @@ export function initJuice(): void {
   bus.on('lockerEquipped', ({ pos, object, rarity }) => {
     const r = RARITY_FX[rarity] ?? RARITY_FX.common;
     audio.play('equip', { pitch: r.pitch });
-    if (pos) fx.burst('sparkle', pos, { count: r.count, color: r.colors, size: 1.1 });
+    if (pos) fx.burst('sparkle', pos, { count: Math.round(r.count * 0.7), color: r.colors, size: 0.5 });
     if (object) popScale(object, 0.45, 0.14);
   });
   bus.on('revealShown', ({ rarity }) => {
@@ -137,6 +137,15 @@ export function initJuice(): void {
     fx.burst('puff', pos, { count: 8, size: 0.6, speed: 1 });
   });
   bus.on('buildMode', ({ on }) => audio.play(on ? 'swish' : 'back', { vol: 0.6 }));
+
+  // ── v3 emote (W5): a pop and sparkles when she starts, then her own little tune (the town music ducks under it) ──
+  bus.on('emoteStarted', ({ id, pos }) => {
+    audio.play('pop', { pitch: 1.3, vol: 0.7 });
+    fx.burst('sparkle', { x: pos.x, y: pos.y + 1.1, z: pos.z }, { count: 10, size: 0.7, color: ['#ffffff', '#ff2e88', '#ffc93c', '#00d4ff'] });
+    audio.emoteStart(id);
+  });
+  bus.on('emoteStopped', () => audio.emoteStop());
+  bus.on('sceneChange', () => audio.emoteStop());   // leaving the town ends the dance
 
   // ── Squishy ──
   bus.on('squishPress', ({ strength }) => audio.play('squelch', { vol: 0.6 + 0.4 * strength }));
@@ -356,4 +365,28 @@ export function initJuice(): void {
     fx.burst('confetti', pos, { count: 30, size: 0.4, speed: 0.9 });
   });
   bus.on('poiEntered', () => audio.play('sting'));
+  // slide: a whoosh going in, a scrape that follows the speed, spray (snow on Sprinkle Summit, dust elsewhere)
+  const SNOW = ['#ffffff', '#eaf5ff', '#cfe6ff'];
+  bus.on('slideStart', ({ pos }) => {
+    audio.play('whoosh', { vol: 0.6, pitch: 1.25 });
+    fx.burst('puff', pos, { count: 5, color: DUST, size: 0.4, speed: 0.8 });
+    audio.slideStart();
+  });
+  // zipline: the ratchet on grabbing the pulley, a soft landing at the end
+  bus.on('zipStart', ({ pos }) => {
+    audio.play('zip');
+    fx.burst('sparkle', pos, { count: 12, color: ['#ffffff', '#00d4ff', '#ffc93c'], size: 0.7, speed: 1 });
+  });
+  bus.on('zipEnd', ({ pos }) => {
+    audio.play('thud', { vol: 0.5 });
+    audio.play('chime', { vol: 0.5, pitch: 1.2 });
+    fx.burst('puff', pos, { count: 6, color: DUST, size: 0.6, speed: 0.9 });
+    fx.burst('sparkle', pos, { count: 14, color: ['#b6ff3b', '#ffffff'], size: 0.8, speed: 1.1 });
+  });
+  bus.on('slideUpdate', ({ speed01, snow }) => audio.slideSet(speed01, snow));
+  bus.on('slideStop', () => audio.slideStop());
+  bus.on('slideSpray', ({ pos, speed01, snow }) => {
+    fx.burst('puff', pos, { count: 2, color: snow ? SNOW : DUST, size: 0.3 + speed01 * 0.18, speed: 0.6 + speed01 * 0.9 });
+    if (snow && speed01 > 0.35) fx.burst('sparkle', pos, { count: 2, color: SNOW, size: 0.6, speed: 1.1, up: 1.4 });
+  });
 }

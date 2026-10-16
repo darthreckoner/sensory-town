@@ -95,8 +95,8 @@ export function tickBuildMaterials(t: number): void {
 }
 
 const ghostMats = new Map<string, THREE.Material>();
-function ghostMat(f: Fin, ok: boolean): THREE.Material {
-  const key = `${f}|${ok}`;
+function ghostMat(f: Fin, ok: boolean, okColor = '#ffffff'): THREE.Material {
+  const key = `${f}|${ok}|${okColor}`;
   let m = ghostMats.get(key);
   if (!m) {
     m = finMat(f).clone();
@@ -104,7 +104,7 @@ function ghostMat(f: Fin, ok: boolean): THREE.Material {
     m.depthWrite = false;
     m.opacity = f === 'glass' || f === 'water' ? 0.3 : 0.6;
     const std = m as THREE.MeshStandardMaterial;
-    std.color.set(ok ? '#ffffff' : '#ff5c5c');
+    std.color.set(ok ? okColor : '#ff5c5c');
     if (!ok && std.emissive) {
       std.emissive.set('#ff1f1f');
       std.emissiveIntensity = 0.32;
@@ -115,11 +115,11 @@ function ghostMat(f: Fin, ok: boolean): THREE.Material {
 }
 
 /** Turn a baked object into a see-through preview (normal colours when ok, red when not). */
-export function ghostify(root: THREE.Object3D, ok: boolean): void {
+export function ghostify(root: THREE.Object3D, ok: boolean, okColor = '#ffffff'): void {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (m.isMesh && m.userData.fin) {
-      m.material = ghostMat(m.userData.fin as Fin, ok);
+      m.material = ghostMat(m.userData.fin as Fin, ok, okColor);
       m.castShadow = false;
       m.receiveShadow = false;
     }

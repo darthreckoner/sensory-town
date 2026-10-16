@@ -88,13 +88,13 @@ export class InfoBanner {
     this.rarEl = el('span', 'lk-rar', row);
     this.stateEl = el('span', 'lk-state', row);
   }
-  set(name: string, rarity: Rarity, state: 'equipped' | 'owned' | 'locked' | 'info', need = 0, extra = ''): void {
+  set(name: string, rarity: Rarity, state: 'equipped' | 'owned' | 'locked' | 'info', need = 0, extra = '', ownedText = 'TAP TO EQUIP'): void {
     rarityVars(this.root, rarity);
     this.nameEl.textContent = name;
     this.rarEl.textContent = RARITY[rarity].label + (extra ? ` · ${extra}` : '');
     this.root.classList.toggle('locked', state === 'locked');
     this.stateEl.textContent =
-      state === 'equipped' ? '✔ EQUIPPED' : state === 'locked' ? `🔒 FIND ${need} MORE CHARM${need === 1 ? '' : 'S'}` : state === 'owned' ? 'TAP TO EQUIP' : '';
+      state === 'equipped' ? '✔ EQUIPPED' : state === 'locked' ? `🔒 FIND ${need} MORE CHARM${need === 1 ? '' : 'S'}` : state === 'owned' ? ownedText : '';
   }
 }
 
@@ -105,7 +105,7 @@ export function outfitThumb(outfit: Outfit): () => ThumbSubject | null {
     const c = new Character(structuredClone(outfit), { shadows: false });
     c.update(0.05);
     c.group.rotation.y = -0.3;
-    return { object: c.group, view: [0.12, 0.1, 1], fit: { center: [0, 0.93, 0], radius: 1.03 }, dispose: () => c.dispose() };
+    return { object: c.group, view: [0.12, 0.1, 1], fit: { center: [0, 0.92, 0], radius: 0.99 }, narrow: true, dispose: () => c.dispose() };
   };
 }
 export function blingThumb(id: string): () => ThumbSubject | null {
@@ -117,8 +117,8 @@ export function blingThumb(id: string): () => ThumbSubject | null {
 export function gliderThumb(id: string): () => ThumbSubject | null {
   return () => {
     const g = makeGlider(id);
-    // the grip bar is hidden low: frame the canopy
-    return { object: g, view: [0.55, 0.62, 1], dispose: () => disposeGear(g) };
+    // frame the canopy (the grip bar and strings hang low)
+    return { object: g, view: [0.5, 0.55, 1], fit: { center: [0, 1.15, 0.1], radius: 1.3 }, dispose: () => disposeGear(g) };
   };
 }
 export function rideThumb(kind: VehicleKind, wrap: WrapLook): () => ThumbSubject | null {

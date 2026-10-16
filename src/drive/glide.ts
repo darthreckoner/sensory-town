@@ -9,8 +9,8 @@
 // foot code does the normal landing flex / water splash / step events).
 //
 // Entry points:  launch() (pad), drop() (the bus), fall() (a long fall by itself).
-// Locker: the glider comes from profile.locker.glider (makeGlider(id) from src/art/gear when the
-// locker agent has it, otherwise a simple parafoil); the contrail from profile.locker.contrail.
+// Locker: the glider comes from profile.locker.glider (makeGlider, src/art/gear; a simple parafoil if that ever throws),
+// the contrail from profile.locker.contrail (makeContrail; nothing equipped = a faint wisp of wind).
 import * as THREE from 'three';
 import { bus } from '../core/events';
 import { tuning } from '../tuning';
@@ -21,6 +21,9 @@ import { type ColliderGrid, pushOut, res } from './physics';
 import { clamp, lerpAngle, wrapAngle } from './envUtils';
 import type { FootPhysics } from './foot';
 import type { Character } from '../art/character';
+import { makeGlider } from '../art/gear/gliders';
+import { makeContrail, type Contrail } from '../art/gear/contrails';
+import { disposeGear } from '../art/gear/gearKit';
 
 /** What a walker can stand on at (x, z) for a body at height yRef: ground, stairs, decks, and whatever the player built. */
 export function surfaceY(x: number, z: number, yRef: number): number {
@@ -44,16 +47,6 @@ export interface FlightInput {
 }
 
 type Phase = 'none' | 'rise' | 'dive' | 'glide';
-
-// ── optional Locker gear (src/art/gear): used when the locker agent has shipped it ──────────
-const gearMods = import.meta.glob('../art/gear/*.ts', { eager: true }) as Record<string, Record<string, unknown>>;
-function gearFn<T>(name: string): T | undefined {
-  for (const m of Object.values(gearMods)) {
-    const f = m[name];
-    if (typeof f === 'function') return f as T;
-  }
-  return undefined;
-}
 
 const PALETTES: string[][] = [
   ['#ff2e88', '#ffffff', '#7c4dff', '#ffffff'],
@@ -274,7 +267,11 @@ export class Glide {
   private readonly ribbon = new Ribbon();
   private readonly eul = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly off = new THREE.Vector3();
-  private lastTrail: string | null = null;
+  private trailId: string | null = null;
+  private trailInit = false;
+  private contrail: Contrail | null = null;
+  private readonly trailAt = new THREE.Vector3();
+  private readonly trailVel = new THREE.Vector3();
   private airOn = false;
 
   constructor(private readonly ctx: GlideContext) {
@@ -291,19 +288,36 @@ export class Glide {
 
   /** the player's glider + contrail choices (profile.locker) */
   setGear(gliderId: string, trailId: string | null): void {
-    this.lastTrail = trailId;
-    this.ribbon.setStyle(trailId);
+    if (trailId !== this.trailId || !this.trailInit) {
+      this.trailInit = true;
+      this.trailId = trailId;
+      this.ribbon.setStyle(null); // the wisp (shown only when no contrail is equipped)
+      if (this.contrail) {
+        this.root.remove(this.contrail.object);
+        this.contrail.dispose();
+        this.contrail = null;
+      }
+      if (trailId) {
+        try {
+          this.contrail = makeContrail(trailId);
+          this.contrail.object.frustumCulled = false;
+          this.root.add(this.contrail.object);
+        } catch (e) {
+          console.warn('[glide] makeContrail failed, using the wisp', e);
+        }
+      }
+    }
     if (gliderId === this.gliderId && this.glider) return;
     this.gliderId = gliderId;
-    if (this.glider) this.glider.removeFromParent();
-    const make = gearFn<(id: string) => THREE.Object3D>('makeGlider');
+    if (this.glider) {
+      this.glider.removeFromParent();
+      disposeGear(this.glider);
+    }
     let g: THREE.Object3D | null = null;
-    if (make) {
-      try {
-        g = make(gliderId);
-      } catch (e) {
-        console.warn('[glide] makeGlider failed, using the placeholder', e);
-      }
+    try {
+      g = makeGlider(gliderId);
+    } catch (e) {
+      console.warn('[glide] makeGlider failed, using the placeholder', e);
     }
     this.glider = g ?? makeParafoil(gliderId);
     this.glider.visible = false;
@@ -357,6 +371,7 @@ export class Glide {
     this.closeT = 0;
     this.landPending = false;
     this.ribbon.clear();
+    this.contrail?.clear();
     if (this.glider) this.glider.visible = false;
     this.startAir();
   }
@@ -510,7 +525,14 @@ export class Glide {
         this.glider.visible = false;
       }
     }
-    this.ribbon.update(dt, this.active, this.x, this.y + 0.15, this.z, this.ctx.camPos);
+    // the contrail streams from the feet while flying (the equipped one, else a faint wisp); the glider animates itself (flaps, spins)
+    if (this.contrail) {
+      this.trailAt.set(this.x, this.y + 0.2, this.z);
+      this.trailVel.set(this.vx, this.vy, this.vz);
+      this.contrail.update(dt, this.trailAt, this.active, this.trailVel);
+    } else this.ribbon.update(dt, this.active, this.x, this.y + 0.15, this.z, this.ctx.camPos);
+    const tick = this.glider?.visible ? (this.glider.userData.tick as ((t: number) => void) | undefined) : undefined;
+    if (tick) tick(performance.now() / 1000);
   }
 
   /** Pose the walker + the glider for this frame. */
@@ -527,6 +549,7 @@ export class Glide {
     g.position.set(this.x - this.off.x, this.y + BODY_PIVOT - this.off.y, this.z - this.off.z);
     walker.setMove(0.2, false);
     walker.setGliding(this.phase === 'glide');
+    walker.setSkydive(this.phase === 'dive'); // ── v3 character ── belly-down skydive pose (the tilt above is still yours)
     this.poseGlider();
   }
 
@@ -543,6 +566,7 @@ export class Glide {
     g.rotation.order = 'XYZ';
     g.rotation.set(0, g.rotation.y, 0);
     walker.setGliding(false);
+    walker.setSkydive(false); // ── v3 character ──
     this.tilt = 0;
     this.roll = 0;
   }
@@ -555,6 +579,7 @@ export class Glide {
     this.open = 0;
     if (this.glider) this.glider.visible = false;
     this.ribbon.clear();
+    this.contrail?.clear();
     this.stopAir();
   }
 }

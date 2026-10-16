@@ -83,8 +83,8 @@ export function buildSands(): SandsOut {
   // ── the lazy river resort ──
   const cx = P.x, cz = P.z, g0 = 1.5;
   // the island: a round deck of pale concrete with a lip
-  m.cyl(mat.std('#efe3c6', 0.9), cx, g0 - 0.02, cz, 14.6, 14.6, 0.14, 28);
-  m.cyl(mat.std('#d9ccaa', 0.9), cx, g0 - 0.2, cz, 15.2, 15.2, 0.22, 28);
+  m.cyl(mat.std('#efe3c6', 0.9), cx, g0 - 0.1, cz, 12.6, 12.6, 0.14, 28);          // (flush with the ground: the terrain stays at 1.5 m out to r = 14)
+  m.cyl(mat.std('#d9ccaa', 0.9), cx, g0 - 0.3, cz, 13.2, 13.2, 0.22, 28);
   // the slide tower: a square tower with a platform, a striped roof and a lit sign
   {
     m.box(mat.std('#fbf6ec', 0.7), cx, g0 + 4.6, cz, 5.2, 9.2, 5.2);

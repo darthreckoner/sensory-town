@@ -46,6 +46,8 @@ export interface FootCamSubject {
   air?: boolean;
 }
 
+const NONE: number[] = [];
+
 export class FootCam {
   /** where the view is aimed this frame (DriveScene re-aims here after its sight-line lift) */
   readonly look = new THREE.Vector3();
@@ -123,20 +125,24 @@ export class FootCam {
 
     // something in the way? come in toward the walker (fast), ease back out (slowly)
     const free = s.occlude ? this.h.freeFraction(s.x, s.z, ix, iz, iy) : 1;
-    const target = Math.max(0.28, free);
+    // standing in (or under) something the player built: the arm may shrink further and the lens stays low
+    const roofs = s.occlude ? buildSpace.surfacesAt(s.x, s.z) : NONE;
+    const inBuild = roofs.length > 0;
+    const target = Math.max(inBuild ? m.camMinFracBuilt : m.camMinFrac, free);
     if (snap) this.occl = target;
     else if (target < this.occl) this.occl += (target - this.occl) * (1 - Math.exp(-m.camOccIn * dt));
     else this.occl += (target - this.occl) * (1 - Math.exp(-m.camOccOut * dt));
     const fr = this.occl;
     const wx = s.x + (ix - s.x) * fr;
     const wz = s.z + (iz - s.z) * fr;
-    // squeezed in (a corridor, a doorway): come in close and rise above it, looking down
-    let wy = iy + (1 - fr) * 4.2;
-    // ...but never up through a built ceiling (the roof or the next storey's floor over a room the walker is standing in)
+    // squeezed in (a corridor, a doorway, a room you built): come in close and rise a little above it, looking down
+    let wy = iy + (1 - fr) * (inBuild ? m.camSqueezeRiseBuilt : m.camSqueezeRise);
+    // ...but never up through a built ceiling (the roof or the next storey's floor over the walker, or over the lens)
     if (s.occlude && fr < 1) {
       let ceil = Infinity;
-      for (const t of buildSpace.surfacesAt(s.x, s.z)) if (t > s.y + 2.1 && t < ceil) ceil = t;
-      if (ceil < Infinity) wy = Math.min(wy, ceil - 0.45);
+      for (const t of roofs) if (t > s.y + 2.1 && t < ceil) ceil = t;
+      for (const t of buildSpace.surfacesAt(wx, wz)) if (t > s.y + 2.1 && t < ceil) ceil = t;
+      if (ceil < Infinity) wy = Math.min(wy, ceil - 0.95); // (a surface top; its underside is a slab's thickness lower, and the near plane is 0.5)
     }
 
     const cam = this.h.camPos;

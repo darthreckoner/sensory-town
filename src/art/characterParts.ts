@@ -17,7 +17,7 @@ import { TOP_V3 } from './wardrobeTops';
 import { BOTTOM_V3 } from './wardrobeBottoms';
 import { SHOE_V3 } from './wardrobeShoes';
 import { ACC_V3 } from './wardrobeAcc';
-import { overShoulder } from './wardrobeKit';
+import { overShoulder, shoulderPad } from './wardrobeKit';
 import {
   B, EYE, TAU, TY, bodyR, capsule, flare, frameQ, facePoint, GB, pieces, shell, sph, spike, torsoSpace, torus, tubeGeo, arr3,
   type Piece, type PB, type V3t,
@@ -173,7 +173,7 @@ function buildTopTorso(pb: PB, st: number, off: number): void {
       shell(main, 0.98, 1.31, off);
       hem(0.98, off, 0.006, main);
       trim.ring(1.31, bodyR(1.31) + off, 0.009);
-      for (const s of [-1, 1]) overShoulder(trim, 0.1 * s, 1.3, 1.3, off, 0.0075); // straps hug the shoulder slope
+      for (const s of [-1, 1]) overShoulder(trim, 0.14 * s, 1.3, 1.3, off, 0.009); // straps hug the shoulder slope
       break;
     }
     case 3: { // Varsity jacket — wool body, cream leather sleeves, ribbed trims
@@ -356,7 +356,10 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
         pb.at('white').ring(-0.115, 0.066, 0.007);
       }
       break;
-    default: // cami and anything else: bare arms
+    case 2: // cami: a little strap pad covers the arm's end cap (it showed as a disc beside the straps)
+      if (upper) shoulderPad(pb, 'main');
+      break;
+    default: // anything else: bare arms
       break;
   }
 }

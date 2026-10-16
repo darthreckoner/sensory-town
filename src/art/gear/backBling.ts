@@ -73,13 +73,14 @@ function butterfly(): THREE.Group {
   const pivots: { g: THREE.Group; side: number }[] = [];
   for (const side of [1, -1]) {
     const b = new GearBuilder();
+    const q = side; // the left wing is rotated π about Y, so its layers stack the other way in local z
     b.shape(up, 0.012, '#6a2cff', 'sheet', { p: [0, 0.02, 0], r: [0, 0, 0.32] }, 0.004);
-    b.shape(up, 0.012, '#ff4fa3', 'sheet', { p: [0.035, 0.022, 0.009], r: [0, 0, 0.32], s: [0.8, 0.8, 1] }, 0.004);
-    b.shape(up, 0.012, '#ffd23f', 'sheet', { p: [0.08, 0.026, 0.018], r: [0, 0, 0.32], s: [0.5, 0.5, 1] }, 0.004);
-    b.shape(lo, 0.012, '#6a2cff', 'sheet', { p: [0, -0.03, -0.004], r: [0, 0, -0.62] }, 0.004);
-    b.shape(lo, 0.012, '#35d6ff', 'sheet', { p: [0.03, -0.03, 0.005], r: [0, 0, -0.62], s: [0.76, 0.76, 1] }, 0.004);
-    b.ball([0.028, 0.028, 0.012], '#ffffff', 'matte', { p: [0.34, 0.2, 0.026] }, true);
-    b.ball([0.022, 0.022, 0.012], '#ffffff', 'matte', { p: [0.22, -0.2, 0.014] }, true);
+    b.shape(up, 0.012, '#ff4fa3', 'sheet', { p: [0.035, 0.022, 0.009 * q], r: [0, 0, 0.32], s: [0.8, 0.8, 1] }, 0.004);
+    b.shape(up, 0.012, '#ffd23f', 'sheet', { p: [0.08, 0.026, 0.018 * q], r: [0, 0, 0.32], s: [0.5, 0.5, 1] }, 0.004);
+    b.shape(lo, 0.012, '#6a2cff', 'sheet', { p: [0, -0.03, -0.004 * q], r: [0, 0, -0.62] }, 0.004);
+    b.shape(lo, 0.012, '#35d6ff', 'sheet', { p: [0.03, -0.03, 0.005 * q], r: [0, 0, -0.62], s: [0.76, 0.76, 1] }, 0.004);
+    b.ball([0.028, 0.028, 0.012], '#ffffff', 'matte', { p: [0.34, 0.2, 0.026 * q] }, true);
+    b.ball([0.022, 0.022, 0.012], '#ffffff', 'matte', { p: [0.22, -0.2, 0.014 * q] }, true);
     const w = b.build();
     const piv = new THREE.Group();
     piv.add(w);
@@ -202,25 +203,25 @@ function angel(): THREE.Group {
   for (const side of [1, -1]) {
     const b = new GearBuilder();
     // two rows of feathers fanned from the shoulder
-    for (let i = 0; i < 7; i++) {
-      const k = i / 6;
-      const ang = 1.15 - k * 1.7; // from up-and-out to down-and-out
-      const len = 0.2 + Math.sin(k * Math.PI) * 0.1 + k * 0.17;
+    for (let i = 0; i < 8; i++) {
+      const k = i / 7;
+      const ang = 1.5 - k * 1.8; // from up-and-out to down-and-out
+      const len = 0.24 + Math.sin(k * Math.PI) * 0.12 + k * 0.2;
       b.ball([0.034, len * 0.5, 0.012], '#ffffff', 'matte', { p: [Math.cos(ang) * len * 0.5, Math.sin(ang) * len * 0.5, 0.0], r: [0, 0, ang - Math.PI / 2] });
       b.ball([0.018, 0.04, 0.012], '#ffe9a8', 'gloss', { p: [Math.cos(ang) * len * 0.96, Math.sin(ang) * len * 0.96, 0.002], r: [0, 0, ang - Math.PI / 2] }, true);
     }
-    for (let i = 0; i < 5; i++) {
-      const k = i / 4;
-      const ang = 1.0 - k * 1.2;
-      const len = 0.17 + Math.sin(k * Math.PI) * 0.05;
+    for (let i = 0; i < 6; i++) {
+      const k = i / 5;
+      const ang = 1.3 - k * 1.4;
+      const len = 0.2 + Math.sin(k * Math.PI) * 0.07;
       b.ball([0.032, len * 0.5, 0.012], '#f1edff', 'matte', { p: [0.03 + Math.cos(ang) * len * 0.5, 0.04 + Math.sin(ang) * len * 0.5, 0.012], r: [0, 0, ang - Math.PI / 2] });
     }
     b.ball(0.035, '#ffffff', 'matte', { p: [0, 0, 0.0] }, true);
     const w = b.build();
     const piv = new THREE.Group();
     piv.add(w);
-    piv.position.set(side * 0.04, 0.0, 0.05);
-    piv.rotation.y = side > 0 ? -0.55 : Math.PI + 0.55;
+    piv.position.set(side * 0.04, 0.02, 0.05);
+    piv.rotation.set(0, side > 0 ? -0.5 : Math.PI + 0.5, 0);
     root.add(piv);
     pivots.push({ g: piv, side });
   }

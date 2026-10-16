@@ -7,6 +7,7 @@
 // gloop) stays realistic. Music is beat-driven: a step sequencer with a track per
 // place (lobby, town synth-pop, studio lo-fi, style runway).
 import { tuning } from '../tuning';
+import { tuneFor, type Hit, type ParsedTune } from './emoteMusic';   // v3 emote
 
 type Opts = { pitch?: number; vol?: number; pan?: number };
 
@@ -699,6 +700,13 @@ class AudioEngine {
     for (const n of [67, 72, 76, 79]) this.synth(o, 'sawtooth', midi(n + 12) * p, t + 0.45, 0.8, 0.26, 5200, 12);
     this.noiseBurst(o, t + 0.45, 0.01, 0.7, 0.3, 'highpass', 7000, 5000, 0.7);
   }
+  /** Zipline: the pulley ratchets onto the cable, then a metallic zing and a rush. */
+  private s_zip(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.7 * v, pan, 0.2);
+    for (let i = 0; i < 9; i++) this.noiseBurst(o, t + i * 0.042 * (1 - i * 0.04), 0.0005, 0.012, 0.5, 'bandpass', (2600 + i * 260) * p, (2600 + i * 260) * p, 6);
+    this.tone(o, 'sine', 640 * p, 1700 * p, t + 0.3, 0.01, 0.28, 0.16);
+    this.noiseBurst(o, t + 0.28, 0.06, 0.55, 0.45, 'bandpass', 500 * p, 3200 * p, 1.1);
+  }
   /** Mantle: a quick "hup!" and a scuff. */
   private s_hup(t: number, p: number, v: number, pan: number) {
     const o = this.out(0.55 * v, pan, 0.1);
@@ -743,6 +751,49 @@ class AudioEngine {
     this.wind = null;
     w.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
     setTimeout(() => w.src.stop(), 700);
+  }
+
+  // the slide: a scrape that follows the speed (a soft hiss on snow, a rougher rumble on the ground)
+  private slideV: { src: AudioBufferSourceNode; bp: BiquadFilterNode; lp: BiquadFilterNode; g: GainNode } | null = null;
+  slideStart(): void {
+    if (!this.ctx || this.slideV) return;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 900;
+    bp.Q.value = 0.8;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 3200;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(bp);
+    bp.connect(lp);
+    lp.connect(g);
+    g.connect(this.sfx);
+    src.start(0, Math.random() * 1.5);
+    g.gain.setTargetAtTime(0.12, ctx.currentTime, 0.05);
+    this.slideV = { src, bp, lp, g };
+  }
+  slideSet(speed01: number, snow: boolean): void {
+    if (!this.ctx) return;
+    if (!this.slideV) this.slideStart();
+    const v = this.slideV;
+    if (!v) return;
+    const t = this.ctx.currentTime;
+    v.bp.frequency.setTargetAtTime((snow ? 1700 : 650) + speed01 * (snow ? 1800 : 900), t, 0.08);
+    v.bp.Q.setTargetAtTime(snow ? 0.55 : 1.1, t, 0.1);
+    v.g.gain.setTargetAtTime((snow ? 0.12 : 0.18) + speed01 * 0.38, t, 0.08);
+  }
+  slideStop(): void {
+    if (!this.ctx || !this.slideV) return;
+    const v = this.slideV;
+    this.slideV = null;
+    v.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.09);
+    setTimeout(() => v.src.stop(), 600);
   }
 
   // ── continuous voices ─────────────────────────────────────────────────────
@@ -877,6 +928,263 @@ class AudioEngine {
       pr.src.stop();
       pr.lfo.stop();
     }, 700);
+  }
+
+  // ── v3 emote (W5): the little tune that plays while she dances ───────────────────────────────
+  // Its own step sequencer (data: emoteMusic.ts), so the town music keeps its place underneath (it ducks, then comes back).
+  // juice.ts maps emoteStarted -> emoteStart(id) and emoteStopped -> emoteStop().
+  private em: { id: string; tune: ParsedTune; step: number; next: number; t0: number; bus: GainNode; level: number; timer: number; ended: boolean } | null = null;
+  private emDucked = false;
+
+  /** The id of the emote tune that is playing (tests / debug), or null. */
+  get emoteTune(): string | null {
+    return this.em ? this.em.id : null;
+  }
+
+  emoteStart(id: string): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    this.emoteStop();
+    const tune = tuneFor(id);
+    const a = tuning.audio, e = tuning.emote3;
+    if (!tune || a.music <= 0) return;
+    const now = ctx.currentTime;
+    const bus = ctx.createGain();
+    const level = a.music * 0.55 * 1.5 * e.musicVol * tune.gain;
+    bus.gain.setValueAtTime(0.0001, now);
+    bus.gain.linearRampToValueAtTime(level, now + 0.06);
+    bus.connect(this.master);
+    const rv = ctx.createGain();
+    rv.gain.value = tune.reverb * 2;
+    bus.connect(rv);
+    rv.connect(this.reverbSend);
+    // the town music drops under her tune
+    this.music.gain.cancelScheduledValues(now);
+    this.music.gain.setTargetAtTime(a.music * 0.55 * e.duck, now, 0.12);
+    this.emDucked = true;
+    const t0 = now + 0.06;
+    this.em = { id, tune, step: 0, next: t0, t0, bus, level, timer: window.setInterval(() => this.emoteSchedule(), 25), ended: false };
+    this.emoteSchedule();
+  }
+
+  /** Fade the tune out (about a quarter of a second) and let the town music back up. */
+  emoteStop(): void {
+    const ctx = this.ctx, m = this.em;
+    this.em = null;
+    if (m) {
+      if (m.timer) clearInterval(m.timer);
+      if (ctx) {
+        const now = ctx.currentTime;
+        m.bus.gain.cancelScheduledValues(now);
+        m.bus.gain.setValueAtTime(m.level, now);
+        m.bus.gain.linearRampToValueAtTime(0, now + 0.28);
+        window.setTimeout(() => m.bus.disconnect(), 800);
+      }
+    }
+    if (ctx && this.emDucked) {
+      this.emDucked = false;
+      const now = ctx.currentTime;
+      this.music.gain.cancelScheduledValues(now);
+      this.music.gain.setTargetAtTime(tuning.audio.music * 0.55, now, 0.3);
+    }
+  }
+
+  private emoteSchedule(): void {
+    const ctx = this.ctx, m = this.em;
+    if (!ctx || !m) return;
+    const T = m.tune;
+    const sd = 60 / T.bpm / 4;
+    while (!m.ended && m.next < ctx.currentTime + 0.12) {
+      if (!T.loop && m.step >= T.total) {
+        // a one-shot sting played through: let its tail ring, then give the town music back (even if nobody says stop)
+        m.ended = true;
+        window.setTimeout(() => {
+          if (this.em === m) this.emoteStop();
+        }, 1800);
+        break;
+      }
+      if (m.next - m.t0 > tuning.emote3.maxLoopSeconds) {
+        this.emoteStop();
+        return;
+      }
+      const t = m.next + (m.step % 2 === 1 ? sd * T.swing : 0);
+      for (const h of T.hits[m.step % T.total]) this.emoteHit(h, t, sd, m.bus);
+      m.next += sd;
+      m.step++;
+    }
+    if (m.ended && m.timer) {
+      clearInterval(m.timer);
+      m.timer = 0;
+    }
+  }
+
+  /** A sustained note: attack, hold, release (the pad and the chip leads); an optional lowpass. */
+  private evoice(dest: AudioNode, type: OscillatorType, f: number, t: number, dur: number, peak: number, atk = 0.005, rel = 0.05, cutoff = 0, detune = 0): void {
+    const ctx = this.ctx!;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = f;
+    o.detune.value = detune;
+    const g = ctx.createGain();
+    const a = Math.min(atk, dur * 0.9);
+    const pk = Math.max(0.0002, peak);
+    g.gain.setValueAtTime(0.0001, t);
+    if (a > 0.1) g.gain.linearRampToValueAtTime(pk, t + a);
+    else g.gain.exponentialRampToValueAtTime(pk, t + a);
+    g.gain.setValueAtTime(pk, t + dur);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + rel);
+    if (cutoff > 0) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = cutoff;
+      lp.Q.value = 0.7;
+      o.connect(lp);
+      lp.connect(g);
+    } else o.connect(g);
+    g.connect(dest);
+    o.start(t);
+    o.stop(t + dur + rel + 0.05);
+  }
+
+  private emoteHit(h: Hit, t: number, sd: number, dest: GainNode): void {
+    const ctx = this.ctx!;
+    const v = h.vol, ac = h.accent ? 1.35 : 1;
+    const o = (vol: number): GainNode => {
+      const g = ctx.createGain();
+      g.gain.value = vol;
+      g.connect(dest);
+      return g;
+    };
+    const dur = Math.max(0.03, h.len * sd * 0.92);
+    const n = h.notes;
+    const f = n.length ? midi(n[0]) : 0;
+    switch (h.inst) {
+      // ── drums ──
+      case 'kick': this.kick(o(0.55 * v * ac), t, 0.9); break;
+      case 'softkick': this.tone(o(0.5 * v), 'sine', 120, 48, t, 0.004, 0.3, 0.8); break;
+      case 'snare': {
+        const g = o(0.35 * v * ac);
+        this.noiseBurst(g, t, 0.001, 0.12, 0.7, 'bandpass', 2200, 1500, 0.8);
+        this.tone(g, 'triangle', 220, 160, t, 0.001, 0.08, 0.35);
+        break;
+      }
+      case 'clap': {
+        const g = o(0.3 * v * ac);
+        for (const d of [0, 0.012, 0.024]) this.noiseBurst(g, t + d, 0.001, 0.05, 0.6, 'bandpass', 1600, 1300, 1.5);
+        break;
+      }
+      case 'hat': this.noiseBurst(o(0.12 * v * ac), t, 0.0005, 0.03, 0.7, 'highpass', 8000, 8000, 0.7); break;
+      case 'ohat': this.noiseBurst(o(0.1 * v * ac), t, 0.002, 0.16, 0.6, 'highpass', 7000, 6000, 0.7); break;
+      case 'rim': {
+        const g = o(0.25 * v * ac);
+        this.tone(g, 'square', 1800, 1500, t, 0.001, 0.03, 0.35);
+        this.noiseBurst(g, t, 0.0008, 0.02, 0.3, 'bandpass', 3000, 3000, 1);
+        break;
+      }
+      case 'shaker': this.noiseBurst(o(0.16 * v * ac), t, 0.012, 0.05, 0.5, 'bandpass', 6500, 6500, 1.2); break;
+      case 'wood': {
+        const g = o(0.3 * v * ac);
+        this.tone(g, 'triangle', 980, 820, t, 0.001, 0.05, 0.8);
+        this.tone(g, 'sine', 1960, 1800, t, 0.001, 0.025, 0.25);
+        break;
+      }
+      case 'cow': {
+        const g = o(0.18 * v * ac);
+        this.tone(g, 'square', 587, 587, t, 0.002, 0.14, 0.5);
+        this.tone(g, 'square', 845, 845, t, 0.002, 0.14, 0.5);
+        break;
+      }
+      case 'boing': {
+        const g = o(0.3 * v);
+        this.tone(g, 'sine', 260, 900, t, 0.01, 0.36, 0.8);
+        this.tone(g, 'triangle', 520, 1800, t, 0.01, 0.3, 0.25);
+        break;
+      }
+      case 'crash': this.noiseBurst(o(0.2 * v), t, 0.002, 0.7, 0.6, 'highpass', 6000, 3500, 0.5); break;
+      // ── basses ──
+      case 'slap': {
+        const g = o(0.38 * v);
+        this.tone(g, 'triangle', f, f, t, 0.004, dur * 1.1, 0.85);
+        this.synth(g, 'sawtooth', f, t, dur, 0.3, 900, 4);
+        this.tone(g, 'square', f * 2, f * 2, t, 0.001, 0.04, 0.22);
+        break;
+      }
+      case 'tribass': this.tone(o(0.42 * v), 'triangle', f, f, t, 0.006, dur, 0.9); break;
+      case 'sub': for (const nn of n) this.evoice(o((0.4 * v) / Math.sqrt(n.length)), 'sine', midi(nn), t, dur, 0.9, 0.06, 0.4); break;
+      // ── leads ──
+      case 'chip': {
+        const g = o(0.075 * v);
+        this.evoice(g, 'square', f, t, dur, 0.5, 0.002, 0.03);
+        this.evoice(g, 'square', f * 2, t, dur, 0.16, 0.002, 0.03);
+        break;
+      }
+      case 'chip2': {
+        const g = o(0.07 * v);
+        this.evoice(g, 'square', f, t, dur, 0.5, 0.002, 0.05);
+        this.evoice(g, 'triangle', f / 2, t, dur, 0.35, 0.002, 0.05);
+        break;
+      }
+      case 'flute': {
+        const g = o(0.14 * v);
+        this.evoice(g, 'sine', f, t, dur, 0.7, 0.04, 0.14);
+        this.evoice(g, 'triangle', f * 2, t, dur, 0.06, 0.05, 0.14);
+        break;
+      }
+      case 'brass': {
+        const g = o((0.085 * v) / Math.sqrt(n.length));
+        for (const nn of n) this.synth(g, 'sawtooth', midi(nn), t, dur, 0.5, 3000, 9);
+        break;
+      }
+      case 'stab': {
+        const g = o(0.1 * v);
+        for (const nn of n) this.synth(g, 'sawtooth', midi(nn), t, dur, 0.45, 2600, 10);
+        break;
+      }
+      case 'pad': {
+        const g = o(0.07 * v);
+        for (const nn of n) {
+          this.evoice(g, 'sawtooth', midi(nn), t, dur, 0.25, 0.9, 1.3, 1100, -8);
+          this.evoice(g, 'sawtooth', midi(nn), t, dur, 0.25, 0.9, 1.3, 1100, 8);
+        }
+        break;
+      }
+      // ── plucked and struck ──
+      case 'pluck': {
+        const g = o(0.2 * v);
+        for (const nn of n) {
+          const ff = midi(nn);
+          this.tone(g, 'triangle', ff, ff, t, 0.002, 0.34, 0.9);
+          this.tone(g, 'square', ff * 2, ff * 2, t, 0.001, 0.05, 0.12);
+        }
+        break;
+      }
+      case 'pizz': {
+        const g = o(0.26 * v);
+        this.tone(g, 'triangle', f, f * 0.985, t, 0.002, 0.09, 0.9);
+        this.tone(g, 'sine', f * 2, f * 2, t, 0.001, 0.05, 0.25);
+        break;
+      }
+      case 'bell': {
+        const g = o(0.12 * v);
+        this.tone(g, 'sine', f, f, t, 0.002, 1.4, 0.8);
+        this.tone(g, 'sine', f * 2.76, f * 2.76, t, 0.002, 0.5, 0.3);
+        this.tone(g, 'sine', f * 5.4, f * 5.4, t, 0.002, 0.2, 0.1);
+        break;
+      }
+      case 'marimba': {
+        const g = o(0.2 * v);
+        this.tone(g, 'sine', f, f, t, 0.002, 0.38, 0.9);
+        this.tone(g, 'sine', f * 4, f * 4, t, 0.001, 0.06, 0.35);
+        break;
+      }
+      case 'musicbox': {
+        const g = o(0.16 * v);
+        this.tone(g, 'sine', f, f, t, 0.002, 0.9, 0.8);
+        this.tone(g, 'sine', f * 3, f * 3, t, 0.001, 0.35, 0.25);
+        this.tone(g, 'triangle', f * 2, f * 2, t, 0.001, 0.5, 0.15);
+        break;
+      }
+    }
   }
 
   // ── music: step-sequenced beats, one track per place ──────────────────────
@@ -1064,6 +1372,6 @@ export type SoundName =
   // v3 locker
   | 'equip' | 'reveal'
   // v3 movement
-  | 'boing' | 'honk' | 'deploy' | 'thud' | 'sting' | 'fanfare' | 'hup';
+  | 'boing' | 'honk' | 'deploy' | 'thud' | 'sting' | 'fanfare' | 'hup' | 'zip';
 
 export const audio = new AudioEngine();

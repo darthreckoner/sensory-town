@@ -79,10 +79,12 @@ export function initWorldCheck(): void {
       const bad: Spot[] = [];
       let tested = 0;
       let waterTested = 0;
-      const [ax0, az0, ax1, az1] = area ?? [-B + 4, -B + 4, B - 4, B - 4];
+      // v3 world: the whole island (WORLD_AREA), skipping the open sea
+      const [ax0, az0, ax1, az1] = area ?? (L as any).WORLD_AREA ?? [-B + 4, -B + 4, B - 4, B - 4];
       const HF = await import('../world/heightfield');
       for (let x = ax0; x <= ax1; x += step)
         for (let z = az0; z <= az1; z += step) {
+          if (HF.shoreDist(x, z) < -26) continue;
           const water = HF.isWater(x, z);
           d.foot.reset(x, z, d.foot.heading ?? 0); // a real teleport (y snapped), not a fall from the last sample
           scenes.step(2);
@@ -150,10 +152,12 @@ export function initWorldCheck(): void {
       const B = (L as any).BOUNDS as number;
       const bad: Spot[] = [];
       let tested = 0;
-      const [ax0, az0, ax1, az1] = area ?? [-B + 4, -B + 4, B - 4, B - 4];
+      const [ax0, az0, ax1, az1] = area ?? (L as any).WORLD_AREA ?? [-B + 4, -B + 4, B - 4, B - 4];
+      const HFc = await import('../world/heightfield');
       for (let x = ax0; x <= ax1; x += step)
         for (let z = az0; z <= az1; z += step)
           for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+            if (HFc.shoreDist(x, z) < -4) continue; // the camera sweep stays on land (and the first metres of sea)
             if (mode === 'foot') {
               d.foot.reset(x, z, heading);
               d.camYaw = heading; // the foot camera orbits on its own yaw
