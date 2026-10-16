@@ -281,3 +281,15 @@ Rubric: locked in docs/V3_PLAN.md before any v3 code. Grades are integers, hones
   - The `hudLayout` fix already in the tree covers the in-world column.
   - A full phone pass on the HUD, menus, Locker, lobby and Studio is underway, plus a "turn sideways" card for the island in phone portrait.
   - **Stability / playability stays at 7 until it's re-verified at phone sizes.**
+
+### v3.1 → v3.2 (2026-10-16, ~14:20 CDT)
+- **v3.1:**
+  - phone pass (HUD, build bar, Locker, menu, lobby and Studio at iPhone and iPad sizes, plus a rotate card in phone portrait) and the iOS silent-switch audio fix;
+  - 6 DOM layout selftests;
+  - foliage camera fade, prop colliders, camera boxes for parked rides.
+- **v3.2:** the designer's #1 non-bug complaint ("vehicle and character models … very blocky and chibi") is addressed.
+  - **Characters:** remodelled to about 7.3 heads (from 5.9), with one-skin anatomical limbs, a defined face profile and real hands.
+  - **Wardrobe and hair:** de-blocked and refit; sculpted shoes; strand hair with rounded backs.
+  - **Rides:** re-built as lofted superellipse bodies with glass cabins, clearcoat paint, and lathe tyres with spoked rims.
+  - **Verified:** production build 19/19 selftests at 1920×920; the 6 layout tests pass at 852×393; 0 console errors.
+  - **Grades:** Audience fit holds at 8 (models are closer to the Fortnite look, but still procedural). The real-asset upgrade on the web build is next (the designer's choice).
