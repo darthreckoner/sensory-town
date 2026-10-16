@@ -5,8 +5,9 @@
 // stick. Jump = a slide-hop that keeps the speed until you land. The foot physics keeps doing all the collision work:
 // while sliding it only runs with `coast` on (its velocity is not pulled toward the stick) and this sets the velocity.
 //
-// The pose: if the character has `setSlide(on)` it is used; until then the whole walker leans back, hips low,
-// arms out (the existing airborne pose) which already reads as a cool knee-slide.
+// The pose: the character's own `setSlide(on)` (it leans the torso ~35 deg and drops the hips itself), so the walker's group is
+// kept upright: yaw plus a gentle slope alignment only. Only if that method is ever missing does the whole walker lean back with
+// hips low and arms out (the old airborne-pose fallback).
 import * as THREE from 'three';
 import { bus } from '../core/events';
 import { tuning } from '../tuning';
@@ -33,6 +34,9 @@ export class Slide {
   private tilt = 0;
   private roll = 0;
   private turn = 0;
+  /** rise per metre under the knees (negative = downhill), smoothed into the group's pitch */
+  private slope = 0;
+  private align = 0;
   private cool = 0;
   /** a slide-hop: keep coasting until the feet are down */
   private hopping = false;
@@ -84,6 +88,7 @@ export class Slide {
     const hAhead = surfaceY(f.x + dx * 0.9, f.z + dz * 0.9, f.y + 1);
     const hBack = surfaceY(f.x - dx * 0.9, f.z - dz * 0.9, f.y + 1);
     const slope = clamp((hAhead - hBack) / 1.8, -1.2, 1.2); // rise per metre (negative = downhill)
+    this.slope = slope;
     const acc = -slope * m.slideGravity - m.slideFriction;
     this.speed = clamp(this.speed + acc * dt, 0, m.slideMax);
     if (this.speed < m.slideEndSpeed) {
@@ -128,26 +133,32 @@ export class Slide {
     bus.emit('slideStop', {});
   }
 
-  /** Pose the walker while sliding (lean back, hips low). Returns true while it has the walker's transform. */
+  /** Pose the walker while sliding. Returns true while this has overridden the walker's transform. */
   applyPose(w: Character, f: FootPhysics, dt: number): boolean {
-    const slideApi = w as unknown as { setSlide?: (on: boolean) => void };
+    const api = w as unknown as { setSlide?: (on: boolean) => void };
     if (!this.active) {
       if (this.posed) {
         this.posed = false;
-        slideApi.setSlide?.(false);
+        api.setSlide?.(false);
         this.restore(w);
       }
       return false;
     }
     this.posed = true;
     const m = tuning.movement3;
-    if (slideApi.setSlide) {
-      // the character agent's own slide pose (it lowers and leans itself)
-      slideApi.setSlide(true);
-      w.setMove(0.2, true);
-      return false;
-    }
     const g = w.group;
+    if (typeof api.setSlide === 'function') {
+      // the character leans and lowers herself: the group stays upright, yawed to travel and tipped only to follow the slope
+      api.setSlide(true);
+      w.setMove(0.2, true);
+      this.align += (clamp(-Math.atan(this.slope), -0.6, 0.6) - this.align) * (1 - Math.exp(-10 * dt));
+      this.roll += (clamp(-this.turn * 0.12, -0.25, 0.25) - this.roll) * (1 - Math.exp(-8 * dt));
+      this.eul.set(this.align, Math.PI - f.heading, this.roll, 'YXZ');
+      g.rotation.copy(this.eul);
+      g.position.set(f.x, f.y, f.z);
+      return true;
+    }
+    // fallback (no setSlide): lean the whole walker back, hips low
     this.tilt += (-m.slideLean - this.tilt) * (1 - Math.exp(-10 * dt));
     this.roll += (clamp(-this.turn * 0.22, -0.45, 0.45) - this.roll) * (1 - Math.exp(-8 * dt));
     this.eul.set(this.tilt, Math.PI - f.heading, this.roll, 'YXZ');
@@ -165,6 +176,7 @@ export class Slide {
     g.rotation.set(0, g.rotation.y, 0);
     this.tilt = 0;
     this.roll = 0;
+    this.align = 0;
   }
 
   /** Let go of a zipline / a slide-hop: keep coasting (no pull toward the stick) until the feet are down. */
@@ -173,12 +185,17 @@ export class Slide {
     f.coast = true;
   }
 
-  /** Abort (scene exit, a flight begins, F1). */
-  cancel(f?: FootPhysics): void {
+  /** Abort (scene exit, a flight / zipline begins, F1). Pass the walker to drop the slide pose at once. */
+  cancel(f?: FootPhysics, w?: Character): void {
     if (this.active) bus.emit('slideStop', {});
     this.active = false;
     this.hopping = false;
     this.cool = 0;
     if (f) f.coast = false;
+    if (w && this.posed) {
+      this.posed = false;
+      (w as unknown as { setSlide?: (on: boolean) => void }).setSlide?.(false);
+      this.restore(w);
+    }
   }
 }

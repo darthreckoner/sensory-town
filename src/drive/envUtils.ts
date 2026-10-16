@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toyMatUnique, type Finish } from '../art/materials';
 import { foldMaterial, materialSignature } from './mesher';
+import type { Collider } from '../world/townEnv';
 
 const TAU = Math.PI * 2;
 
@@ -429,5 +430,15 @@ export function mergeStaticGroups(name: string, ...groups: THREE.Object3D[]): TH
     for (const g of geos) g.dispose();
   }
   for (const m of keep) out.add(m);
+  return out;
+}
+
+/**
+ * v3 world: the chase camera only steers around BOX colliders. A prop with a round collider (a snowman, a mushroom stem,
+ * a pole, a castle tower) therefore gets a matching box for the camera and the car (`only: 'car'`: walkers keep the circle).
+ */
+export function cameraBoxes(list: Collider[]): Collider[] {
+  const out: Collider[] = [];
+  for (const c of list) if (c.kind === 'circle' && !c.only && c.y0 === undefined && c.r >= 0.25) out.push({ kind: 'box', x: c.x, z: c.z, hw: c.r, hd: c.r, h: c.h, only: 'car' });
   return out;
 }

@@ -6,7 +6,7 @@
 import {
   GROVE, JOB_SPOTS, MEADOW, PAVED, PLOTS, CHARMS, LOOKOUT, SANDS, SPAWN, SUMMIT, WORKSHOP, BUILD_YARD, nearestRoad, seeded,
 } from '../world/townLayout';
-import { cliffiness, groundHeight, shoreDist, terrainHeight } from '../world/heightfield';
+import { cliffiness, groundHeight, shoreDist, terrainHeight, vnoise } from '../world/heightfield';
 import type { Collider } from '../world/townEnv';
 import { Vegetation, type PlantKind } from './vegetation';
 import { PAL } from './palette';
@@ -28,7 +28,8 @@ const GLOW_TREES = ['#3fc4a0', '#7a5fd0', '#33b0c8', '#9b6fe0'];
 const MEADOW_TREES = ['#9fe05c', '#7fd36a', '#b6e86a'];
 const DRY_BUSH = ['#b9a65a', '#c9b86a', '#a99650'];
 const RED_ROCK = ['#c9703f', '#b5603a', '#d58a52'];
-const FLOWER_COLS = ['#ff7ab8', '#ffd84a', '#ffffff', '#b78cff', '#ff9a52', '#6fd0ff'];
+// v3: a garden palette (mostly warm and pale; only a little blue)
+const FLOWER_COLS = ['#ff5fa8', '#ff8cc4', '#ffd21f', '#ffffff', '#b98cff', '#ff7a45', '#ffe14a', '#d9b8ff', '#6fb8ff'];
 
 export function buildScenery(inp: SceneryIn): { veg: Vegetation; build: ReturnType<Vegetation['build']> } {
   const d = tuning.drive;
@@ -208,7 +209,7 @@ export function buildScenery(inp: SceneryIn): { veg: Vegetation; build: ReturnTy
   }
 
   // ── bushes and flower beds on the lawns, big flower fields in the meadow ──
-  const accents = [PAL.pink, PAL.gold, '#ffffff', PAL.violet, PAL.cyan, PAL.orange];
+  const accents = ['#ff5fa8', '#ffffff', '#ffd21f', '#b98cff', '#ff7a45', '#ff8cc4'];
   for (let i = 0; i < 5200; i++) {
     const x = X0 + rng() * (X1 - X0), z = Z0 + rng() * (Z1 - Z0);
     const dMead = dist(x, z, MEADOW);
@@ -221,19 +222,35 @@ export function buildScenery(inp: SceneryIn): { veg: Vegetation; build: ReturnTy
     if (shoreDist(x, z) < 16) continue;
     if (noGo(x, z, 0.6) || taken(x, z, meadow ? 0.5 : 0.8)) continue;
     if (meadow) {
-      // dense, bright, bigger tufts: the flower fields (colour comes in patches, so a field reads as one colour)
-      const patch = Math.floor(((x * 0.045 + z * 0.03) % 1 + 1) * 6) % FLOWER_COLS.length;
-      if (rng() < 0.82) veg.add('flowers', x, h, z, 1.1 + rng() * 0.9, rng() * 6.28, FLOWER_COLS[(patch + (rng() < 0.2 ? 1 : 0)) % FLOWER_COLS.length], false);
-      else veg.add('bush', x, h, z, 0.6 + rng() * 0.5, rng() * 6.28, MEADOW_TREES[(rng() * 3) | 0], false);
-      claim(x, z, 0.5);
+      // (the meadow's flower fields get their own dense pass below)
+      if (rng() < 0.3) {
+        veg.add('bush', x, h, z, 0.6 + rng() * 0.5, rng() * 6.28, MEADOW_TREES[(rng() * 3) | 0], false);
+        claim(x, z, 0.5);
+      }
       continue;
     }
     if (rng() < 0.55) {
-      veg.add('flowers', x, h, z, 0.8 + rng() * 0.7, rng() * 6.28, accents[(rng() * accents.length) | 0], false);
+      veg.add('flowers', x, h, z, 0.9 + rng() * 0.3, rng() * 6.28, accents[(rng() * accents.length) | 0], false);
       claim(x, z, 0.6);
     } else {
       veg.add('bush', x, h, z, 0.6 + rng() * 0.6, rng() * 6.28, undefined, false);
       claim(x, z, 0.8);
+    }
+  }
+  // ── Bloom Meadow's flower fields: many small tufts, coloured in soft patches (a patch or two per hill), a few strays ──
+  {
+    let placed = 0;
+    for (let i = 0; i < 6000 && placed < 1500; i++) {
+      const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * (MEADOW.r + 2);
+      const x = MEADOW.x + Math.cos(a) * r, z = MEADOW.z + Math.sin(a) * r;
+      const h = terrainHeight(x, z);
+      if (h < WATER_MARGIN + 0.5 || shoreDist(x, z) < 14 || slopeAt(x, z) > 0.4) continue;
+      if (noGo(x, z, 0.5) || taken(x, z, 0.45)) continue;
+      const patch = Math.floor(vnoise(x / 15, z / 15, 63) * FLOWER_COLS.length);
+      const col = rng() < 0.3 ? FLOWER_COLS[(rng() * FLOWER_COLS.length) | 0] : FLOWER_COLS[patch % FLOWER_COLS.length];
+      veg.add('flowers', x, h, z, 0.85 + rng() * 0.3, rng() * 6.28, col, false);
+      claim(x, z, 0.45);
+      placed++;
     }
   }
   // ── red rocks scattered over the dunes, a few boulders along the cliffs ──

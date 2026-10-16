@@ -1,7 +1,27 @@
 # STATE
 
 ## Build version
-v2.1 — tween-cool rebuild after designer feedback, round-2 fixes verified by repro suite; deployed: https://darthreckoner.github.io/sensory-town/ (grades in SCORECARD.md — every row ≥ 7).
+v3 — "Fortnite for a 10-year-old girl, no combat" (DESIGN.md v3, docs/V3_PLAN.md). Graded in SCORECARD.md (v3 section): every row ≥ 7. Deployed: https://darthreckoner.github.io/sensory-town/
+
+## v3 (what's in)
+- **Lobby:** each player on a glowing pad, emoting, then a gold PLAY that leads to the **party-bus drop** (skydive, then glider).
+- **Island:** sea on every side and 10 POIs with title cards:
+  - Sparkle Square, Cozy Hills, Sandcastle Bay, Giggle Gardens, Rascal Ramps, Wonder Lookout
+  - plus the new Sprinkle Summit, Bloom Meadow, Glow Grove and Sunny Sands.
+  - 64 charms; no invisible walls.
+- **Movement:** over-shoulder drag-look camera, sprint, mantle, knee-slide, swim, glider, launch pads, 4 ziplines.
+- **Rides:** sports car, pickup, golf cart, hoverboard, ice-cream truck, boat. Parked all over the island; 🚗 calls your favourite.
+- **Building anywhere** (🔨 / B):
+  - wall / floor / ramp / roof × wood / brick / metal;
+  - drag-build, 3×3 edit (windows / doors / arches), decor inside builds, 3 starter builds;
+  - walkable and drivable.
+- **Locker:**
+  - 26 skins × 3 styles + 9 suits, 168 outfit parts, face options;
+  - back blings, gliders, contrails, emote wheel, ride wraps;
+  - rarity cards and a reveal card; about 90 charm rewards.
+- **Emote wheel** (😀 / Q): 11 original emotes, each with an original music loop.
+- **Studio** (squishy / slime / wax): unchanged; reached from the Studio building or the ☰ menu.
+- **QA tools:** `window.__selftest` (13 repros) and `window.__worldcheck` (feet / camera / houses / builds sweeps), in dev or with `?selftest`.
 
 ## What the player should feel (this build)
 1. "This town is ours, and my stuff in it is mine" — my look, my car, my houses, my squishies.

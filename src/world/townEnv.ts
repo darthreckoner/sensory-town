@@ -20,6 +20,7 @@ import { buildSummit } from '../drive/summit';
 import { buildMeadow } from '../drive/meadow';
 import { buildGrove } from '../drive/grove';
 import { buildSands } from '../drive/sands';
+import { cameraBoxes } from '../drive/envUtils';
 import type { DoorDef, Piece } from '../drive/types';
 
 export type Collider =
@@ -72,6 +73,7 @@ export function buildTownEnvironment(): TownEnv {
   const md = buildMeadow();
   const gv = buildGrove();
   const sd = buildSands();
+  for (const p of [sm, md, gv, sd]) p.colliders.push(...cameraBoxes(p.colliders)); // the camera steers round boxes: give round props one too
   add(sm);
   add(md);
   add(gv);

@@ -9,7 +9,7 @@ import type { Piece } from './types';
 import { Mesher } from './mesher';
 import { mat } from './kit';
 import { PAL } from './palette';
-import { bakeStatic, mergeStaticGroups } from './envUtils';
+import { bakeStatic, cameraBoxes, mergeStaticGroups } from './envUtils';
 import { bench, bin, lamp } from './props';
 
 export interface BeachOut extends Piece {
@@ -201,7 +201,11 @@ export function buildBeach(): BeachOut {
     colliders.push({ kind: 'box', x, z, hw: 2.3, hd: 1.4, h: 3 });
   }
 
-  sandcastle(m, colliders, SANDCASTLE.x, SANDCASTLE.z, SANDCASTLE.yaw);
+  {
+    const before = colliders.length;
+    sandcastle(m, colliders, SANDCASTLE.x, SANDCASTLE.z, SANDCASTLE.yaw);
+    colliders.push(...cameraBoxes(colliders.slice(before))); // its round towers get boxes for the camera
+  }
 
   // ── the pier ──
   const pier = PIERS.find((p) => p.id === 'main')!;

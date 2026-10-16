@@ -80,7 +80,7 @@ export function buildSummit(): SummitOut {
     // a string of warm lights across the porch beam
     for (let i = 0; i < 14; i++) m.box(mat.neon(['#ff7ab8', '#ffd84a', '#7fe0ff', '#9bff7a'][i % 4]), -12.2 + i * 1.88, gy + 3.2 + Math.sin(i * 0.9) * 0.08, hd + 4.4, 0.34, 0.34, 0.34);
     m.pop();
-    colliders.push({ kind: 'box', x: L.x, z: L.z, hw: hw + 0.4, hd: hd + 0.4, h: gy + 13 });
+    colliders.push({ kind: 'box', x: L.x, z: L.z, hw: hw + 2.5, hd: hd + 2.5, h: gy + 13 });   // (covers the eave overhang too: the camera must not slide under the roof edge)
     // the lodge sign, a big lit face on the front gable
     // it lies on the front roof slope (tilted to match), lifted a little off the snow
     const sign = poiSign('SPRINKLE LODGE', PAL.pink, 'HOT COCOA · SLEDS · SNOWMEN', 2.6, false);

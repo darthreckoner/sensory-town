@@ -35,16 +35,18 @@ All of my grades come from a desktop browser with scripted touch. Only two thing
 | 10–15 | | | |
 
 **Watch for:**
-- **Home building:** do they find "Build your home" (the pink pill / FOR SALE signs) without help? How long did it take?
-- **Wax:** do they crack wax more than 3 times without being asked? Do they try Squishy and Slime?
-- **Car:** do they get out of the car and walk? Do they go through a door?
-- **Charms:** do they notice the 💎 counter or chase charms?
-- **Words that matter:** "babyish", "boring", "this is cool", "can I keep playing".
+- **The drop:** do they jump from the party bus and steer the glider without help?
+- **Building:** do they find 🔨 and build something (walls, a ramp) unaided? How long did it take? Do they put furniture inside?
+- **Locker:** do they change skin, back bling or glider? Do they notice the 💎 charm counter and chase charms for unlocks?
+- **Emotes:** do they use the 😀 wheel? Do they laugh at a dance?
+- **Rides:** which ride do they pick? Do they use 🚗 to call it?
+- **Studio:** do they visit the Studio and crack wax more than 3 times without being asked?
+- **Words that matter:** "creepy", "babyish", "boring", "this is like Fortnite", "can I keep playing".
 - **Music:** do they turn it off?
 
 ## Pass / fail
 
-- **PASS:** they find and start a home unaided; crack wax 3+ times on their own; nobody says "babyish"; at 15 minutes they want to keep going.
+- **PASS:** they build something unaided, change their look in the Locker, and nobody says "creepy" or "babyish"; at 15 minutes they want to keep going.
 - **FAIL:** any one of those misses. Send me your notes — the stuck moments go straight into the next round.
 
 ## Two-iPad town swap (optional, 3 min)

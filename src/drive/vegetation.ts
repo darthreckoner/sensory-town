@@ -148,14 +148,59 @@ function geometries() {
   const bush = stripped(jitter(new THREE.IcosahedronGeometry(1, 0), 0.34, 90).translate(0, 0.35, 0)); // v3: 20 triangles a bush (there are thousands)
   const rock = stripped(jitter(new THREE.IcosahedronGeometry(1, 0), 0.5, 120).translate(0, 0.2, 0));
 
-  // little flower tuft: a few small coloured blobs on short stems
-  const fl: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = i * 1.047, d = 0.35 + (i % 2) * 0.25;
-    const b = new THREE.OctahedronGeometry(0.15, 0).translate(Math.cos(a) * d, 0.42 + (i % 3) * 0.08, Math.sin(a) * d); // v3: 8 triangles a blossom (a flower field is hundreds of these)
-    fl.push(stripped(b));
-  }
-  const flowers = mergeGeometries(fl, false);
+  // little flower tuft (v3): three flowers, each a thin crossed-quad stem, a five-petal star blossom 0.18-0.22 m across
+  // (the petals take the instance's colour, aTint = 1) and a yellow centre. 14 triangles a flower, 42 a tuft.
+  const flowers = (() => {
+    const P: number[] = [], N: number[] = [], C: number[] = [], A: number[] = [];
+    const tri = (a: number[], b: number[], c: number[], n: number[], col: THREE.Color, tint: number): void => {
+      for (const v of [a, b, c]) {
+        P.push(v[0], v[1], v[2]);
+        N.push(n[0], n[1], n[2]);
+        C.push(col.r, col.g, col.b);
+        A.push(tint);
+      }
+    };
+    const white = new THREE.Color('#ffffff'), green = new THREE.Color('#3fae52'), gold = new THREE.Color('#ffd23a');
+    const fr = seeded(4242);
+    const spots: [number, number][] = [[0, 0], [0.27, 0.1], [-0.2, 0.2]];
+    for (const [fx, fz] of spots) {
+      const h = 0.2 + fr() * 0.12;                      // stems 20-32 cm: ankle to shin
+      const R = 0.09 + fr() * 0.02;                     // petals reach 9-11 cm from the centre
+      const lean = (fr() - 0.5) * 0.08, leanZ = (fr() - 0.5) * 0.08;
+      const tilt = 0.12 + fr() * 0.3, phi = fr() * 6.28;
+      const tx = fx + lean, tz = fz + leanZ;           // top of the stem
+      const w = 0.012;
+      // stem: two crossed vertical quads (the material is double sided)
+      tri([fx - w, 0, fz], [fx + w, 0, fz], [tx + w, h, tz], [0, 0, 1], green, 0);
+      tri([fx - w, 0, fz], [tx + w, h, tz], [tx - w, h, tz], [0, 0, 1], green, 0);
+      tri([fx, 0, fz - w], [fx, 0, fz + w], [tx, h, tz + w], [1, 0, 0], green, 0);
+      tri([fx, 0, fz - w], [tx, h, tz + w], [tx, h, tz - w], [1, 0, 0], green, 0);
+      // blossom: a flat star tipped a little off the vertical, then moved to the top of the stem
+      const ct = Math.cos(tilt), st = Math.sin(tilt), cp = Math.cos(phi), sp = Math.sin(phi);
+      const place = (x: number, y: number, z: number): number[] => {
+        const y1 = y * ct - z * st, z1 = y * st + z * ct;
+        return [tx + x * cp + z1 * sp, h + y1, tz - x * sp + z1 * cp];
+      };
+      const up = place(0, 1, 0).map((v, i) => v - [tx, h, tz][i]);
+      const centre = place(0, 0.012, 0);
+      const base: number[][] = [];
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + 0.314;       // base corners sit between the petal tips
+        base.push(place(0.4 * R * Math.cos(a), 0, 0.4 * R * Math.sin(a)));
+      }
+      for (let i = 0; i < 5; i++) {
+        const tip = place(R * Math.cos((i / 5) * Math.PI * 2 + 0.314 + 0.628), 0, R * Math.sin((i / 5) * Math.PI * 2 + 0.314 + 0.628));
+        tri(base[(i + 1) % 5], tip, base[i], up, white, 1);                       // a petal (wound so its front face looks up)
+        tri(centre, base[(i + 1) % 5], base[i], up, gold, 0);                      // the yellow middle
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+    g.setAttribute('aTint', new THREE.Float32BufferAttribute(A, 1));
+    return g;
+  })();
 
   void birch;
   G = { trunk: stripped(trunk), oak: oakTree, birch, pine: pineTree, palm, bush, rock, flowers };
@@ -186,6 +231,20 @@ function windy<T extends THREE.Material>(mt: T, amount: number): T {
   mt.onBeforeCompile = (sh) => applyWind(sh, amount);
   return mt;
 }
+/** Flowers: swaying; only the petals (aTint = 1) take the instance's colour, stems stay green and centres yellow. */
+function flowerMaterial(): THREE.MeshStandardMaterial {
+  const mt = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+  mt.onBeforeCompile = (sh) => {
+    applyWind(sh, 0.12);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aTint;')
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        #if defined( USE_INSTANCING_COLOR ) && defined( USE_COLOR )
+          vColor.xyz = mix(color.xyz, color.xyz * instanceColor.xyz, aTint);
+        #endif`);
+  };
+  return mt;
+}
 /** Trees: swaying, with the trunk (aLeaf = 0) kept bark-brown and the crown (aLeaf = 1) taking the instance's colour. */
 function treeMaterial(): THREE.MeshStandardMaterial {
   const mt = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true });
@@ -210,7 +269,7 @@ function materials() {
     tree: treeMaterial(),
     palm: windy(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide }), 0.03),
     rock: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95, flatShading: true }),
-    flower: windy(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, flatShading: true }), 0.12),
+    flower: flowerMaterial(),
   });
 }
 

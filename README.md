@@ -71,12 +71,29 @@ The file contains the whole shared town **and** every player profile (outfits, c
 
 ## How to play (for grown-ups)
 
-- **Choose your player** — tap a character. ✏️ renames, ＋ adds a player.
-- **Style** (runway studio) — pick a category on the left, an item + color on the right; drag to spin, pinch to zoom; 🎲 Random, 📸 Pose, 💾 four saved looks. **Let's ride** goes to town.
-- **Town** — joystick + GO/STOP/⚡BOOST/horn (PC: WASD/arrows, Space brake, Shift boost, H horn). 🚶 gets out to **walk** (E/F on PC); walk through glowing doors into the **Studio**, the **Style** boutique, the Builder's office or your own house. Six districts to explore (Downtown, Home Hills, Beach & Pier, Park & Lake, Skate Park with jumps, Lookout Hill) and **40 hidden 💎 charms** that unlock bonus items (glitter/chrome/glow wax, neon underglow, holo slime, LED sneakers, pool…). Nothing is ever lost or timed.
-- **Build your home** — follow the pink "🏠 Build your home" pill to a **FOR SALE** lot: walk onto the mat, or stop the car on it and tap **Build here?**. Pick a starter home (or start from scratch), then decorate: two floors, finishes, 40+ modern items, ⭐ your Studio creations. Only the owner can edit a house.
-- **Studio** — 🧸 Squishy (press/drag; optional face), 🫧 Slime (7 types, add-ins, stretch until it snaps), 🕯️ Wax (pick → dip/pour colored layers → cool → squeeze to crack). **Save** puts a creation on your shelf and in your houses. Destructive buttons (✨ New) need a hold.
-- **☰ menu** — jump to Town / Build / Studio / Style, switch player, audio, share/import town.
+v3 plays like Fortnite with all the combat removed. Touch controls are on screen; PC keys are in brackets.
+
+- **Lobby:** tap your player (✏️ renames, ＋ adds a player), then **PLAY**. LOCKER and STUDIO sit right above it.
+- **Party bus:** tap **JUMP!** [Space], skydive, and the glider opens; land anywhere. "Skip" puts you at your ride.
+- **On foot:**
+  - left stick moves; drag the right side of the screen to look [WASD + mouse drag];
+  - JUMP [Space];
+  - sprint by pushing the stick fully or double-tapping it [Shift];
+  - SLIDE while sprinting [Ctrl / X];
+  - walk into ledges to climb them; swim in water;
+  - fall from a height or hit a bouncy launch pad and the glider opens;
+  - ziplines: walk to a post and tap **Zip!** [E / F].
+- **Rides:** walk up to any parked ride and tap **Drive** [E / F]. The 🚗 button calls your favourite ride [C]. The sports car, pickup, golf cart, hoverboard, ice-cream truck and boat all handle differently.
+- **Build anywhere:** 🔨 [B]. Pick wall / floor / ramp / roof [1–4] and wood / brick / metal [T]. Tap to place; hold and sweep to place a run.
+  - **Edit** [G] cuts windows, doors and arches.
+  - **Decor** [V] places furniture inside.
+  - **Starter** stamps a cabin, a townhouse or a ramp park.
+  - **Undo** [U], **Delete** [X].
+- **Emotes:** 😀 [Q] opens the wheel. Each dance has its own tune; moving stops it.
+- **Locker** (☰ → Locker): outfits (skins and styles), Custom (piece-by-piece styling plus Face), back bling, glider, contrail, emote wheel, ride paint. Locked items show how many 💎 charms they need.
+- **Charms:** 64 are hidden all over the island (rooftops, landmarks, glide-only spots). They unlock Locker items with a reveal card. Nothing is ever lost or timed.
+- **Studio:** walk into the Studio building or use ☰ → Studio. 🧸 Squishy, 🫧 Slime, 🕯️ Wax (pick, then coat, then crack).
+- **☰ menu:** Island / Locker / Build / Studio / Audio / Island Swap (share or import between iPads) / Switch player.
 
 ## Debug
 

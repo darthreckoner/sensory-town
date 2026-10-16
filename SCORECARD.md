@@ -231,3 +231,46 @@ Profiles stay separate (Star 0 creations, Moon 1); the shared town shows Moon's 
 **Verdict: every row ≥ 7 → ship round 2.**
 
 Remaining external checks (kids + iPad): see docs/KIDS_PLAYTEST.md.
+
+---
+
+## v3 — "Fortnite for a 10-year-old girl, no combat" · graded 2026-10-16 ~12:45 CDT
+
+Rubric: locked in docs/V3_PLAN.md before any v3 code. Grades are integers, honest, and capped at 7 where the only proof would be a real iPad or a real kid.
+
+**How this was graded (be-ambitious protocol).** Every row rests on something other than an agent's report:
+- **Production build:** a fresh `vite build`, served by `vite preview`, with the service worker cleared.
+- **Self-tests:** 13/13 pass on that build, including the new swimOut, callCar, ridesParked (all 6 rides), callBoat and emoteWheel.
+- **Console:** 0 errors.
+- **Feet sweep, whole island:** 15 bad out of 5,704 spots (0.26%). All are under 1 m, on small props and road edges. Round 3 was 8 bad on a map 8× smaller.
+- **Camera sweeps** (two agents, whole island):
+  - movement agent: 26 non-foliage obstructions in 6,204 views (0.42%);
+  - world agent: 20 in 11,548;
+  - foliage clips about 5% of views.
+- **Draw calls:**
+  - town test spot: 169–180 calls;
+  - busiest downtown view, world only: 132;
+  - stress test (408 build pieces + 40 decor + 20 rides): worst 228, budget 250.
+- **Screens checked by the Director in real WebGL** at 1280×613 (the aspect of 1920×920) and at iPad landscape 1180×820: lobby (2 and 6 players), Locker and reveal card, Style face close-up, party bus → jump → skydive → glider → landing, swimming, building plus the Townhouse starter, ice-cream truck and hoverboard, emote wheel, Studio, menu, Summit and Meadow.
+
+| Row | Grade | Evidence | Counter-argument → verdict |
+|---|---|---|---|
+| Fortnite feel: movement + camera | **7** | Over-shoulder drag-look cam, sprint, jump, mantle, knee-slide, swim, glider, launch pads, 4 ziplines, party-bus drop: all exercised in a browser. | "You never *felt* it with a thumb." True: touch feel is unproven, so capped at 7. |
+| Rides | **8** | 6 rides with measured, distinct handling (top speed 10.5–25, braking 5.7–16.8 m), the boat on water only, call-your-ride, off-road, driving on player builds, launch pads; ≤ 5 calls each. | "Engine voices unheard." True, but handling is measured; held at 8. |
+| Building | **8** | Wall/floor/ramp/roof × wood/brick/metal anywhere, drag-build, 3×3 edit, 44 decor items, 3 starters, walk/drive on builds, saved; LOD keeps 400 pieces in budget. | "Edit and decor weren't hand-tested by the Director." Agent tests plus builds() = [] hold; kept at 8. |
+| Locker + style depth | **8** | 26 skins × 3 styles + 9 suits, 168 parts, face options (5 eyes, 8 colours, 5 brows, freckles, makeup, 8 stickers), 16 back blings, 12 gliders, 6 contrails, 11 emotes, rarity cards, reveal card. | "Locker emote previews are silent." Being wired; not a blocker. 8. |
+| World + look | **8** | Island with sea on every side, 10 POIs with title cards (4 new), bright stylized look, no invisible walls, 64 charms. | "Meadow flowers read as gems up close." Fixed before ship. "Minimap not eyeballed." Minor. 8. |
+| Charms + upgrades | **8** | 64 charms over every POI (rooftops, glide-only spots); about 90 rewards on a ladder; Fortnite-style reveal with EQUIP. | "Too many rewards could dilute them." The ladder scales by charm count; holds. |
+| Studio ASMR | **8** | Unchanged mechanics (round 2 graded wax 8.5, slime 8, squishy 7.5); reachable from the Studio building and the ☰ card; re-skinned UI checked. | Holds. |
+| Audience fit (10 y/o girl) | **8** | Zero combat anywhere. The "creepy" fix is verified in close-ups: big warm eyes, no nostrils, smile, 5-finger chunky hands. Silly-fun beats: dance tunes, unicorn onesie, ice-cream truck jingle, party bus. | "Creepy is the designer's call, not mine." Fair; the kids' session decides. 8. |
+| Stability | **7** | Prod 13/13, 0 errors, feet 0.26%, camera 0.42% non-foliage. | Today's integration still turned up bugs (empty emote wheel, a duplicate getter, gem flowers) all fixed, so more may be lurking. Held at 7. |
+| Performance | **7** | 169–228 calls in every measured view, adaptive DPR, LOD for builds and decor, district culling. | No real-iPad fps yet. Capped at 7 by rule. |
+
+**Verdict: every row ≥ 7 → ship v3.**
+
+**Known issues**
+- On short landscape *touch* screens (phone-sized), the 😀 emote button can touch the JUMP button. iPad landscape and desktop are fine.
+- Foliage occasionally sits between the camera and the player.
+- Engine, emote and SFX audio are checked by measurement only, not by ear.
+
+**External checks still pending** (the real verdict): the iPad fps readout and the kids' 15-minute session (docs/KIDS_PLAYTEST.md).

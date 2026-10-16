@@ -1089,7 +1089,8 @@ export class DriveScene extends GameScene {
   private updateRidePrompt(): void {
     const f = this.foot;
     let best: WorldRide | null = null;
-    if (this.mode === 'foot' && !this.leaving && !this.controls.suspended && !this.mv.busy) {
+    // (no "Drive" bubble while building: taps there are for placing pieces)
+    if (this.mode === 'foot' && !this.leaving && !this.controls.suspended && !this.mv.busy && !this.build3?.active) {
       const near = this.nearestRide(f.x, f.z);
       if (near && (!f.swimming || near.kind === 'boat')) best = near;   // a swimmer can climb into a boat
     }

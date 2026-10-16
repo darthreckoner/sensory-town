@@ -153,7 +153,7 @@ export class Movement {
     }
     this.glide.cancel();
     this.mantle.cancel();
-    this.slide.cancel(this.h.foot);
+    this.slide.cancel(this.h.foot, w);
     this.slide.restore(w);
     this.zip.cancel(w);
     this.glide.restoreWalker(w);
@@ -231,7 +231,7 @@ export class Movement {
     const f = this.h.foot;
     const z = this.zip.ready;
     if (!z || this.busy || !this.h.isFoot() || this.h.leaving()) return false;
-    this.slide.cancel(f);
+    this.slide.cancel(f, this.h.walker);
     this.zip.start(z, f);
     this.cam.kick(4);
     return true;
@@ -283,7 +283,7 @@ export class Movement {
     f.speedMul = push ? m.sprintMul : 1;
     this.sprinting = push && f.grounded && !f.swimming && f.speed > 3;
 
-    if ((this.bus.active || this.glide.active || this.mantle.active || this.zip.active) && this.slide.active) this.slide.cancel(f);
+    if ((this.bus.active || this.glide.active || this.mantle.active || this.zip.active) && this.slide.active) this.slide.cancel(f, this.h.walker);
     if (this.bus.active) {
       if (this.jumpEdge) this.bus.jump(); // Space = JUMP! on a keyboard
       if (this.bus.active) this.rideBus(dt);

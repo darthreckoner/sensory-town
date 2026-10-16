@@ -76,7 +76,7 @@ export function buildSands(): SandsOut {
     for (const s of [-1, 1]) {
       const fx = x + Math.cos(yaw) * R * s, fz = z - Math.sin(yaw) * R * s;
       m.cyl(mat.std('#c9703f', 0.95), fx, G(fx, fz) - 3.5, fz, tube + 2.0, tube + 0.4, 4.2, 9);
-      colliders.push(circle(fx, fz, tube + 1.6));
+      colliders.push(circle(fx, fz, tube + 2.3));
     }
   });
 
