@@ -9,7 +9,7 @@ import type { Piece } from './types';
 import { Mesher } from './mesher';
 import { mat } from './kit';
 import { PAL } from './palette';
-import { bakeStatic } from './envUtils';
+import { bakeStatic, mergeStaticGroups } from './envUtils';
 import { bench, bin, lamp } from './props';
 
 export interface BeachOut extends Piece {
@@ -267,25 +267,35 @@ export function buildBeach(): BeachOut {
 
   // ── rocks along the shore and a few buoys ──
   for (let z = -50; z <= 62; z += 14) rocks.push({ x: 105 + ((z * 13) % 7), z: z + 3, s: 0.7 + ((z * 7) % 5) / 8 });
+  // v3 draw-call diet: all the buoys are ONE instanced mesh (the bobbing is a matrix update per frame)
   const buoyCols = [PAL.orange, PAL.white, PAL.pink];
+  const buoyAt: { x: number; z: number; i: number }[] = [];
   for (let i = 0; i < 12; i++) {
     const bz = -60 + i * 12, bx = 148;
-    if (groundHeight(bx, bz) > WATER_Y - 1.0) continue; // v3: only where there is real water (the bay is bounded by headlands now)
-    const buoy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), mat.neon(buoyCols[i % 3]));
-    buoy.position.set(bx, WATER_Y + 0.2, bz);
-    buoy.userData.bob = i;
-    ex.add(buoy);
+    if (groundHeight(bx, bz) > WATER_Y - 1.0) continue; // only where there is real water (the bay is bounded by headlands now)
+    buoyAt.push({ x: bx, z: bz, i });
   }
+  const buoyMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.5, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), Math.max(1, buoyAt.length));
+  buoyMesh.count = buoyAt.length;
+  buoyMesh.frustumCulled = false;
+  buoyAt.forEach((b, k) => buoyMesh.setColorAt(k, new THREE.Color(buoyCols[b.i % 3])));
+  const buoyM = new THREE.Matrix4();
+  const placeBuoys = (t: number): void => {
+    buoyAt.forEach((b, k) => {
+      buoyM.makeTranslation(b.x, WATER_Y + 0.15 + Math.sin(t * 1.6 + b.i) * 0.12, b.z);
+      buoyMesh.setMatrixAt(k, buoyM);
+    });
+    buoyMesh.instanceMatrix.needsUpdate = true;
+  };
+  placeBuoys(0);
 
   const group = new THREE.Group();
   group.name = 'beach';
-  group.add(m.build('beach-static'));
-  const buoys = ex.children.filter((c) => c.userData.bob !== undefined);
   const rest = new THREE.Group();
-  for (const c of ex.children.slice()) if (c !== beam && !buoys.includes(c)) rest.add(c);
-  group.add(bakeStatic(rest));
+  for (const c of ex.children.slice()) if (c !== beam) rest.add(c);
+  group.add(mergeStaticGroups('beach-static', m.build('beach-static'), bakeStatic(rest)));
   group.add(beam);
-  for (const b of buoys) group.add(b);
+  group.add(buoyMesh);
   return {
     group,
     colliders,
@@ -294,7 +304,7 @@ export function buildBeach(): BeachOut {
     cull: { x: 110, z: 8, r: 170 },
     update(_dt: number, t: number) {
       beam.rotation.y = t * 0.8;
-      for (const b of buoys) b.position.y = WATER_Y + 0.15 + Math.sin(t * 1.6 + (b.userData.bob as number)) * 0.12;
+      placeBuoys(t);
     },
   };
 }

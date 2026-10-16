@@ -34,6 +34,7 @@ import { SUN_DIR } from '../drive/sky';
 import { PAL } from '../drive/palette';
 import { emojiSprite, emojiTexture, clamp, lerpAngle, wrapAngle } from '../drive/envUtils';
 import * as Layout from '../world/townLayout';
+import { attachBackBling, tickBackBling } from '../art/gear';   // ── v3 rides ── the Locker's equipped back bling on the walker
 import type { DoorDef } from '../drive/types';
 import { BuildMode } from '../build/world3/mode';   // v3 build
 import { EmoteWheel } from '../drive/emotewheel';   // v3 emote
@@ -409,6 +410,10 @@ export class DriveScene extends GameScene {
     // ── me, my rides, my outfit ──
     this.driver.setOutfit(prof.outfit);
     this.walker.setOutfit(prof.outfit);
+    // ── v3 rides ── back bling: the walker wears whatever the Locker has equipped NOW (it may have changed since the last visit).
+    // The previous bling is disposed. Seated drivers are a separate Character that never wears one (nothing clips the seat), and the
+    // Character itself hides the mount while gliding; the hoverboard rider is the walker, so the bling rides along.
+    attachBackBling(this.walker);
     this.initRides(carPose);
     this.foot.reset(footPose.x, footPose.z, footPose.heading);
     this.foot.time = this.simT;
@@ -502,6 +507,7 @@ export class DriveScene extends GameScene {
     session.car = { x: this.phys.x, z: this.phys.z, heading: this.phys.heading };
     this.saveRides();
     this.disposeRides();
+    attachBackBling(this.walker, null);   // ── v3 rides ── free the bling (the next visit hangs a fresh one)
     session.foot = { x: this.foot.x, z: this.foot.z, heading: this.foot.heading };
     this.controls.releaseAll();
     this.controls.suspended = false;
@@ -583,6 +589,7 @@ export class DriveScene extends GameScene {
     this.ripples.update(dt);
     this.lines.update(dt, car ? this.boostLevel : 0);
     this.mv.tick(dt, t);   // ── v3 movement ── launch pads, the contrail, the bus flying away, POI cards
+    tickBackBling(this.walker, t);   // ── v3 rides ── the bling's own idle animation (wings, balloon...)
     this.checkTriggers(dt);
     this.updateRides(dt, t);
     this.updateRidePrompt();
@@ -891,7 +898,7 @@ export class DriveScene extends GameScene {
     const w = prof.locker?.wraps?.[kind];
     const color = w?.color ?? (kind === 'sports' ? prof.carColor : RIDE_INFO[kind].color);
     const f = w?.finish ?? prof.carStyle?.finish ?? 'gloss';
-    return { color, finish: (['gloss', 'matte', 'chrome', 'glitter'].includes(f) ? f : 'gloss') as RideFinish };
+    return { color, finish: (['gloss', 'matte', 'pearl', 'chrome', 'glitter'].includes(f) ? f : 'gloss') as RideFinish };
   }
 
   /** Wrap + the paint-sheet extras (underglow, sparkle trail, rims). */

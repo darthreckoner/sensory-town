@@ -10,7 +10,7 @@ import { Mesher } from './mesher';
 import { mat } from './kit';
 import { poiSign } from './poiSign';
 import { PAL } from './palette';
-import { InstanceBatch, bakeStatic, put } from './envUtils';
+import { InstanceBatch, bakeStatic, mergeStaticGroups, put } from './envUtils';
 
 export interface GroveOut extends Piece {
   trees: { x: number; z: number; kind: 'oak' | 'birch'; scale: number }[];
@@ -204,8 +204,7 @@ export function buildGrove(): GroveOut {
 
   const group = new THREE.Group();
   group.name = 'grove';
-  group.add(m.build('grove-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('grove-static', m.build('grove-static'), bakeStatic(ex)));
   group.add(inst);
   group.add(fire);
   void trees;

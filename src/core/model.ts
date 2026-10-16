@@ -54,8 +54,10 @@ export interface Locker {
   /** v3 locker: the player's own piece-by-piece look, kept while a skin preset is worn (Profile.outfit is always what is worn) */
   customOutfit?: Outfit;
 }
+/** emotes every player owns from the start (ids from EMOTES in src/art/character.ts); the rest come from charms */
+export const STARTER_EMOTES = ['wave', 'bounce', 'cheer'];
 export function defaultLocker(): Locker {
-  return { skin: 'custom', skinStyle: 0, backBling: null, glider: 'starter', emotes: ['wave', 'dance1'], contrail: null, ride: 'sports', wraps: {} };
+  return { skin: 'custom', skinStyle: 0, backBling: null, glider: 'starter', emotes: [...STARTER_EMOTES], contrail: null, ride: 'sports', wraps: {} };
 }
 
 // ── Workshop creations ──────────────────────────────────────────────────────

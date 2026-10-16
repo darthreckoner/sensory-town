@@ -22,7 +22,7 @@ import { clamp, lathe } from './envUtils';
 export type RideKind = VehicleKind;
 export const RIDE_KINDS: RideKind[] = ['sports', 'pickup', 'golfcart', 'hoverboard', 'icecream', 'boat'];
 
-export type RideFinish = 'gloss' | 'matte' | 'chrome' | 'glitter';
+export type RideFinish = 'gloss' | 'matte' | 'pearl' | 'chrome' | 'glitter';
 export interface RideStyle {
   finish: RideFinish;
   neon: string | null;
@@ -951,7 +951,20 @@ export class Ride {
   private applyFinish(): void {
     const p = this.paint;
     p.iridescence = 0;
+    p.iridescenceThicknessRange = [100, 400];
     switch (this.style.finish) {
+      case 'pearl':
+        // a soft, milky paint with a rainbow sheen
+        p.color.copy(this.baseColor).lerp(new THREE.Color('#ffffff'), 0.4);
+        p.roughness = 0.22;
+        p.metalness = 0.12;
+        p.clearcoat = 1;
+        p.clearcoatRoughness = 0.05;
+        p.iridescence = 1;
+        p.iridescenceIOR = 1.5;
+        p.iridescenceThicknessRange = [220, 560];
+        p.envMapIntensity = 1.5;
+        break;
       case 'matte':
         p.color.copy(this.baseColor);
         p.roughness = 0.78;

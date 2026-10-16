@@ -68,6 +68,21 @@ function geometries() {
   });
   const pine = mergeGeometries(cones, false);
 
+  // v3 draw-call diet: the trunk is part of the tree (aLeaf = 1 on the crown: only that part takes the instance's colour)
+  const withTrunk = (crown: THREE.BufferGeometry, trunkH: number, trunkW: number, crownY: number, crownSy = 1): THREE.BufferGeometry => {
+    const tag = (g: THREE.BufferGeometry, v: number): THREE.BufferGeometry => {
+      g.setAttribute('aLeaf', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(v), 1));
+      return g;
+    };
+    const t = stripped(new THREE.CylinderGeometry(0.13 * trunkW, 0.24 * trunkW, trunkH, 6).translate(0, trunkH / 2, 0));
+    const c = crown.clone();
+    c.scale(1, crownSy, 1);
+    c.translate(0, crownY, 0);
+    return mergeGeometries([tag(t, 0), tag(c, 1)], false);
+  };
+  const oakTree = withTrunk(oak, 2.4, 1.0, 3.0, 0.95);
+  const pineTree = withTrunk(pine, 1.4, 0.9, 0.9);
+
   // palm: a bent trunk and nine drooping fronds, with vertex colours
   const P: number[] = [], C: number[] = [];
   const col = new THREE.Color();
@@ -142,15 +157,16 @@ function geometries() {
   }
   const flowers = mergeGeometries(fl, false);
 
-  G = { trunk: stripped(trunk), oak, birch, pine, palm, bush, rock, flowers };
+  void birch;
+  G = { trunk: stripped(trunk), oak: oakTree, birch, pine: pineTree, palm, bush, rock, flowers };
   return G;
 }
 
 // ── v3 world: wind. Crowns, fronds and flowers sway a little (vertex shader, driven by one shared time uniform). ──
 /** Seconds of world time; townEnv.update writes it every frame. */
 export const windTime = { value: 0 };
-function windy<T extends THREE.Material>(mt: T, amount: number): T {
-  mt.onBeforeCompile = (sh) => {
+function applyWind(sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string }, amount: number): void {
+  {
     sh.uniforms.uWindT = windTime;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nuniform float uWindT;')
@@ -164,16 +180,34 @@ function windy<T extends THREE.Material>(mt: T, amount: number): T {
         float hh = max(position.y, 0.0);
         transformed.x += ww * ${amount.toFixed(3)} * hh;
         transformed.z += ww * ${(amount * 0.6).toFixed(3)} * hh;`);
+  }
+}
+function windy<T extends THREE.Material>(mt: T, amount: number): T {
+  mt.onBeforeCompile = (sh) => applyWind(sh, amount);
+  return mt;
+}
+/** Trees: swaying, with the trunk (aLeaf = 0) kept bark-brown and the crown (aLeaf = 1) taking the instance's colour. */
+function treeMaterial(): THREE.MeshStandardMaterial {
+  const mt = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true });
+  const bark = new THREE.Color('#6b4d36');
+  mt.onBeforeCompile = (sh) => {
+    applyWind(sh, 0.035);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aLeaf;')
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        #if defined( USE_INSTANCING_COLOR )
+          vColor.xyz = mix(vec3(${bark.r.toFixed(4)}, ${bark.g.toFixed(4)}, ${bark.b.toFixed(4)}), vColor.xyz, aLeaf);
+        #endif`);
   };
   return mt;
 }
 
 // ── materials ───────────────────────────────────────────────────────────────
-let M: { leaf: THREE.Material; bark: THREE.Material; palm: THREE.Material; rock: THREE.Material; flower: THREE.Material } | null = null;
+let M: { leaf: THREE.Material; tree: THREE.Material; palm: THREE.Material; rock: THREE.Material; flower: THREE.Material } | null = null;
 function materials() {
   return (M ??= {
     leaf: windy(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, flatShading: true }), 0.035),
-    bark: new THREE.MeshStandardMaterial({ color: '#6b4d36', roughness: 0.95, flatShading: true }),
+    tree: treeMaterial(),
     palm: windy(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide }), 0.03),
     rock: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95, flatShading: true }),
     flower: windy(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, flatShading: true }), 0.12),
@@ -182,8 +216,8 @@ function materials() {
 
 // ── batching ────────────────────────────────────────────────────────────────
 interface Batch { m: THREE.Matrix4[]; c: THREE.Color[] }
-type Kinds = 'trunk' | 'oak' | 'birch' | 'pine' | 'palm' | 'bush' | 'rock' | 'flowers';
-const KINDS: Kinds[] = ['trunk', 'oak', 'birch', 'pine', 'palm', 'bush', 'rock', 'flowers'];
+type Kinds = 'oak' | 'pine' | 'palm' | 'bush' | 'rock' | 'flowers';
+const KINDS: Kinds[] = ['oak', 'pine', 'palm', 'bush', 'rock', 'flowers']; // (birch is a slimmer oak; trunks are part of the tree meshes)
 
 export interface VegChunk {
   cx: number;
@@ -230,16 +264,14 @@ export class Vegetation {
     switch (kind) {
       case 'oak':
       case 'birch': {
-        const th = (kind === 'oak' ? 2.4 : 2.9) * scale;
-        const tw = kind === 'oak' ? 1.0 : 0.7;
-        this.push(b.trunk, x, y, z, rotY, scale * tw, th, scale * tw);
-        this.push(b[kind], x, y + th + 0.6 * scale, z, rotY, scale, scale * 0.95, scale, color ?? PAL.trees[(Math.abs(x * 7 + z * 3) | 0) % PAL.trees.length]);
+        // one mesh per tree (trunk + crown); a birch is the same tree, slimmer and taller
+        const [sx, sy] = kind === 'oak' ? [scale, scale] : [scale * 0.76, scale * 1.12];
+        this.push(b.oak, x, y, z, rotY, sx, sy, sx, color ?? PAL.trees[(Math.abs(x * 7 + z * 3) | 0) % PAL.trees.length]);
         if (collide) this.colliders.push({ kind: 'circle', x, z, r: 0.42 * scale + 0.12 });
         break;
       }
       case 'pine':
-        this.push(b.trunk, x, y, z, rotY, scale * 0.9, 1.4 * scale, scale * 0.9);
-        this.push(b.pine, x, y + 0.9 * scale, z, rotY, scale, scale, scale, color ?? PAL.pines[(Math.abs(x * 5 + z * 11) | 0) % PAL.pines.length]);
+        this.push(b.pine, x, y, z, rotY, scale, scale, scale, color ?? PAL.pines[(Math.abs(x * 5 + z * 11) | 0) % PAL.pines.length]);
         if (collide) this.colliders.push({ kind: 'circle', x, z, r: 0.4 * scale + 0.12 });
         break;
       case 'palm':
@@ -265,8 +297,8 @@ export class Vegetation {
     const group = new THREE.Group();
     group.name = 'vegetation';
     const chunks: VegChunk[] = [];
-    const geo: Record<Kinds, THREE.BufferGeometry> = { trunk: g.trunk, oak: g.oak, birch: g.birch, pine: g.pine, palm: g.palm, bush: g.bush, rock: g.rock, flowers: g.flowers };
-    const mats: Record<Kinds, THREE.Material> = { trunk: m.bark, oak: m.leaf, birch: m.leaf, pine: m.leaf, palm: m.palm, bush: m.leaf, rock: m.rock, flowers: m.flower };
+    const geo: Record<Kinds, THREE.BufferGeometry> = { oak: g.oak, pine: g.pine, palm: g.palm, bush: g.bush, rock: g.rock, flowers: g.flowers };
+    const mats: Record<Kinds, THREE.Material> = { oak: m.tree, pine: m.tree, palm: m.palm, bush: m.leaf, rock: m.rock, flowers: m.flower };
     for (const [key, b] of this.chunks) {
       const cx = key % CHUNKS, cz = Math.floor(key / CHUNKS);
       const vc: VegChunk = { cx: -GROUND + (cx + 0.5) * CHUNK, cz: -GROUND + (cz + 0.5) * CHUNK, meshes: [] };
@@ -276,7 +308,7 @@ export class Vegetation {
         const im = new THREE.InstancedMesh(geo[k], mats[k], batch.m.length);
         for (let i = 0; i < batch.m.length; i++) {
           im.setMatrixAt(i, batch.m[i]);
-          if (k !== 'trunk' && k !== 'palm') im.setColorAt(i, batch.c[i]);
+          if (k !== 'palm') im.setColorAt(i, batch.c[i]);
         }
         im.instanceMatrix.needsUpdate = true;
         if (im.instanceColor) im.instanceColor.needsUpdate = true;

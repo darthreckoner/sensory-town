@@ -2,6 +2,7 @@
 // rowboats, a hedge maze (corridors too narrow for a car), a playground,
 // picnic lawns, trail signs and lake reeds.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BRIDGES, PIERS, WATER_Y } from '../world/townLayout';
 import { LAKE, groundHeight } from '../world/heightfield';
 import type { Collider } from '../world/townEnv';
@@ -9,7 +10,7 @@ import type { Piece } from './types';
 import { Mesher } from './mesher';
 import { mat } from './kit';
 import { PAL } from './palette';
-import { bakeStatic, roundedRectShape } from './envUtils';
+import { bakeStatic, mergeStaticGroups, roundedRectShape } from './envUtils';
 import { seeded } from '../world/townLayout';
 import { bench, bin, lamp, picnic } from './props';
 
@@ -159,7 +160,9 @@ export function buildPark(): ParkOut {
     // narrow: the car can't drive out here (on foot only)
     colliders.push({ kind: 'box', x: dock.ax, z: dock.az + 0.4, hw: 2.2, hd: 0.3, only: 'car' });
   }
-  const boats: THREE.Mesh[] = [];
+  // v3 draw-call diet: the four rowboats are ONE instanced mesh (the bob and roll are matrix updates)
+  const boatSpots = [[92, -83.5, 0.5], [83.5, -85, -0.3], [97, -90, 1.4], [80, -92, 0.9]];
+  let boatMesh: THREE.InstancedMesh | null = null;
   {
     const shape = new THREE.Shape();
     shape.moveTo(-1.8, 0);
@@ -170,19 +173,28 @@ export function buildPark(): ParkOut {
     const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.38, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 2 });
     geo.rotateX(-Math.PI / 2);
     const cols = ['#d4262d', '#2c3e5c', '#f3f2ee', '#ffc93c'];
-    [[92, -83.5, 0.5], [83.5, -85, -0.3], [97, -90, 1.4], [80, -92, 0.9]].forEach(([bx, bz, rot], i) => {
-      const b = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: cols[i % cols.length], roughness: 0.4 }));
-      b.position.set(bx, WATER_Y + 0.02, bz);
-      b.rotation.y = rot;
-      b.castShadow = true;
-      b.userData.bob = i;
-      boats.push(b);
-      // thwarts
-      const th = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 1.2), new THREE.MeshStandardMaterial({ color: '#b07a4f' }));
-      th.position.set(0.1, 0.34, 0);
-      b.add(th);
-    });
+    // a thwart across the middle, merged into the hull
+    const bare = geo.index ? geo.toNonIndexed() : geo;
+    const thwart = new THREE.BoxGeometry(0.08, 0.06, 1.2).translate(0.1, 0.34, 0).toNonIndexed();
+    for (const g of [bare, thwart]) for (const n of Object.keys(g.attributes)) if (n !== 'position' && n !== 'normal') g.deleteAttribute(n);
+    const hull = mergeGeometries([bare, thwart], false);
+    boatMesh = new THREE.InstancedMesh(hull, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.4 }), boatSpots.length);
+    boatMesh.castShadow = true;
+    boatMesh.frustumCulled = false;
+    boatSpots.forEach((_, i) => boatMesh!.setColorAt(i, new THREE.Color(cols[i % cols.length])));
   }
+  const boatM = new THREE.Matrix4(), boatQ = new THREE.Quaternion(), boatE = new THREE.Euler(), boatP = new THREE.Vector3(), boatS = new THREE.Vector3(1, 1, 1);
+  const placeBoats = (t: number): void => {
+    if (!boatMesh) return;
+    boatSpots.forEach(([bx, bz, rot], i) => {
+      boatE.set(0, rot, Math.sin(t * 1.1 + i * 2) * 0.03);
+      boatQ.setFromEuler(boatE);
+      boatM.compose(boatP.set(bx, WATER_Y + 0.02 + Math.sin(t * 1.3 + i) * 0.05, bz), boatQ, boatS);
+      boatMesh!.setMatrixAt(i, boatM);
+    });
+    boatMesh.instanceMatrix.needsUpdate = true;
+  };
+  placeBoats(0);
 
   // ── hedge maze ──
   {
@@ -276,10 +288,8 @@ export function buildPark(): ParkOut {
 
   const group = new THREE.Group();
   group.name = 'park';
-  group.add(m.build('park-static'));
-  const baked = bakeStatic(ex);
-  group.add(baked);
-  for (const b of boats) group.add(b);
+  group.add(mergeStaticGroups('park-static', m.build('park-static'), bakeStatic(ex)));
+  if (boatMesh) group.add(boatMesh);
   void roundedRectShape;
   return {
     group,
@@ -287,11 +297,7 @@ export function buildPark(): ParkOut {
     trees,
     cull: { x: 82, z: -102, r: 150 },
     update(_dt: number, t: number) {
-      for (const b of boats) {
-        const i = b.userData.bob as number;
-        b.position.y = WATER_Y + 0.02 + Math.sin(t * 1.3 + i) * 0.05;
-        b.rotation.z = Math.sin(t * 1.1 + i * 2) * 0.03;
-      }
+      placeBoats(t);
     },
   };
 }

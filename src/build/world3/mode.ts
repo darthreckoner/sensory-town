@@ -133,7 +133,7 @@ export class BuildMode {
     this.buildUi();
     window.addEventListener('keydown', this.onKey);
     // test hook (dev / ?selftest): window.__build3 = { mode, space, surfaceBelow, anchorY }
-    if (typeof location !== 'undefined' && (import.meta.env?.DEV || /selftest/.test(location.search))) (window as unknown as Record<string, unknown>).__build3 = { mode: this, space: buildSpace, surfaceBelow, anchorY, pieceFrame };
+    if (typeof location !== 'undefined' && (import.meta.env?.DEV || /selftest/.test(location.search))) (window as unknown as Record<string, unknown>).__build3 = { mode: this, space: buildSpace, surfaceBelow, anchorY, pieceFrame, decorCatalog, tuning };
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -216,6 +216,9 @@ export class BuildMode {
   update(dt: number, _t: number): void {
     this.layer.tick(dt);
     this.decor.tick();
+    const cp = this.host.camera.position;   // distance detail: far chunks draw as one flat mesh, far decor not at all
+    this.layer.lod(cp.x, cp.y, cp.z);
+    this.decor.lod(cp.x, cp.y, cp.z);
     if (this.hintT > 0) {
       this.hintT -= dt;
       if (this.hintT <= 0) this.hint.classList.remove('show');

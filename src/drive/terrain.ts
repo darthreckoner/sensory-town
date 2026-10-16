@@ -14,8 +14,10 @@ import { clamp, smoothstep } from './envUtils';
 
 export const ROAD_LIFT = 0.05;
 export const CURB_H = 0.14;
-export const CHUNK = 84;       // v3: 10 x 10 chunks over the 840 m ground square (a multiple of the 4 m mesh step)
-const CHUNK_N = Math.ceil((GROUND * 2) / CHUNK);
+export const CHUNK = 84;       // v3: the vegetation / culling grid (10 x 10 over the 840 m ground square, a multiple of the 4 m mesh step)
+/** The terrain meshes use bigger chunks (5 x 5): fewer draw calls (the haze hides the far ones, see tuning.drive.cullTerrain). */
+const TERRAIN_CHUNK = 168;
+const TERRAIN_CHUNK_N = Math.ceil((GROUND * 2) / TERRAIN_CHUNK);
 
 // ── soup of triangles with flat normals and vertex colours ──────────────────
 class Soup {
@@ -229,8 +231,8 @@ function terrainColor(x: number, z: number, h: number, slope: number, out: THREE
 
 function buildChunk(cx: number, cz: number): THREE.Mesh {
   const step = HF.step * 2;
-  const x0 = -GROUND + cx * CHUNK, z0 = -GROUND + cz * CHUNK;
-  const n = Math.round(CHUNK / step);
+  const x0 = -GROUND + cx * TERRAIN_CHUNK, z0 = -GROUND + cz * TERRAIN_CHUNK;
+  const n = Math.round(TERRAIN_CHUNK / step);
   const verts = (n + 1) * (n + 1);
   const pos = new Float32Array(verts * 3), nor = new Float32Array(verts * 3), col = new Float32Array(verts * 3);
   const c = new THREE.Color();
@@ -274,8 +276,8 @@ function buildChunk(cx: number, cz: number): THREE.Mesh {
   g.computeBoundingBox();
   const m = new THREE.Mesh(g, terrainMat);
   m.receiveShadow = true;
-  m.userData.cx = x0 + CHUNK / 2;
-  m.userData.cz = z0 + CHUNK / 2;
+  m.userData.cx = x0 + TERRAIN_CHUNK / 2;
+  m.userData.cz = z0 + TERRAIN_CHUNK / 2;
   return m;
 }
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96 });
@@ -675,8 +677,8 @@ export function buildTerrain(): Terrain {
   group.add(far);
 
   const chunks: THREE.Mesh[] = [];
-  for (let cz = 0; cz < CHUNK_N; cz++)
-    for (let cx = 0; cx < CHUNK_N; cx++) {
+  for (let cz = 0; cz < TERRAIN_CHUNK_N; cz++)
+    for (let cx = 0; cx < TERRAIN_CHUNK_N; cx++) {
       const m = buildChunk(cx, cz);
       chunks.push(m);
       group.add(m);

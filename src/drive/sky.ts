@@ -201,6 +201,7 @@ function gulls(): { mesh: THREE.Mesh; uniforms: { uTime: { value: number } } } {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   mesh.renderOrder = -3;
+  mesh.raycast = () => {}; // pure scenery: the world sweeps and any picking must never hit the flock
   return { mesh, uniforms };
 }
 

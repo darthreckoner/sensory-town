@@ -8,7 +8,7 @@ import type { Piece } from './types';
 import { Mesher } from './mesher';
 import { bigSignTexture, mat } from './kit';
 import { PAL } from './palette';
-import { bakeStatic } from './envUtils';
+import { bakeStatic, mergeStaticGroups } from './envUtils';
 import { bench } from './props';
 
 export function buildLookout(): Piece {
@@ -110,8 +110,7 @@ export function buildLookout(): Piece {
 
   const group = new THREE.Group();
   group.name = 'lookout';
-  group.add(m.build('lookout-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('lookout-static', m.build('lookout-static'), bakeStatic(ex)));
   return { group, colliders, cull: { x: LOOKOUT.x, z: LOOKOUT.z, r: 170 } };
 }
 

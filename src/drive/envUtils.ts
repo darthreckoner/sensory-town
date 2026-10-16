@@ -375,3 +375,59 @@ export function decalAtlas(items: { char: string; x: number; y: number; z: numbe
   m.renderOrder = 1;
   return m;
 }
+
+// ── v3 world: draw-call diet ────────────────────────────────────────────────
+/**
+ * Merge the meshes of several STATIC groups (a district's Mesher output and its bakeStatic result, say) into one group
+ * where every (material, shadow flags) pair is a single mesh. The two builders share folded materials, so a district
+ * would otherwise draw the same material twice. Child meshes are assumed to sit at the identity transform (both builders
+ * bake their transforms into the vertices); anything else (instanced, transparent, ordered, odd attribute sets) is left alone.
+ */
+export function mergeStaticGroups(name: string, ...groups: THREE.Object3D[]): THREE.Group {
+  const out = new THREE.Group();
+  out.name = name;
+  const buckets = new Map<string, THREE.Mesh[]>();
+  const keep: THREE.Mesh[] = [];
+  const attrKey = (g: THREE.BufferGeometry): string => Object.keys(g.attributes).sort().map((k) => k + g.attributes[k].itemSize).join(',') + (g.index ? '|i' : '|n');
+  for (const root of groups) {
+    for (const c of root.children.slice()) {
+      const m = c as THREE.Mesh;
+      if (!m.isMesh || (m as THREE.InstancedMesh).isInstancedMesh || Array.isArray(m.material)) {
+        keep.push(m);
+        continue;
+      }
+      const mt = m.material as THREE.Material;
+      if (mt.transparent || m.renderOrder !== 0 || m.userData.keep) {
+        keep.push(m);
+        continue;
+      }
+      const key = `${mt.uuid}|${m.castShadow ? 1 : 0}${m.receiveShadow ? 1 : 0}|${m.frustumCulled ? 1 : 0}|${attrKey(m.geometry)}`;
+      let l = buckets.get(key);
+      if (!l) buckets.set(key, (l = []));
+      l.push(m);
+    }
+  }
+  for (const list of buckets.values()) {
+    const first = list[0];
+    if (list.length === 1) {
+      out.add(first);
+      continue;
+    }
+    const geos = list.map((m) => m.geometry);
+    const merged = mergeGeometries(geos, false);
+    if (!merged) {
+      for (const m of list) out.add(m);
+      continue;
+    }
+    merged.computeBoundingSphere();
+    merged.computeBoundingBox();
+    const mesh = new THREE.Mesh(merged, first.material);
+    mesh.castShadow = first.castShadow;
+    mesh.receiveShadow = first.receiveShadow;
+    mesh.name = first.name;
+    out.add(mesh);
+    for (const g of geos) g.dispose();
+  }
+  for (const m of keep) out.add(m);
+  return out;
+}

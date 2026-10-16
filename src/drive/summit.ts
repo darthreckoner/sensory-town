@@ -12,7 +12,7 @@ import { Mesher } from './mesher';
 import { mat } from './kit';
 import { poiSign } from './poiSign';
 import { PAL } from './palette';
-import { InstanceBatch, bakeStatic, put } from './envUtils';
+import { InstanceBatch, bakeStatic, mergeStaticGroups, put } from './envUtils';
 
 export interface SummitOut extends Piece {
   rocks: { x: number; z: number; s: number }[];
@@ -316,8 +316,7 @@ export function buildSummit(): SummitOut {
 
   const group = new THREE.Group();
   group.name = 'summit';
-  group.add(m.build('summit-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('summit-static', m.build('summit-static'), bakeStatic(ex)));
   group.add(inst);
   group.add(chairs);
   return {

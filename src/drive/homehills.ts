@@ -4,6 +4,7 @@
 // The lots themselves (FOR SALE signs, mailboxes, front doors) are dynamic and
 // live in doors.ts because they depend on who owns what.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BUILD_YARD, HOME_SPINE_X1, PLOTS, SIDEWALK, plotFront } from '../world/townLayout';
 import { groundHeight } from '../world/heightfield';
 import type { Collider } from '../world/townEnv';
@@ -11,7 +12,7 @@ import type { DoorDef, Piece } from './types';
 import { Mesher } from './mesher';
 import { bigSignTexture, mat, signs, signUV } from './kit';
 import { PAL } from './palette';
-import { bakeStatic } from './envUtils';
+import { bakeStatic, mergeStaticGroups } from './envUtils';
 import { along } from './pathwalk';
 import { lamp } from './props';
 
@@ -159,24 +160,30 @@ export function buildHomeHills(): HomeOut {
     crane.add(mast);
     const head = new THREE.Group();
     head.position.y = 20.4;
-    const mk = (g: THREE.BufferGeometry, mt: THREE.Material, x: number, y: number, z: number): THREE.Mesh => {
-      const me = new THREE.Mesh(g, mt);
-      me.position.set(x, y, z);
-      me.castShadow = true;
-      return me;
-    };
-    head.add(mk(new THREE.BoxGeometry(0.5, 0.7, 20), yel, 0, 0.9, -7));
-    head.add(mk(new THREE.BoxGeometry(0.5, 0.7, 6), yel, 0, 0.9, 6.5));
-    head.add(mk(new THREE.BoxGeometry(1.6, 1.0, 2.4), new THREE.MeshStandardMaterial({ color: '#7fd8ff', roughness: 0.3, metalness: 0.4 }), 0, 0.2, 0.2));
-    head.add(mk(new THREE.BoxGeometry(1.8, 1.4, 1.8), new THREE.MeshStandardMaterial({ color: '#8a8d96', roughness: 0.7 }), 0, 0.5, 8.6));
-    const A = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 4), mat.neon('#ff3b3b'));
-    A.position.set(0, 2.2, 0);
-    head.add(A);
-    const hook = new THREE.Group();
-    hook.position.set(0, 0.5, -14);
-    hook.add(mk(new THREE.BoxGeometry(0.06, 7, 0.06), new THREE.MeshStandardMaterial({ color: '#2d3038' }), 0, -3.5, 0));
-    hook.add(mk(new THREE.BoxGeometry(1.6, 1.0, 1.6), new THREE.MeshStandardMaterial({ color: '#00d4ff', roughness: 0.4 }), 0, -7.6, 0));
-    head.add(hook);
+    // v3 draw-call diet: the whole turning head (jib, counterweight, cab, light, cable and hook) is ONE vertex-coloured mesh
+    const parts: { g: THREE.BufferGeometry; c: string; x: number; y: number; z: number }[] = [
+      { g: new THREE.BoxGeometry(0.5, 0.7, 20), c: '#ffc93c', x: 0, y: 0.9, z: -7 },
+      { g: new THREE.BoxGeometry(0.5, 0.7, 6), c: '#ffc93c', x: 0, y: 0.9, z: 6.5 },
+      { g: new THREE.BoxGeometry(1.6, 1.0, 2.4), c: '#7fd8ff', x: 0, y: 0.2, z: 0.2 },
+      { g: new THREE.BoxGeometry(1.8, 1.4, 1.8), c: '#8a8d96', x: 0, y: 0.5, z: 8.6 },
+      { g: new THREE.ConeGeometry(0.5, 1.2, 4), c: '#ff3b3b', x: 0, y: 2.2, z: 0 },
+      { g: new THREE.BoxGeometry(0.06, 7, 0.06), c: '#2d3038', x: 0, y: 0.5 - 3.5, z: -14 },
+      { g: new THREE.BoxGeometry(1.6, 1.0, 1.6), c: '#00d4ff', x: 0, y: 0.5 - 7.6, z: -14 },
+    ];
+    const col = new THREE.Color();
+    const pieces = parts.map(({ g, c, x, y, z }) => {
+      const q = g.toNonIndexed();
+      q.translate(x, y, z);
+      for (const n of Object.keys(q.attributes)) if (n !== 'position' && n !== 'normal') q.deleteAttribute(n);
+      col.set(c);
+      const arr = new Float32Array(q.attributes.position.count * 3);
+      for (let i = 0; i < q.attributes.position.count; i++) arr.set([col.r, col.g, col.b], i * 3);
+      q.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      return q;
+    });
+    const headMesh = new THREE.Mesh(mergeGeometries(pieces, false), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.2 }));
+    headMesh.castShadow = true;
+    head.add(headMesh);
     crane.add(head);
     colliders.push({ kind: 'circle', x: cx, z: cz, r: 0.9 });
     (crane.userData as { head: THREE.Group }).head = head;
@@ -184,8 +191,7 @@ export function buildHomeHills(): HomeOut {
 
   const group = new THREE.Group();
   group.name = 'homehills';
-  group.add(m.build('home-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('home-static', m.build('home-static'), bakeStatic(ex)));
   group.add(crane);
   return {
     group,

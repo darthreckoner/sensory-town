@@ -80,8 +80,9 @@ export class Slide {
     } else this.turn += (0 - this.turn) * Math.min(1, dt * 8);
     // the slope under the knees: downhill pulls, uphill drags; friction always
     const dx = this.dirX, dz = this.dirZ;
-    const hAhead = surfaceY(f.x + dx * 0.9, f.z + dz * 0.9, f.y);
-    const hBack = surfaceY(f.x - dx * 0.9, f.z - dz * 0.9, f.y);
+    // (sampled from a metre above the knees so the uphill side of a built ramp is still found)
+    const hAhead = surfaceY(f.x + dx * 0.9, f.z + dz * 0.9, f.y + 1);
+    const hBack = surfaceY(f.x - dx * 0.9, f.z - dz * 0.9, f.y + 1);
     const slope = clamp((hAhead - hBack) / 1.8, -1.2, 1.2); // rise per metre (negative = downhill)
     const acc = -slope * m.slideGravity - m.slideFriction;
     this.speed = clamp(this.speed + acc * dt, 0, m.slideMax);

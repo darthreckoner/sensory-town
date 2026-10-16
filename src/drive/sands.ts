@@ -12,7 +12,7 @@ import { Mesher } from './mesher';
 import { mat } from './kit';
 import { poiSign } from './poiSign';
 import { PAL } from './palette';
-import { InstanceBatch, bakeStatic, put } from './envUtils';
+import { InstanceBatch, bakeStatic, mergeStaticGroups, put } from './envUtils';
 
 export interface SandsOut extends Piece {
   palms: { x: number; z: number; s: number }[];
@@ -273,8 +273,7 @@ export function buildSands(): SandsOut {
 
   const group = new THREE.Group();
   group.name = 'sands';
-  group.add(m.build('sands-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('sands-static', m.build('sands-static'), bakeStatic(ex)));
   group.add(live);
   void InstanceBatch;
   return {

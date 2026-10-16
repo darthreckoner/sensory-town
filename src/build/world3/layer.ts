@@ -11,6 +11,7 @@ import { ghostify } from '../mats';
 import { buildSpace, TILE, STOREY, THICK, ROOF_RISE, pieceFrame, pieceTopAt } from '../../world/buildSpace';
 import { tuning } from '../../tuning';
 import { genBuildPiece, skirtFor } from './geo';
+import { drawnMeshes, newLodChunk, resetLod, stepLod, type LodChunk, type LodRanges } from './lod';
 
 const C = tuning.build3.chunk;
 const chunkKey = (p: Pick<BuildPiece, 'ix' | 'iz'>) => `${Math.floor(p.ix / C)},${Math.floor(p.iz / C)}`;
@@ -23,9 +24,8 @@ export function frameMatrix(p: BuildPiece, out = new THREE.Matrix4()): THREE.Mat
   return out.makeTranslation(f.x, f.y, f.z).multiply(_rot.makeRotationY(ry));
 }
 
-interface Chunk {
+interface Chunk extends LodChunk {
   key: string;
-  group: THREE.Group;
   ids: Set<string>;
   dirty: boolean;
 }
@@ -71,7 +71,7 @@ export class BuildLayer {
     const key = chunkKey(p);
     let ch = this.chunks.get(key);
     if (!ch) {
-      ch = { key, group: new THREE.Group(), ids: new Set(), dirty: false };
+      ch = { ...newLodChunk(new THREE.Group()), key, ids: new Set(), dirty: false };
       this.group.add(ch.group);
       this.chunks.set(key, ch);
     }
@@ -101,6 +101,23 @@ export class BuildLayer {
     }
     baker.base.identity();
     if (n) bakedToGroup(baker.bake(), ch.group);
+    resetLod(ch);   // new meshes: measure them again, and give them the level their distance asks for right away
+    if (this.camSet) stepLod(ch, this.cam.x, this.cam.y, this.cam.z, this.ranges());
+  }
+
+  // ── distance detail (lod.ts) ──
+  private cam = new THREE.Vector3();
+  private camSet = false;
+  private ranges(): LodRanges {
+    const b = tuning.build3;
+    return { flatAt: b.lodFlat, hideAt: b.lodHide, shadowAt: b.lodShadow, hyst: b.lodHyst };
+  }
+  /** Per frame: each chunk draws full, flat (one mesh) or not at all, by its distance to the camera. */
+  lod(x: number, y: number, z: number): void {
+    this.cam.set(x, y, z);
+    this.camSet = true;
+    const r = this.ranges();
+    for (const ch of this.chunks.values()) stepLod(ch, x, y, z, r);
   }
 
   private makeAnchor(p: BuildPiece): THREE.Group {
@@ -249,7 +266,7 @@ export class BuildLayer {
 
   stats(): { meshes: number; chunks: number; live: number; pieces: number } {
     let meshes = 0;
-    for (const ch of this.chunks.values()) meshes += ch.group.children.length;
+    for (const ch of this.chunks.values()) meshes += drawnMeshes(ch);   // (what is drawn this frame, not just baked)
     return { meshes, chunks: this.chunks.size, live: this.live.size, pieces: buildSpace.size };
   }
 

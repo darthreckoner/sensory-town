@@ -298,7 +298,7 @@ export const tuning = {
     // world
     cloudSpeed: 0.0035,
     scenerySeed: 20261016,
-    cullTerrain: 370,          // terrain chunks farther than this hide (v3: the haze fully hides them by then)
+    cullTerrain: 520,          // terrain chunks farther than this hide (v3: the haze fully hides them by then)
     cullVegetation: 200,
     // ── v3 rides: defaults every ride starts from (tuning.rides.<kind> overrides them) ──
     hover: 0,                  // ride height above the ground (the hoverboard floats)
@@ -419,6 +419,14 @@ export const tuning = {
     decorReach: 3.6,           // decor ghost distance in front of the player (m)
     decorMax: 600,
     stepUp: 0.62,              // surfaceBelow() tolerance (matches tuning.drive.stepUp)
+    // distance detail (build/world3/lod.ts): metres from the CAMERA to the nearest bit of a chunk
+    lodFlat: 120,              // builds: farther than this a chunk draws as ONE flat vertex-coloured mesh (textures are too small to see)
+    lodHide: 330,              // ...and past this (the fog has swallowed it by then) it is not drawn
+    lodShadow: 55,             // builds: only chunks nearer than this cast shadows (the sun's shadow box is ~46 m)
+    decorFlat: 30,             // decor: farther than this a chunk draws as one flat mesh (a dozen materials -> 1 draw call)
+    decorHide: 70,             // ...and past this it is not drawn
+    decorShadow: 40,
+    lodHyst: 8,                // a chunk comes this far back inside a range before it changes level again (no flicker on an edge)
   },
 
   // ── v3 emote (W5): the in-world emote wheel, its camera swing and music ─────────────────

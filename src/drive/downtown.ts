@@ -9,7 +9,7 @@ import { terrainHeight } from '../world/heightfield';
 import type { Collider } from '../world/townEnv';
 import type { DoorDef, Piece } from './types';
 import { Mesher } from './mesher';
-import { bakeStatic } from './envUtils';
+import { bakeStatic, mergeStaticGroups } from './envUtils';
 import { FACADE_TILE, facadeMat, mat, signs } from './kit';
 import { PAL } from './palette';
 import { arcade, boba, boutique, cinema, diner, kicks, mall, shop, studio, type Built } from './shops';
@@ -126,9 +126,7 @@ export function buildDowntown(): DowntownOut {
   // ── emit ──
   const group = new THREE.Group();
   group.name = 'downtown';
-  group.add(m.build('downtown-static'));
-  const baked = bakeStatic(ex);
-  group.add(baked);
+  group.add(mergeStaticGroups('downtown-static', m.build('downtown-static'), bakeStatic(ex))); // v3: one mesh per material, not two
   // glow rings + animated beams stay as separate meshes
   const keep: Collider[] = [];
   for (const b of bd) for (const c of b.colliders) keep.push(c);

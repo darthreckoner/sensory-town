@@ -1,5 +1,5 @@
 // IndexedDB persistence with a versioned schema + migration hook.
-import { SAVE_VERSION, type SaveData, emptySave, defaultSettings, defaultLocker, STARTER_OUTFITS, V1_STARTER_OUTFITS, V1_STARTER_CARS } from './model';
+import { SAVE_VERSION, type SaveData, emptySave, defaultSettings, defaultLocker, STARTER_EMOTES, STARTER_OUTFITS, V1_STARTER_OUTFITS, V1_STARTER_CARS } from './model';
 import { tuning } from '../tuning';
 
 const DB_NAME = 'sensory-town';
@@ -91,6 +91,10 @@ export function migrate(raw: any): SaveData {
       p.locker = defaultLocker();
       p.locker.wraps.sports = { color: p.carColor, finish: p.carStyle?.finish };
     }
+    // early v3 saves had a placeholder 'dance1' and only 2 wheel slots: give them the starter emotes
+    const wheel = p.locker.emotes.filter((id) => id !== 'dance1');
+    for (const id of STARTER_EMOTES) if (wheel.length < 6 && !wheel.includes(id)) wheel.push(id);
+    p.locker.emotes = wheel;
     if (wasV1) {
       // a kid who never touched their v1 starter look gets the v2 (tween) starter look + car
       const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

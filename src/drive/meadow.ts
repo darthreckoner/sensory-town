@@ -11,7 +11,7 @@ import { Mesher } from './mesher';
 import { mat } from './kit';
 import { poiSign } from './poiSign';
 import { PAL } from './palette';
-import { bakeStatic, put } from './envUtils';
+import { bakeStatic, mergeStaticGroups, put } from './envUtils';
 
 export interface MeadowOut extends Piece {
   trees: { x: number; z: number; kind: 'oak' | 'birch'; scale: number }[];
@@ -262,8 +262,7 @@ export function buildMeadow(): MeadowOut {
 
   const group = new THREE.Group();
   group.name = 'meadow';
-  group.add(m.build('meadow-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('meadow-static', m.build('meadow-static'), bakeStatic(ex)));
   group.add(balloon, live);
   return {
     group,

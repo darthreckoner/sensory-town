@@ -9,7 +9,7 @@ import type { Piece } from './types';
 import { Mesher } from './mesher';
 import { mat, signs, signUV } from './kit';
 import { PAL } from './palette';
-import { bakeStatic } from './envUtils';
+import { bakeStatic, mergeStaticGroups } from './envUtils';
 import { lamp } from './props';
 
 function mural(seed: number, w = 768, h = 256): THREE.MeshStandardMaterial {
@@ -162,7 +162,6 @@ export function buildSkate(): Piece {
 
   const group = new THREE.Group();
   group.name = 'skate';
-  group.add(m.build('skate-static'));
-  group.add(bakeStatic(ex));
+  group.add(mergeStaticGroups('skate-static', m.build('skate-static'), bakeStatic(ex)));
   return { group, colliders, cull: { x: -28, z: 108, r: 150 } };
 }

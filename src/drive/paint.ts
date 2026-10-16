@@ -14,7 +14,8 @@ const RIMS = ['#d9dce6', '#1d1b26', '#ffc93c', '#ff2e88', '#00d4ff'];
 const FINISHES: { id: RideFinish; icon: string; label: string; lock?: string }[] = [
   { id: 'gloss', icon: '✨', label: 'Gloss' },
   { id: 'matte', icon: '🌫️', label: 'Matte' },
-  { id: 'glitter', icon: '💎', label: 'Glitter' },
+  { id: 'pearl', icon: '🫧', label: 'Pearl', lock: 'wrap.pearl' },
+  { id: 'glitter', icon: '💎', label: 'Glitter', lock: 'wrap.glitter' },
   { id: 'chrome', icon: '🪞', label: 'Chrome', lock: 'car.chrome' },
 ];
 

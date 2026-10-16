@@ -283,6 +283,8 @@ export class Character {
   private glideW = 0;
   private skyTarget = 0;
   private skyW = 0;
+  private slideTarget = 0;
+  private slideW = 0;
   /** Where a glider's grip sits while gliding (origin = the point between the hands, canopy above). */
   readonly gliderAnchor = new THREE.Object3D();
   /** Upper-back mount for back blings (origin at the mount, +Z points away from the back). */
@@ -461,6 +463,18 @@ export class Character {
   get skydiving(): boolean {
     return this.skyTarget > 0.5;
   }
+  /**
+   * Knee slide (the Fortnite-style slide): leaning back ~35 deg with the hips low, one leg out in front
+   * and straight, the other bent under, arms out for balance, a big grin. Blends in and out over
+   * ~0.15 s. The pose lowers the hips and leans the torso itself, so the caller does NOT need to
+   * tilt or lower the group: keep it upright (only yaw / slope-align it) and slide it along the ground.
+   */
+  setSlide(on: boolean): void {
+    this.slideTarget = on ? 1 : 0;
+  }
+  get sliding(): boolean {
+    return this.slideTarget > 0.5;
+  }
   /** A distinct sprint (full run pose, faster arms, more lean); call alongside setMove. */
   setSprint(on: boolean): void {
     this.gait.sprintT = on ? 1 : 0;
@@ -481,7 +495,7 @@ export class Character {
    */
   playEmote(id: string): boolean {
     const info = EMOTES.find((e) => e.id === id);
-    if (!info || this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5) return false;
+    if (!info || this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5 || this.slideTarget > 0.5) return false;
     this.poseAnim = null;
     if (id === 'wave') this.waveAnim = { t: 0, dur: tuning.dressup.waveSeconds };
     this.emote = { id, t: 0, dur: id === 'wave' ? tuning.dressup.waveSeconds : EMOTE_SECONDS[id] ?? 0, loop: info.loop, stopping: false };
@@ -651,6 +665,7 @@ export class Character {
     this.swimW += (this.swimTarget - this.swimW) * (1 - Math.exp(-dt / 0.07));
     this.glideW += (this.glideTarget - this.glideW) * (1 - Math.exp(-dt / 0.12));
     this.skyW += (this.skyTarget - this.skyW) * (1 - Math.exp(-dt / 0.07));
+    this.slideW += (this.slideTarget - this.slideW) * (1 - Math.exp(-dt / 0.05));
     {
       const idleW = this.seated ? 0 : (1 - G.w) * (1 - G.air) * (1 - this.swimW) * (1 - this.glideW) * (1 - Math.max(G.crouch, G.land));
       const ws = Math.sin(T * 0.31) * 0.7 + Math.sin(T * 0.77 + 1.3) * 0.3;
@@ -799,7 +814,7 @@ export class Character {
       const em = this.emote;
       em.t += dt;
       if (!em.loop && !em.stopping && em.t >= em.dur) em.stopping = true;
-      if (this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5) em.stopping = true;
+      if (this.seated || this.swimTarget > 0.5 || this.glideTarget > 0.5 || this.skyTarget > 0.5 || this.slideTarget > 0.5) em.stopping = true;
       const yawLeft = em.id === 'twirl' ? Math.ceil(this.emoteYaw / TAU - 1e-4) * TAU - this.emoteYaw : 0;
       const hold = em.stopping && yawLeft > 0.03; // a twirl finishes its turn
       this.emoteW += ((em.stopping && !hold ? 0 : 1) - this.emoteW) * (1 - Math.exp(-dt / (em.stopping && !hold ? 0.16 : 0.12)));
@@ -1071,6 +1086,36 @@ export class Character {
       smile = Math.max(smile, 0.85 * kw);
       open = Math.max(open, 0.7 * kw);
       squint = Math.max(squint, 0.35 * kw);
+    }
+    // ── v3: knee slide (leaning back, hips low, one leg out front, the other bent under, arms out, big grin) ──
+    if (this.slideW > 0.002) {
+      const w = this.slideW;
+      const wob = Math.sin(T * 9) * 0.03;
+      A.forEach((a, i) => {
+        blend(a, -0.25 + (i === 0 ? wob : -wob), 1.05 + (i === 0 ? -wob : wob), -0.4, 0, w);
+        wristTo(a, 0, 0, w);
+      });
+      if (w > 0.4) hk[0] = hk[1] = 'open';
+      // leg 0 (+x): out in front and straight; leg 1: the knee down, the shin tucked back under
+      L[0].hx = lerp(L[0].hx, -1.08, w);
+      L[0].kx = lerp(L[0].kx, 0.06, w);
+      L[0].hz = lerp(L[0].hz, 0.05, w);
+      L[1].hx = lerp(L[1].hx, -0.12, w);
+      L[1].kx = lerp(L[1].kx, 1.95, w);
+      L[1].hz = lerp(L[1].hz, 0.1, w);
+      rigY = lerp(rigY, -0.39 + Math.sin(T * 7) * 0.006, w); // hips low: the trailing knee sits just above the ground
+      rigX = lerp(rigX, 0, w);
+      leanX = lerp(leanX, -0.62, w); // lean back ~35 deg
+      headX = lerp(headX, 0.5, w); // the head stays up, looking where it is going
+      headY = lerp(headY, 0, w);
+      headZ = lerp(headZ, 0, w);
+      twistY = lerp(twistY, 0.14, w);
+      rollZ = lerp(rollZ, -0.05 + wob, w);
+      rigRollZ = lerp(rigRollZ, 0, w);
+      smile = Math.max(smile, w);
+      open = Math.max(open, 0.9 * w);
+      squint = Math.max(squint, 0.5 * w);
+      browUp = Math.max(browUp, 0.6 * w);
     }
     this.backMount.visible = this.glideW < 0.5;
 

@@ -10,9 +10,15 @@ import { PIECE_CATALOG, localCells, pieceDef, type PieceDef } from '../catalog';
 import { genPiece } from '../pieces';
 import { makeCtx } from '../rules';
 import { tuning } from '../../tuning';
+import { drawnMeshes, newLodChunk, resetLod, stepLod, type LodChunk, type LodRanges } from './lod';
 
 const CH = 36;   // metres per decor chunk
 const chunkOf = (d: Pick<WorldDecor, 'x' | 'z'>) => `${Math.floor(d.x / CH)},${Math.floor(d.z / CH)}`;
+interface DecorChunk extends LodChunk {
+  key: string;
+  ids: Set<string>;
+  dirty: boolean;
+}
 
 /** Catalog items that make sense standing free in the world: furniture, rugs, plants, outdoor props. */
 export function decorCatalog(): PieceDef[] {
@@ -66,7 +72,9 @@ export function decorObject(d: WorldDecor): THREE.Group | null {
 export class DecorLayer {
   readonly group = new THREE.Group();
   readonly items = new Map<string, WorldDecor>();
-  private chunks = new Map<string, { key: string; group: THREE.Group; ids: Set<string>; dirty: boolean }>();
+  private chunks = new Map<string, DecorChunk>();
+  private cam = new THREE.Vector3();
+  private camSet = false;
 
   constructor() {
     this.group.name = 'decor';
@@ -87,7 +95,7 @@ export class DecorLayer {
     const key = chunkOf(d);
     let ch = this.chunks.get(key);
     if (!ch) {
-      ch = { key, group: new THREE.Group(), ids: new Set(), dirty: true };
+      ch = { ...newLodChunk(new THREE.Group()), key, ids: new Set(), dirty: true };
       this.group.add(ch.group);
       this.chunks.set(key, ch);
     }
@@ -124,7 +132,7 @@ export class DecorLayer {
     this.add(d);
   }
 
-  private bake(ch: { group: THREE.Group; ids: Set<string>; dirty: boolean }): void {
+  private bake(ch: DecorChunk): void {
     ch.dirty = false;
     disposeBaked(ch.group);
     ch.group.clear();
@@ -143,6 +151,20 @@ export class DecorLayer {
     }
     baker.base.identity();
     if (n) bakedToGroup(baker.bake(), ch.group);
+    resetLod(ch);
+    if (this.camSet) stepLod(ch, this.cam.x, this.cam.y, this.cam.z, this.ranges());
+  }
+
+  // ── distance detail (lod.ts): decor is lots of small material changes, so far chunks draw as ONE flat mesh and very far ones not at all ──
+  private ranges(): LodRanges {
+    const b = tuning.build3;
+    return { flatAt: b.decorFlat, hideAt: b.decorHide, shadowAt: b.decorShadow, hyst: b.lodHyst };
+  }
+  lod(x: number, y: number, z: number): void {
+    this.cam.set(x, y, z);
+    this.camSet = true;
+    const r = this.ranges();
+    for (const ch of this.chunks.values()) stepLod(ch, x, y, z, r);
   }
 
   /** At most one dirty chunk re-bakes per call. */
@@ -177,7 +199,7 @@ export class DecorLayer {
 
   stats(): { meshes: number; chunks: number; items: number } {
     let meshes = 0;
-    for (const ch of this.chunks.values()) meshes += ch.group.children.length;
+    for (const ch of this.chunks.values()) meshes += drawnMeshes(ch);
     return { meshes, chunks: this.chunks.size, items: this.items.size };
   }
 
