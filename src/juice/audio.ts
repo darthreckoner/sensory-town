@@ -790,13 +790,15 @@ class AudioEngine {
     g.connect(this.sfx);
     src.start(0, Math.random() * 1.5);
     g.gain.setTargetAtTime(0.18, ctx.currentTime, 0.15);
-    this.wind = { src, bp, g };
+    this.wind = { src, bp, g };    this.loopSeen.wind = performance.now();
+    this.armLoopDog();
   }
   windSet(speed01: number, dive: number): void {
     if (!this.ctx) return;
     if (!this.wind) this.windStart();
     const w = this.wind;
     if (!w) return;
+    this.loopSeen.wind = performance.now();
     const t = this.ctx.currentTime;
     w.bp.frequency.setTargetAtTime(380 + speed01 * 1500 + dive * 600, t, 0.12);
     w.g.gain.setTargetAtTime(0.1 + speed01 * 0.42 + dive * 0.1, t, 0.12);
@@ -807,6 +809,27 @@ class AudioEngine {
     this.wind = null;
     w.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
     setTimeout(() => w.src.stop(), 700);
+  }
+
+  /**
+   * Looping noise voices (slide scrape, glide/zip wind) are refreshed every frame
+   * while they're live. If the refreshes stop (a missed stop event: hopping into a
+   * ride mid-slide, a scene change, a slide that launches into a glide) the voice
+   * fades itself out instead of hissing forever.
+   */
+  private loopSeen = { slide: 0, wind: 0 };
+  private loopDog: number | null = null;
+  private armLoopDog(): void {
+    if (this.loopDog !== null) return;
+    this.loopDog = window.setInterval(() => {
+      const now = performance.now();
+      if (this.slideV && now - this.loopSeen.slide > 300) this.slideStop();
+      if (this.wind && now - this.loopSeen.wind > 300) this.windStop();
+      if (!this.slideV && !this.wind && this.loopDog !== null) {
+        clearInterval(this.loopDog);
+        this.loopDog = null;
+      }
+    }, 120);
   }
 
   // the slide: a scrape that follows the speed (a soft hiss on snow, a rougher rumble on the ground)
@@ -832,13 +855,15 @@ class AudioEngine {
     g.connect(this.sfx);
     src.start(0, Math.random() * 1.5);
     g.gain.setTargetAtTime(0.12, ctx.currentTime, 0.05);
-    this.slideV = { src, bp, lp, g };
+    this.slideV = { src, bp, lp, g };    this.loopSeen.slide = performance.now();
+    this.armLoopDog();
   }
   slideSet(speed01: number, snow: boolean): void {
     if (!this.ctx) return;
     if (!this.slideV) this.slideStart();
     const v = this.slideV;
     if (!v) return;
+    this.loopSeen.slide = performance.now();
     const t = this.ctx.currentTime;
     v.bp.frequency.setTargetAtTime((snow ? 1700 : 650) + speed01 * (snow ? 1800 : 900), t, 0.08);
     v.bp.Q.setTargetAtTime(snow ? 0.55 : 1.1, t, 0.1);
