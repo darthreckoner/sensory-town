@@ -111,6 +111,7 @@ export class PickerScene extends GameScene {
       root.add(spot);
       const char = new Character(p.outfit);
       char.group.position.y = 0.08;
+      char.group.scale.setScalar(1.25);
       char.group.rotation.y = (i - (ps.length - 1) / 2) * -0.15;
       root.add(char.group);
       this.stage.add(root);
@@ -215,7 +216,7 @@ export class PickerScene extends GameScene {
     super.resize(w, h);
     // fit more players on narrow screens
     const n = Math.max(2, store.data.profiles.length);
-    this.camera.position.set(0, 2.9, 7.4 + Math.max(0, n - 2) * 1.6 + (w / h < 1.2 ? 4 : 0));
-    this.camera.lookAt(0, 1.45, 0);
+    this.camera.position.set(0, 2.4, 6.4 + Math.max(0, n - 2) * 1.6 + (w / h < 1.2 ? 4 : 0));
+    this.camera.lookAt(0, 1.35, 0);
   }
 }

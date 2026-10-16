@@ -176,3 +176,57 @@ export function nameTag(parent: HTMLElement, text: string): HTMLDivElement {
 }
 
 export const MIN_TAP = tuning.app.minTouchTarget;
+
+/**
+ * Hold-to-confirm button for destructive actions (start over, delete): the
+ * kid presses and holds; a fill sweeps across; release early = nothing happens
+ * (plus a hint). Prevents a stray double-tap from wiping their work.
+ */
+export function holdButton(parent: HTMLElement | null, opts: BtnOpts & { holdMs?: number; hint?: string }, onConfirm: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = `btn hold ${opts.cls ?? ''}`.trim();
+  const fill = el('span', 'hold-fill', b);
+  if (opts.icon) el('span', 'ico', b, opts.icon);
+  if (opts.label) el('span', 'lbl', b, opts.label);
+  const ms = opts.holdMs ?? 650;
+  let timer: number | null = null;
+  let downAt = 0;
+  const reset = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    fill.style.transition = 'none';
+    fill.style.transform = 'scaleX(0)';
+    b.classList.remove('pressed');
+  };
+  b.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    downAt = performance.now();
+    b.classList.add('pressed');
+    try {
+      b.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    fill.style.transition = `transform ${ms}ms linear`;
+    requestAnimationFrame(() => (fill.style.transform = 'scaleX(1)'));
+    fill.style.transform = 'scaleX(1)';
+    timer = window.setTimeout(() => {
+      timer = null;
+      reset();
+      bus.emit('uiTap', { kind: opts.tap ?? 'big' });
+      onConfirm();
+    }, ms);
+  });
+  const cancel = (e: PointerEvent) => {
+    e.stopPropagation();
+    if (timer === null) return;
+    const held = performance.now() - downAt;
+    reset();
+    if (held < ms) toast(opts.hint ?? 'Hold to confirm');
+  };
+  b.addEventListener('pointerup', cancel);
+  b.addEventListener('pointercancel', cancel);
+  b.addEventListener('click', (e) => e.preventDefault());
+  parent?.appendChild(b);
+  return b;
+}

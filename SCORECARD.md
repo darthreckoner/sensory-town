@@ -87,3 +87,85 @@ Why a new rubric: v1 graded polish, not audience fit; the designer correctly cal
 **Grading rule:** every 7+ must survive a written counter-argument ("why an 11-year-old would still call it babyish/boring"); if the counter-argument wins, the grade drops.
 **Designer's 5 notes** (each needs screenshot evidence to count as fixed): (1) preschool tone, (2) exploration/building minimal, (3) walk around + into buildings, (4) can't find home building, (5) sounds: less Animal Crossing, more Roblox.
 **External check (the real one):** 15-min silent session with the kids on the iPads — pass = find + start a home unaided, crack wax ≥3× voluntarily, nobody says "babyish", they ask to keep playing.
+
+### v2 cold-run grades — 2026-10-16 (rubric above, locked before play)
+**Method:**
+- Fresh IndexedDB, 1180×820 and 820×1180.
+- Real taps on the UI; driving and walking used a key-input bot (DOM events through the game's own input).
+- Event telemetry on every action, render cost per scene.
+
+**Totals:** 12 scene visits, 5,000+ events logged, **0 console errors**, juice audit **70/70 events mapped**, tsc + build clean.
+
+**Six tasks (cognitive walkthrough):**
+
+| Task | Result | Taps / time | Notes |
+|---|---|---|---|
+| T1 pick player | ✅ | 1 tap | Switch chime, wave. Characters too small on the stage. |
+| T2 change outfit | ✅ | 3 taps | Camera glides to the part, sparkles. **Black renders near-white** (fabric sheen under spotlights). |
+| T3 reach the Studio | ✅ | ~50 m drive | **"Arrived" chime re-fires every frame during the fade** (~15× stacked). Studio pad approach awkward. |
+| T4 crack wax | ✅ | Pick→Coat→dip→pour→Crack→Cool→squeeze | Ring-light gloss on wax, drips, cracks from the press point, gradual flakes. **Button reflow put "✨ New" where "Cool" was → one tap wiped the coat.** Pot/jug/plate are still v1 pastel. |
+| T5 build a home | ✅ | ~20 s of play from town | Guide pill → FOR SALE mat (walked in) → "Choose your starter home" → Two-story template (183 pieces, 2 floors) → +5 items. **Car rolling slowly over a neighbor's mat auto-claimed a 2nd lot**; starter sheet has no "Not now". A gateway banner blocks the chase camera. Wall items need walls (red ghost explains it). |
+| T6 creation in house | ✅ | Studio Save → Build → ⭐ Mine → drag | Mine tab half off-screen at 1180 px. |
+
+**Also verified:**
+- **Exploration:** 6 districts. Walking + driving. Charm hh1 on foot. Kicker jumps ×7. Charm sk4 on a ramp; the 2nd charm unlocked Glitter wax with the level-up fanfare. Portrait town HUD + touch controls OK. Slime v2 types and the stretch work.
+- **Bug (fixed during the run):** wax shell drawn over the Slime station after a cross-station Studio entry.
+
+**Render cost (peak, desktop measure):**
+
+| Scene | Draw calls | Triangles | Status |
+|---|---|---|---|
+| town | 516 | 273k | **over the ≤300-call bar** |
+| build edit | 450 | 254k | **over the ≤300-call bar** |
+| picker | 225 | — | |
+| style | 151 | — | |
+| studio | 120 | — | |
+
+The main cost is characters (58 meshes each) and per-piece house objects.
+
+**Designer's 5 notes:**
+1. **Preschool tone:** fixed. Neon picker, runway Style studio, downtown at golden hour, creator studio, teen characters. *Leftovers:* pastel wax props.
+2. **Exploration/building minimal:** fixed. 6 districts, 40 charms, ramps, 65 piece types, 2 floors, finishes, templates.
+3. **Walk + enter buildings:** fixed. 🚶 out, doors to Studio/Style/office/your own home.
+4. **Can't find home building:** fixed. Guide pill + FOR SALE signs + starter picker. *Side effect:* accidental claims.
+5. **Sounds less Animal Crossing:** fixed in code (re-voiced, beat music per place, all verified to play). **Not heard by ear.**
+
+**Grades (each 7+ had to survive a counter-argument):**
+
+| Row | Grade | Counter-argument tested | Survives? |
+|---|---|---|---|
+| Audience fit 9–11 | **7** | "The wax pot/jug/plate are still candy pastel; faces are plain." | Partly — props must change. Held at 7. |
+| P1 Make it yours | **7.5** | "I picked black and got grey — I can't make the look I want." | Partly — 8 → 7.5. |
+| P2 Satisfying touch | **8** | "Crack edges are stair-stepped." | Mostly survives. |
+| P3 Free play | **7.5** | "One tap erased my wax; driving claimed a lot I didn't want." | Wins vs 9 → 7.5. |
+| Exploration | **8** | "Pads are fiddly; the gateway banner blocks the view." | Mostly survives. |
+| Building depth | **7.5** | "Templates are packed, so placing things fails a lot." | Partly. |
+| Art / style | **7.5** | "Leftover pastel props; plain faces." | Partly. |
+| Playability | **6** ✗ | Zero errors and every task completes, **but** draw calls are ~1.7× budget on iPad plus four sev-2/3 bugs (wax New-button, black colour, auto-claim, chime spam). | — |
+| Sound | **7** | "No one has listened to it." | Held at 7 pending the kid session. |
+
+| Activity | Grade |
+|---|---|
+| Wax | 8 (8.5 once the button bug + props are fixed) |
+| Squishy | 7.5 |
+| Slime | 8 |
+| Style | 7 (black-colour bug) |
+| Driving / exploration | 8 |
+| Building | 7.5 |
+| Profiles + share | 7 |
+
+**Verdict:** NOT shipped yet — Playability 6. Round-2 tickets, ranked severity × reach:
+1. Draw calls: merge each character's static meshes, merge house pieces in edit mode, drop shadows on small props.
+2. Wax: stable button positions, no destructive tap without confirm.
+3. Black/dark fabric fidelity.
+4. FOR SALE: car shows a "Build here?" prompt instead of auto-claim, plus a "Not now" on the starter sheet.
+5. Arrive-chime re-fire guard during transitions.
+6. Pastel wax props → studio props (black pot, glass/steel jug, dark dish).
+7. Gateway banner vs camera.
+8. Picker characters bigger.
+9. Mine tab visible without scrolling.
+10. Wax layer thickness a touch up so the stripes read.
+
+**The real external check (not done — needs the kids):** 15-minute silent session on the iPads.
+- **Pass:** they find + start a home unaided, crack wax 3+ times voluntarily, nobody says "babyish", they ask to keep playing.
+- **Watch for:** where they hesitate (pads vs doors), whether they read the 💎 counter, whether the music gets switched off.

@@ -413,7 +413,7 @@ export const tuning = {
   wax: {
     waxColors: ['#ff2e88', '#7c4dff', '#00d4ff', '#b6ff3b', '#ffc93c', '#ff8a3d', '#e23b3b', '#16151c', '#f6f6f4', '#3d6bff', '#00b3a4', '#f6b8c8'],
     maxLayers: 6,
-    layerThickness: 0.055,     // world units added per layer
+    layerThickness: 0.07,      // world units added per layer (thick enough that the stripes read)
     shellGap: 0.012,
     hardenTime: 4.0,           // seconds glossy → matte
     coolSpeedMultiplier: 4,

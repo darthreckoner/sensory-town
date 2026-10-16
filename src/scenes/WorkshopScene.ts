@@ -254,6 +254,8 @@ export class WorkshopScene extends GameScene {
     }
     this.onExit(bus.on('creationSaved', () => this.refreshShelf()));
     const id = params?.station ?? this.activeId;
+    // hide every station first — the last visit may have left a different one visible
+    for (const st of this.stations.values()) st.root.visible = false;
     this.active = null;
     this.switchTo(id);
     this.setTab(id);

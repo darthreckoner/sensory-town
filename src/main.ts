@@ -4,6 +4,7 @@ import { store } from './core/store';
 import { initJuice } from './juice/juice';
 import { initDebug } from './core/debug';
 import { initTelemetry } from './core/telemetry';
+import { initSelfTest } from './core/selftest';
 import { initMenu, syncSettings } from './ui/menu';
 import { PickerScene } from './scenes/PickerScene';
 import { DressUpScene } from './scenes/DressUpScene';
@@ -30,6 +31,7 @@ async function boot(): Promise<void> {
 
   scenes.init();
   initTelemetry();
+  initSelfTest();
   initJuice();
   initMenu();
   initDebug();

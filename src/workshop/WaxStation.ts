@@ -10,7 +10,7 @@ import { store } from '../core/store';
 import { uid, type ShapeId } from '../core/model';
 import { tuning } from '../tuning';
 import { tweens, ease } from '../core/tween';
-import { el, button, swatches, bindTap, toast } from '../ui/ui';
+import { el, button, swatches, bindTap, toast, holdButton } from '../ui/ui';
 import { toyMat, mesh, roundedBox, blobShadow } from '../art/materials';
 import { SquishyBody } from './squishyBody';
 import { Coating, type Layer, type WaxFinish } from './wax/coating';
@@ -86,6 +86,7 @@ export class WaxStation implements Station {
   private hint!: HTMLDivElement;
   private stepBtns = new Map<Step, HTMLElement>();
   private coolBtn!: HTMLButtonElement;
+  private resetBtn!: HTMLButtonElement;
 
   init(ctx: StationContext): void {
     this.ctx = ctx;
@@ -106,9 +107,9 @@ export class WaxStation implements Station {
   private buildProps(): void {
     const ty = this.ctx.tableY;
     // plate (pick + crack)
-    const dish = mesh(new THREE.CylinderGeometry(1.75, 1.55, 0.14, 48), toyMat('#ffffff', 'gloss'));
+    const dish = mesh(new THREE.CylinderGeometry(1.75, 1.55, 0.14, 48), new THREE.MeshPhysicalMaterial({ color: '#1d1b26', roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1 }));
     dish.position.y = ty + 0.07;
-    const rim = mesh(new THREE.TorusGeometry(1.72, 0.06, 10, 48), toyMat('#ffc9dc', 'gloss'));
+    const rim = mesh(new THREE.TorusGeometry(1.72, 0.035, 10, 64), new THREE.MeshStandardMaterial({ color: '#00d4ff', emissive: '#00d4ff', emissiveIntensity: 1.6, toneMapped: false }), false, false);
     rim.rotation.x = Math.PI / 2;
     rim.position.y = ty + 0.14;
     const sh = blobShadow(2.0, 0.25);
@@ -118,12 +119,12 @@ export class WaxStation implements Station {
     this.root.add(this.plate);
 
     // pot (coat)
-    const potMat = toyMat('#9d8cff', 'gloss');
+    const potMat = new THREE.MeshPhysicalMaterial({ color: '#22202b', roughness: 0.55, clearcoat: 0.35, clearcoatRoughness: 0.4 });
     const pts: THREE.Vector2[] = [];
     const R = POT.radius, H = POT.height;
     pts.push(new THREE.Vector2(0, 0), new THREE.Vector2(R * 0.86, 0), new THREE.Vector2(R, 0.18), new THREE.Vector2(R * 1.02, H * 0.8), new THREE.Vector2(R * 1.06, H - 0.06), new THREE.Vector2(R * 1.08, H), new THREE.Vector2(R * 0.97, H), new THREE.Vector2(R * 0.93, H - 0.12), new THREE.Vector2(R * 0.9, 0.3), new THREE.Vector2(0, 0.3));
     const potBody = mesh(new THREE.LatheGeometry(pts, 48), potMat);
-    const band = mesh(new THREE.TorusGeometry(R * 1.035, 0.07, 10, 48), toyMat('#ffd166', 'gloss'));
+    const band = mesh(new THREE.TorusGeometry(R * 1.035, 0.06, 10, 64), new THREE.MeshStandardMaterial({ color: '#c8794a', metalness: 0.9, roughness: 0.3 }));
     band.rotation.x = Math.PI / 2;
     band.position.y = H * 0.45;
     this.potWax = mesh(new THREE.CircleGeometry(R * 0.93, 48), this.potWaxMat, false, true);
@@ -141,7 +142,7 @@ export class WaxStation implements Station {
 
     // candy stick the squishy hangs from (coat step)
     const stickGeo = new THREE.CylinderGeometry(0.06, 0.06, 4.5, 12);
-    const stick = mesh(stickGeo, toyMat('#ffffff', 'gloss'));
+    const stick = mesh(stickGeo, toyMat('#16151c', 'gloss'));
     stick.position.y = 2.25;
     for (let i = 0; i < 9; i++) {
       const stripe = mesh(new THREE.TorusGeometry(0.065, 0.025, 6, 16), toyMat('#ff5d8f', 'gloss'), false, false);
@@ -153,7 +154,7 @@ export class WaxStation implements Station {
     this.holder.add(this.stick);
 
     // jug (pour)
-    const jugMat = toyMat('#7fd8ff', 'gloss');
+    const jugMat = new THREE.MeshStandardMaterial({ color: '#b9bcc6', metalness: 0.85, roughness: 0.28 });
     const jp: THREE.Vector2[] = [new THREE.Vector2(0, 0), new THREE.Vector2(0.62, 0), new THREE.Vector2(0.7, 0.12), new THREE.Vector2(0.72, 0.9), new THREE.Vector2(0.6, 1.3), new THREE.Vector2(0.66, 1.5), new THREE.Vector2(0.58, 1.5), new THREE.Vector2(0.52, 1.32), new THREE.Vector2(0.62, 0.9), new THREE.Vector2(0.6, 0.18), new THREE.Vector2(0, 0.18)];
     const jugBody = mesh(new THREE.LatheGeometry(jp, 36), jugMat);
     const handle = mesh(new THREE.TorusGeometry(0.36, 0.07, 10, 24, Math.PI * 1.2), jugMat);
@@ -213,7 +214,11 @@ export class WaxStation implements Station {
       });
       this.stepBtns.set(s.id, b);
     }
-    this.actions = el('div', 'br col interactive wax-actions', this.ui) as HTMLDivElement;
+    // three fixed slots (top / middle / bottom) so no button ever jumps under a finger between steps
+    this.actions = el('div', 'br interactive wax-actions', this.ui) as HTMLDivElement;
+    // destructive "start over" lives bottom-left, away from the action column, and needs a hold
+    this.resetBtn = holdButton(null, { icon: '✨', label: 'New', cls: 'wax-reset', hint: 'Hold ✨ New to start over' }, () => this.newCoating());
+    this.ui.appendChild(this.resetBtn);
     this.hint = el('div', 'wax-hint', this.ui) as HTMLDivElement;
     this.coolBtn = button(null, { icon: '❄️', label: 'Cool', cls: 'blue big' }, () => this.cool());
   }
@@ -228,6 +233,7 @@ export class WaxStation implements Station {
     this.rightPanel.replaceChildren();
     this.actions.replaceChildren();
     for (const [s, b] of this.stepBtns) b.classList.toggle('on', s === this.step);
+    if (this.resetBtn) this.resetBtn.style.display = this.step === 'pick' || (this.step === 'coat' && !this.coating.layers.length) ? 'none' : '';
     if (this.step === 'pick') {
       this.leftPanel.style.display = '';
       this.rightPanel.style.display = '';
@@ -246,7 +252,7 @@ export class WaxStation implements Station {
         this.bodyColor = c;
         this.body.setColor(c);
       });
-      button(this.actions, { icon: '🫗', label: 'Coat', cls: 'primary big' }, () => this.setStep('coat'));
+      this.fillSlots(null, null, button(null, { icon: '🫗', label: 'Coat', cls: 'primary big' }, () => this.setStep('coat')));
       this.setHint('Pick a squishy');
     } else if (this.step === 'coat') {
       this.leftPanel.style.display = '';
@@ -289,25 +295,34 @@ export class WaxStation implements Station {
           b.classList.add('on');
         });
       }
-      this.actions.appendChild(this.coolBtn);
-      button(this.actions, { icon: '💥', label: 'Crack', cls: 'primary big' }, () => this.setStep('crack'));
+      this.fillSlots(null, this.coolBtn, button(null, { icon: '💥', label: 'Crack', cls: 'primary big' }, () => this.setStep('crack')));
       this.updateCoolBtn();
       this.setHint(layers.length ? 'Add another layer — dip or pour' : 'Drag it down into the wax ⬇️  or tilt the jug 🫗');
     } else {
       this.leftPanel.style.display = 'none';
       this.rightPanel.style.display = 'none';
-      this.actions.appendChild(this.coolBtn);
-      button(this.actions, { icon: '🔁', label: 'Again', cls: 'big' }, () => this.crackAgain());
-      button(this.actions, { icon: '✨', label: 'New', cls: 'big' }, () => this.newCoating());
-      button(this.actions, { icon: '💾', label: 'Save', cls: 'primary big' }, () => this.save());
+      this.fillSlots(
+        button(null, { icon: '🔁', label: 'Again', cls: 'big' }, () => this.crackAgain()),
+        this.coolBtn,
+        button(null, { icon: '💾', label: 'Save', cls: 'primary big' }, () => this.save()),
+      );
       this.updateCoolBtn();
       this.setHint(this.coating.allHard ? 'Squeeze to crack 👆' : 'Letting it set… or hit Cool ❄️');
     }
   }
 
+  /** Fill the three fixed action slots: [top, middle (Cool's home), bottom (primary)]. */
+  private fillSlots(top: HTMLElement | null, mid: HTMLElement | null, bottom: HTMLElement | null): void {
+    for (const b of [top, mid, bottom]) {
+      if (b) this.actions.appendChild(b);
+      else el('div', 'btn big slot-empty', this.actions);
+    }
+  }
+
   private updateCoolBtn(): void {
     const soft = this.coating.layers.length > 0 && !this.coating.allHard;
-    this.coolBtn.style.display = soft ? '' : 'none';
+    this.coolBtn.style.display = '';
+    this.coolBtn.style.visibility = soft ? 'visible' : 'hidden';
   }
 
   // ── steps ──────────────────────────────────────────────────────────────
