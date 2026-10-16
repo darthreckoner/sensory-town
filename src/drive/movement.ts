@@ -24,6 +24,7 @@ import { Mantle } from './mantle';
 import { Slide } from './slide';
 import { ZipLines } from './zipline';
 import { PoiCards } from './poi';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface MovementHost {
   scene: THREE.Scene;
@@ -296,7 +297,7 @@ export class Movement {
         f.y = this.glide.y;
         f.z = this.glide.z;
         f.heading = this.glide.heading;
-        f.speed = Math.hypot(this.glide.vx, this.glide.vz);
+        f.speed = hyp(this.glide.vx, this.glide.vz);
         f.grounded = false;
       }
       return true;
@@ -392,6 +393,7 @@ export class Movement {
     }
   }
 
+  private readonly tryZipCb = (): void => void this.tryZip();   // ── v3 perf ── hoisted (a closure per frame is garbage)
   // ── every frame (car or feet) ─────────────────────────────────────────────
   tick(dt: number, t: number): void {
     const p = this.h.where();
@@ -415,7 +417,7 @@ export class Movement {
         }
       }
     }
-    this.zip.tick(dt, this.h.foot, this.h.isFoot() && !this.busy && !this.h.leaving(), () => void this.tryZip());
+    this.zip.tick(dt, this.h.foot, this.h.isFoot() && !this.busy && !this.h.leaving(), this.tryZipCb);
     const alt = this.bus.active ? 80 : this.glide.active ? this.glide.altitude() : this.zip.active ? 20 : 0;
     this.poi.update(dt, p.x, p.z, alt);
   }

@@ -12,6 +12,7 @@ import { WATER_Y } from '../world/townLayout';
 import type { VehicleKind } from '../core/model';
 import type { Collider } from '../world/townEnv';
 import { clamp } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface CarInput {
   /** -1 (left) .. 1 (right) */
@@ -360,7 +361,7 @@ export class CarPhysics {
     if (this.grounded) {
       if (gy - this.y > d.climbLimit) {
         // a wall (the back of a ramp, a cliff): bounce off it
-        const sp2 = Math.hypot(this.vx, this.vz);
+        const sp2 = hyp(this.vx, this.vz);
         this.x = px;
         this.z = pz;
         this.vx *= -0.3;
@@ -463,7 +464,7 @@ export class CarPhysics {
           for (let n = 0; n < 8 && groundHeight(cx, cz, false, true) > d.shoreLimit; n++) {
             const gx = groundHeight(cx + 1.2, cz, false, true) - groundHeight(cx - 1.2, cz, false, true);
             const gz = groundHeight(cx, cz + 1.2, false, true) - groundHeight(cx, cz - 1.2, false, true);
-            const gl = Math.hypot(gx, gz);
+            const gl = hyp(gx, gz);
             if (gl < 1e-4) break;
             this.respond(-gx / gl, -gz / gl, 0.3, cx, cz, r);
             cx -= (gx / gl) * 0.3;
@@ -474,7 +475,7 @@ export class CarPhysics {
           for (let n = 0; n < 8 && groundHeight(cx, cz) < d.waterLimit; n++) {
             const gx = groundHeight(cx + 1.2, cz) - groundHeight(cx - 1.2, cz);
             const gz = groundHeight(cx, cz + 1.2) - groundHeight(cx, cz - 1.2);
-            const gl = Math.hypot(gx, gz);
+            const gl = hyp(gx, gz);
             if (gl < 1e-4) break;
             this.respond(gx / gl, gz / gl, 0.3, cx, cz, r);
             cx += (gx / gl) * 0.3;

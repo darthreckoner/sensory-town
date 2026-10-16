@@ -4,6 +4,7 @@
 //   F2 fill the town with test houses
 //   F3 hardenTime = 0
 import { scenes } from './scene';
+import { perf } from './perf';   // ── v3 perf ──
 import { store } from './store';
 import { tuning } from '../tuning';
 import { uid, type House, type PlacedPiece } from './model';
@@ -60,6 +61,7 @@ export function initDebug(): void {
       `profile ${store.profile?.name ?? '-'}`,
       `dpr     ${scenes.renderer.getPixelRatio().toFixed(2)}`,
       `calls   ${scenes.renderer.info.render.calls}  tris ${scenes.renderer.info.render.triangles}`,
+      ...perf.lines(),   // ── v3 perf ── worst ms (5 s), spikes > 50 ms, quality step, Low Power?
       `houses  ${store.data.town.houses.length}  decos ${store.data.town.decorations.length}`,
       `wax.hardenTime ${tuning.wax.hardenTime}  squishy.softness ${tuning.squishy.softness}`,
       `drive.topSpeed ${tuning.drive.topSpeed}  turnRate ${tuning.drive.turnRate}`,

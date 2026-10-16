@@ -14,6 +14,7 @@ import type { Ride } from './rides';
 import { ease, popScale, tweens } from '../core/tween';
 import { clamp, emojiSprite, lerpAngle, lightBeam } from './envUtils';
 import type { MapTarget } from './hud';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export type JobState = 'cooldown' | 'waiting' | 'boarding' | 'riding' | 'alighting';
 
@@ -22,7 +23,7 @@ export interface JobTarget extends MapTarget {
 }
 
 // ── a tall bouncing marker: ground ring, light column, spinning arrow (+ icon) ──
-class Beacon {
+export class Beacon {   // (v3 perf: exported so the town pre-warm can draw one once)
   readonly group = new THREE.Group();
   private readonly ring: THREE.Mesh;
   private readonly disc: THREE.Mesh;
@@ -82,6 +83,27 @@ function pick<T>(a: readonly T[]): T {
   return a[(Math.random() * a.length) | 0];
 }
 
+// ── v3 perf ── Building a Character costs 15-30 ms on a desktop (about 3x that on an iPad): a hitch at every job spawn and again at
+// boarding. So the passengers are built ahead of time: a few at the town load (behind the fade, core/prewarm.ts, which also draws
+// them once so their buffers are on the GPU), and one more whenever the player stands still and the pool is short.
+interface NpcEntry {
+  outfit: Outfit;
+  standing: Character;
+  seated: Character;
+}
+const npcPool: NpcEntry[] = [];
+const NPC_POOL = 4;
+let npcHalf: { outfit: Outfit; standing: Character } | null = null;   // (the idle top-up builds the two halves on separate frames)
+function makeNpc(): NpcEntry {
+  const outfit = randomOutfit();
+  return { outfit, standing: new Character(outfit), seated: new Character(outfit, { seated: true, shadows: false }) };
+}
+/** Fill the pool (town load). Returns every pooled object so the caller can draw them once. */
+export function prebuildJobNpcs(n = NPC_POOL): THREE.Object3D[] {
+  while (npcPool.length < n) npcPool.push(makeNpc());
+  return npcPool.flatMap((e) => [e.standing.group, e.seated.group]);
+}
+
 /** A random but tidy outfit built from the same catalog + palette the dress-up uses. */
 export function randomOutfit(): Outfit {
   const pal = tuning.art.palette;
@@ -105,6 +127,10 @@ export class JobManager {
   private outfit: Outfit | null = null;
   private standing: Character | null = null;
   private seated: Character | null = null;
+  private seatedSpare: Character | null = null;   // ── v3 perf ── the pooled passenger's seated twin, until boarding
+  private idleT = 0;
+  private lastX = 0;
+  private lastZ = 0;
   private pickupBeacon: Beacon | null = null;
   private destBeacon: Beacon | null = null;
   private waveTimer = 0;
@@ -138,6 +164,8 @@ export class JobManager {
     if (this.seated && this.seated !== this.car?.passenger) this.seated.dispose();
     this.standing?.group.removeFromParent();
     this.standing?.dispose();
+    this.seatedSpare?.dispose();   // v3 perf
+    this.seatedSpare = null;
     this.car?.setPassenger(null); // disposes the seated passenger
     this.seated = null;
     this.standing = null;
@@ -174,7 +202,7 @@ export class JobManager {
   onHorn(cx: number, cz: number): void {
     if (this.state !== 'waiting' || !this.standing || !this.spot) return;
     const s = this.spot;
-    if (Math.hypot(cx - s.x, cz - s.z) > tuning.drive.jobWaveRadius * 1.6) return;
+    if (hyp(cx - s.x, cz - s.z) > tuning.drive.jobWaveRadius * 1.6) return;
     this.standing.hop();
     this.standing.wave();
     this.waveTimer = 1.7;
@@ -188,6 +216,7 @@ export class JobManager {
     this.pickupBeacon?.update(t);
     this.destBeacon?.update(t);
     this.standing?.update(dt, t);
+    this.topUpPool(dt, cx, cz);
 
     switch (this.state) {
       case 'cooldown':
@@ -197,7 +226,7 @@ export class JobManager {
 
       case 'waiting': {
         const npc = this.standing!, s = this.spot!;
-        const dist = Math.hypot(cx - s.x, cz - s.z);
+        const dist = hyp(cx - s.x, cz - s.z);
         if (dist < 28) {
           const want = Math.atan2(cx - s.x, cz - s.z);
           npc.group.rotation.y = lerpAngle(npc.group.rotation.y, want, 1 - Math.exp(-6 * dt));
@@ -253,7 +282,7 @@ export class JobManager {
           this.waveTimer = 3 + Math.random() * 2;
         }
         const s = this.dest!;
-        if (canTrigger && Math.hypot(cx - s.x, cz - s.z) < d.jobTriggerRadius) this.startAlighting(cx, cz);
+        if (canTrigger && hyp(cx - s.x, cz - s.z) < d.jobTriggerRadius) this.startAlighting(cx, cz);
         break;
       }
 
@@ -263,22 +292,45 @@ export class JobManager {
     }
   }
 
+  /** ── v3 perf ── While the player stands still, build the next passenger (one Character per second at most). */
+  private topUpPool(dt: number, cx: number, cz: number): void {
+    const moved = hyp(cx - this.lastX, cz - this.lastZ);
+    this.lastX = cx;
+    this.lastZ = cz;
+    if (moved > 0.03 || (npcPool.length >= NPC_POOL && !npcHalf)) {
+      this.idleT = 0;
+      return;
+    }
+    this.idleT += dt;
+    if (this.idleT < 1) return;
+    this.idleT = 0;
+    if (!npcHalf) {
+      const outfit = randomOutfit();
+      npcHalf = { outfit, standing: new Character(outfit) };
+    } else {
+      npcPool.push({ outfit: npcHalf.outfit, standing: npcHalf.standing, seated: new Character(npcHalf.outfit, { seated: true, shadows: false }) });
+      npcHalf = null;
+    }
+  }
+
   // ── transitions ──────────────────────────────────────────────────────────
   private spawn(cx: number, cz: number): void {
     const d = tuning.drive;
     // A pickup spot that is not right on top of the car, and not the last one.
-    const dist = (s: Spot): number => Math.hypot(s.x - cx, s.z - cz);
+    const dist = (s: Spot): number => hyp(s.x - cx, s.z - cz);
     const mid = JOB_SPOTS.filter((s) => s !== this.lastSpot && dist(s) > 24 && dist(s) < 130);
     const far = JOB_SPOTS.filter((s) => s !== this.lastSpot && dist(s) > 24);
     const spot = pick(mid.length ? mid : far.length ? far : JOB_SPOTS.filter((s) => s !== this.lastSpot));
     // A destination well away from the pickup.
-    const ride = JOB_SPOTS.filter((s) => s !== spot && Math.hypot(s.x - spot.x, s.z - spot.z) >= d.jobMinDistance && Math.hypot(s.x - spot.x, s.z - spot.z) < 200);
+    const ride = JOB_SPOTS.filter((s) => s !== spot && hyp(s.x - spot.x, s.z - spot.z) >= d.jobMinDistance && hyp(s.x - spot.x, s.z - spot.z) < 200);
     const dest = pick(ride.length ? ride : JOB_SPOTS.filter((s) => s !== spot));
     this.spot = spot;
     this.dest = dest;
     this.lastSpot = spot;
-    this.outfit = randomOutfit();
-    const npc = new Character(this.outfit);
+    const pooled = npcPool.shift();   // ── v3 perf ── a passenger that was built ahead of time (no 15-30 ms hitch here)
+    this.outfit = pooled ? pooled.outfit : randomOutfit();
+    this.seatedSpare = pooled ? pooled.seated : null;
+    const npc = pooled ? pooled.standing : new Character(this.outfit);
     npc.group.position.set(spot.x, groundHeight(spot.x, spot.z, true), spot.z);
     npc.group.rotation.y = Math.atan2(-spot.x, -spot.z);
     npc.group.scale.setScalar(0.01);
@@ -297,7 +349,8 @@ export class JobManager {
   private startBoarding(cx: number, cz: number): void {
     const npc = this.standing!;
     bus.emit('passengerPickup', { pos: { x: cx, y: 1.6, z: cz } });
-    this.seated = new Character(this.outfit!, { seated: true, shadows: false });
+    this.seated = this.seatedSpare ?? new Character(this.outfit!, { seated: true, shadows: false });   // v3 perf: pooled twin
+    this.seatedSpare = null;
     this.hopFrom.copy(npc.group.position);
     this.hopT = 0;
     npc.hop();

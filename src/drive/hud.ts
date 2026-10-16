@@ -14,8 +14,11 @@ import { MAP_REACH, MAP_SCALE, paintIsland } from './minimapBase'; // v3 world: 
 import type { House } from '../core/model';
 import type { Reward } from '../core/unlocks';
 import { clamp, wrapAngle } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+const CHIP_FONT = `12px ${EMOJI_FONT}`;      // ── v3 perf ── constant font strings (the minimap redraws at 30 Hz)
+const CHIP_FONT_13 = `13px ${EMOJI_FONT}`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Minimap — north up, zoomed around the player, a round dial.
@@ -73,6 +76,42 @@ export class Minimap {
     this.canvas.height = this.px;
     this.el.style.width = this.el.style.height = `${size}px`;
     this.k = this.px / 2 / tuning.drive.minimapRadius;
+    // ── v3 perf ── the font strings are built here, not 30 times a second in draw()
+    const k = this.k;
+    this.fontJob = `${Math.round(9 * k)}px ${EMOJI_FONT}`;
+    this.fontRide = `${Math.round(7 * k)}px ${EMOJI_FONT}`;
+    this.fontCar = `${Math.round(9 * k)}px ${EMOJI_FONT}`;
+  }
+  private fontJob = '';
+  private fontRide = '';
+  private fontCar = '';
+  // ── v3 perf ── per-draw scratch (no closures / tuples / template strings in the 30 Hz redraw)
+  private dFx = 0;
+  private dFz = 0;
+  private dC = 0;
+  private pinX = 0;
+  private pinZ = 0;
+  private pinned = false;
+  private wx(x: number): number {
+    return this.dC + (x - this.dFx) * this.k;
+  }
+  private wz(z: number): number {
+    return this.dC + (z - this.dFz) * this.k;
+  }
+  /** Clamp a dial position to the rim (result in pinX / pinZ / pinned). */
+  private pin(x: number, z: number, margin: number): void {
+    const c = this.dC;
+    const dx = x - c, dz = z - c;
+    const len = hyp(dx, dz), maxR = c - margin;
+    if (len > maxR) {
+      this.pinX = c + (dx * maxR) / len;
+      this.pinZ = c + (dz * maxR) / len;
+      this.pinned = true;
+    } else {
+      this.pinX = x;
+      this.pinZ = z;
+      this.pinned = false;
+    }
   }
 
   /** Redraw the static layer (terrain colours, roads, plots, places). Call on scene enter. */
@@ -193,21 +232,24 @@ export class Minimap {
     g.clip();
     const sx = (f.x + this.reach - rad) * BASE_SCALE, sz = (f.z + this.reach - rad) * BASE_SCALE;
     g.drawImage(base, sx, sz, rad * 2 * BASE_SCALE, rad * 2 * BASE_SCALE, 0, 0, S, S);
-    const wx = (x: number): number => c + (x - f.x) * k;
-    const wz = (z: number): number => c + (z - f.z) * k;
+    this.dFx = f.x;   // ── v3 perf ── scratch for wx / wz / pin (no closures or tuples per redraw)
+    this.dFz = f.z;
+    this.dC = c;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
 
     // empty lots pulse until you own a house
     if (f.emptyPlots) {
       const pulse = 0.5 + 0.5 * Math.sin(f.t * 4);
+      g.fillStyle = '#b6ff3b';   // (alpha through globalAlpha: no rgba() string per lot per redraw)
       for (const p of f.emptyPlots) {
-        const x = wx(p.center.x), z = wz(p.center.z);
-        if (Math.hypot(x - c, z - c) > c + 8 * k) continue;
-        g.fillStyle = `rgba(182,255,59,${0.25 + pulse * 0.35})`;
+        const x = this.wx(p.center.x), z = this.wz(p.center.z);
+        if (hyp(x - c, z - c) > c + 8 * k) continue;
+        g.globalAlpha = 0.25 + pulse * 0.35;
         g.beginPath();
         g.arc(x, z, (p.size * 0.62 + pulse * 2) * k, 0, Math.PI * 2);
         g.fill();
+        g.globalAlpha = 1;
         g.lineWidth = Math.max(2, 0.8 * k);
         g.strokeStyle = '#8fd61a';
         g.stroke();
@@ -215,7 +257,7 @@ export class Minimap {
     }
     // the home guide ring
     if (f.home) {
-      const x = wx(f.home.x), z = wz(f.home.z);
+      const x = this.wx(f.home.x), z = this.wz(f.home.z);
       g.lineWidth = Math.max(2, 1 * k);
       g.strokeStyle = '#00d4ff';
       g.beginPath();
@@ -228,7 +270,7 @@ export class Minimap {
       g.strokeStyle = '#ffffff';
       g.lineWidth = Math.max(1.5, 0.5 * k);
       for (const ch of f.charms) {
-        const x = wx(ch.x), z = wz(ch.z), s = (2.4 + Math.sin(f.t * 5 + ch.x) * 0.3) * k;
+        const x = this.wx(ch.x), z = this.wz(ch.z), s = (2.4 + Math.sin(f.t * 5 + ch.x) * 0.3) * k;
         g.beginPath();
         g.moveTo(x, z - s * 1.2);
         g.lineTo(x + s * 0.85, z);
@@ -240,14 +282,9 @@ export class Minimap {
       }
     }
     // the job target: pulsing ring + icon, pinned to the rim if it is off the dial
-    const pin = (x: number, z: number, margin: number): [number, number, boolean] => {
-      const dx = x - c, dz = z - c;
-      const len = Math.hypot(dx, dz), maxR = c - margin;
-      if (len > maxR) return [c + (dx * maxR) / len, c + (dz * maxR) / len, true];
-      return [x, z, false];
-    };
     if (f.target) {
-      const [x, z] = pin(wx(f.target.x), wz(f.target.z), 14);
+      this.pin(this.wx(f.target.x), this.wz(f.target.z), 14);
+      const x = this.pinX, z = this.pinZ;
       const pulse = 1 + Math.sin(f.t * 5) * 0.18;
       g.fillStyle = f.target.kind === 'pickup' ? 'rgba(255,111,165,0.45)' : 'rgba(255,200,68,0.5)';
       g.beginPath();
@@ -256,27 +293,28 @@ export class Minimap {
       g.lineWidth = Math.max(2, 1.4 * k);
       g.strokeStyle = f.target.kind === 'pickup' ? '#ff2e88' : '#ffb000';
       g.stroke();
-      g.font = `${Math.round(9 * k)}px ${EMOJI_FONT}`;
+      g.font = this.fontJob;
       g.fillText(f.target.icon, x, z + k * 0.4);
     }
     // district chips on the rim, pointing the way
     for (const d of DISTRICTS) {
-      const x = wx(d.x), z = wz(d.z);
-      if (Math.hypot(x - c, z - c) < c - 6) continue;
-      const [rx, rz] = pin(x, z, 11);
+      const x = this.wx(d.x), z = this.wz(d.z);
+      if (hyp(x - c, z - c) < c - 6) continue;
+      this.pin(x, z, 11);
+      const rx = this.pinX, rz = this.pinZ;
       g.fillStyle = 'rgba(18,16,28,0.78)';
       g.beginPath();
       g.arc(rx, rz, 9.5, 0, Math.PI * 2);
       g.fill();
-      g.font = `12px ${EMOJI_FONT}`;
+      g.font = CHIP_FONT;
       g.fillText(d.icon, rx, rz + 1);
     }
     // v3 rides: every other parked ride in range, small
     if (f.rides && f.rides.length) {
-      g.font = `${Math.round(7 * k)}px ${EMOJI_FONT}`;
+      g.font = this.fontRide;
       for (const r of f.rides) {
-        const x = wx(r.x), z = wz(r.z);
-        if (Math.hypot(x - c, z - c) > c - 6) continue;
+        const x = this.wx(r.x), z = this.wz(r.z);
+        if (hyp(x - c, z - c) > c - 6) continue;
         g.fillStyle = 'rgba(255,255,255,0.82)';
         g.beginPath();
         g.arc(x, z, 5 * (k / 2.2 + 0.3), 0, Math.PI * 2);
@@ -287,12 +325,13 @@ export class Minimap {
     }
     // the parked car, when walking
     if (f.car) {
-      const [x, z, pinned] = pin(wx(f.car.x), wz(f.car.z), 13);
+      this.pin(this.wx(f.car.x), this.wz(f.car.z), 13);
+      const x = this.pinX, z = this.pinZ, pinned = this.pinned;
       g.fillStyle = '#ffffff';
       g.beginPath();
       g.arc(x, z, pinned ? 10 : 7.5 * (k / 2.2 + 0.2), 0, Math.PI * 2);
       g.fill();
-      g.font = `${Math.round(pinned ? 13 : 9 * k)}px ${EMOJI_FONT}`;
+      g.font = pinned ? CHIP_FONT_13 : this.fontCar;
       g.fillText(f.car.icon ?? '🚗', x, z + 1);
     }
     // the player: a chunky arrow in the car's colour
@@ -328,7 +367,9 @@ export class JobBubble {
   private readonly text: HTMLSpanElement;
   private shown = false;
   private lastAngle = 1e9;
-  private key = '';
+  private keyIcon = '';   // ── v3 perf ── compared field by field (the old `${icon}|${text}|${kind}` key was a new string every frame)
+  private keyText = '';
+  private keyKind = '';
 
   constructor(parent: HTMLElement) {
     this.el = el('div', 'drive-bubble hidden', parent) as HTMLDivElement;
@@ -345,9 +386,10 @@ export class JobBubble {
 
   /** `angle` is clockwise from straight up on the screen, in radians. */
   show(icon: string, text: string, kind: 'pickup' | 'dropoff', angle: number): void {
-    const key = `${icon}|${text}|${kind}`;
-    if (key !== this.key) {
-      this.key = key;
+    if (icon !== this.keyIcon || text !== this.keyText || kind !== this.keyKind) {
+      this.keyIcon = icon;
+      this.keyText = text;
+      this.keyKind = kind;
       this.icon.textContent = icon;
       this.text.textContent = text;
       this.el.classList.toggle('pickup', kind === 'pickup');
@@ -373,6 +415,7 @@ export class HomePill {
   private mode: 'build' | 'own' | 'off' = 'off';
   private arrowOn = false;
   private lastAngle = 1e9;
+  private lastMeters = -1;   // ── v3 perf ── the label is only rewritten when the rounded distance changes
 
   constructor(parent: HTMLElement) {
     this.el = el('div', 'drive-home interactive hidden', parent) as HTMLDivElement;
@@ -417,7 +460,11 @@ export class HomePill {
       this.lastAngle = angle;
       this.arrow.style.transform = `rotate(${angle}rad)`;
     }
-    this.dist.textContent = `${Math.round(meters)} m`;
+    const m = Math.round(meters);
+    if (m !== this.lastMeters) {
+      this.lastMeters = m;
+      this.dist.textContent = `${m} m`;
+    }
   }
 }
 
@@ -480,9 +527,12 @@ export class TopHud {
     this.count.textContent = `${n}/${total}`;
     this.next.textContent = next ? `${next.icon} ${next.label} · ${next.at - n} to go` : '🎉 All rewards unlocked!';
     if (bump) {
-      this.chip.classList.remove('bump');
-      void this.chip.offsetWidth;
+      // v3 perf: restart the CSS animation without a forced layout (an offsetWidth read right on the pop frame is a hitch)
       this.chip.classList.add('bump');
+      for (const a of this.chip.getAnimations?.({ subtree: true }) ?? []) {
+        a.cancel();
+        a.play();
+      }
     }
   }
 }
@@ -492,6 +542,9 @@ export class TopHud {
 // ─────────────────────────────────────────────────────────────────────────────
 interface Tag {
   el: HTMLDivElement;
+  lastX?: number;   // ── v3 perf ── last written screen position / opacity (style writes only when they change)
+  lastY?: number;
+  lastO?: number;
   x: number;
   y: number;
   z: number;
@@ -544,7 +597,7 @@ export class NameTags {
     const maxD = tuning.drive.nameTagDistance;
     camera.getWorldDirection(this.fwd);
     for (const t of this.tags) {
-      const dist = Math.hypot(t.x - px, t.z - pz);
+      const dist = hyp(t.x - px, t.z - pz);
       this.v.set(t.x, t.y, t.z);
       // in front of the camera?
       const dx = this.v.x - camera.position.x, dy = this.v.y - camera.position.y, dz = this.v.z - camera.position.z;
@@ -569,8 +622,16 @@ export class NameTags {
         t.visible = true;
         t.el.style.display = '';
       }
-      t.el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, -100%)`;
-      t.el.style.opacity = clamp((maxD - dist) / 12, 0, 1).toFixed(2);
+      const qx = Math.round(sx * 10) / 10, qy = Math.round(sy * 10) / 10, qo = Math.round(clamp((maxD - dist) / 12, 0, 1) * 100) / 100;
+      if (qx !== t.lastX || qy !== t.lastY) {
+        t.lastX = qx;
+        t.lastY = qy;
+        t.el.style.transform = `translate(${qx}px, ${qy}px) translate(-50%, -100%)`;
+      }
+      if (qo !== t.lastO) {
+        t.lastO = qo;
+        t.el.style.opacity = String(qo);
+      }
     }
   }
 }

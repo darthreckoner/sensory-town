@@ -10,6 +10,7 @@ import { tuning } from '../tuning';
 import { charmCount, collectCharm, hasCharm } from '../core/unlocks';
 import { beamTexture, clamp, smoothstep } from './envUtils';
 import { PAL } from './palette';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 interface Entry {
   id: string;
@@ -104,7 +105,7 @@ export class Charms {
   /** Uncollected charms within `range` of a point (for the minimap). */
   nearby(x: number, z: number, range: number, out: { x: number; z: number }[]): void {
     out.length = 0;
-    for (const e of this.entries) if (e.alive && e.pop === 0 && Math.hypot(e.x - x, e.z - z) < range) out.push(e);
+    for (const e of this.entries) if (e.alive && e.pop === 0 && hyp(e.x - x, e.z - z) < range) out.push(e);
   }
 
   /** `px,py,pz` is the player's chest; `vx,vz` the viewer (for beam fading). */
@@ -115,7 +116,7 @@ export class Charms {
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
       const dx = px - e.x, dz = pz - e.z;
-      const dist = Math.hypot(dx, dz);
+      const dist = hyp(dx, dz);
       // far away: nothing to draw or animate (fog hides it anyway)
       if (dist > 230 && e.pop === 0) {
         if (!e.far) {

@@ -17,6 +17,7 @@ import { PAL } from './palette';
 import { emojiSprite, lightBeam } from './envUtils';
 import { mailbox } from './props';
 import { ROAD_LIFT } from './terrain';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 // ── textures ────────────────────────────────────────────────────────────────
 /** Rounded-rect path that works on every browser (ctx.roundRect is missing before iOS 16). */
@@ -160,7 +161,7 @@ export class DoorLayer {
 
   update(t: number, vx: number, vz: number): void {
     for (const mk of this.markers) {
-      const d = Math.hypot(vx - mk.def.x, vz - mk.def.z);
+      const d = hyp(vx - mk.def.x, vz - mk.def.z);
       mk.group.visible = d < 70;
       if (!mk.group.visible) continue;
       // level of detail: the glowing mat from afar, the light column nearer, the icon + label up close

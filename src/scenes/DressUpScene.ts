@@ -383,9 +383,11 @@ export class DressUpScene extends GameScene {
     this.setGlow(this.currentRarity('outfit'));
     this.rarityNow.copy(this.rarityTarget);
     this.syncStage();
+    thumbs.gapMs = 35; // the Locker is calm: its pictures can come a little faster than in the world
     this.buildUI();
     this.listenInput();
     this.onExit(() => {
+      thumbs.gapMs = 70;
       for (const t of this.timers) clearTimeout(t);
       this.timers = [];
       this.pointers.clear();

@@ -13,6 +13,7 @@ import { groundHeight, railedAt, waveY } from '../world/heightfield';
 import { surfaceBelow } from '../world/buildSpace';   // v3 build
 import { ColliderGrid, pushOut, res } from './physics';
 import { clamp, lerpAngle } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 /** Top of a walker's head above their feet (used for the climb-out reach). */
 const HEAD = 1.75;
@@ -65,7 +66,7 @@ export class FootPhysics {
   setVelocity(vx: number, vz: number): void {
     this.vx = vx;
     this.vz = vz;
-    this.speed = Math.hypot(vx, vz);
+    this.speed = hyp(vx, vz);
   }
 
   /** `y`: where the feet should land if it is on a player-built floor / ramp (stepping out of a ride parked on a deck). */
@@ -120,7 +121,7 @@ export class FootPhysics {
     // probe at the body's leading edge, not its centre, so the capsule stops AT a wall
     // or ramp skirt instead of half inside it
     const mx = nx - this.x, mz = nz - this.z;
-    const ml = Math.hypot(mx, mz) || 1;
+    const ml = hyp(mx, mz) || 1;
     const lead = d.footRadius * 0.8;
     const px = nx + (mx / ml) * lead, pz = nz + (mz / ml) * lead;
     const g = Math.max(this.floor(nx, nz), this.floor(px, pz));
@@ -164,7 +165,7 @@ export class FootPhysics {
     const k = this.coast && !this.swimming ? 0 : 1 - Math.exp(-accel); // v3 movement: a slide keeps its momentum
     this.vx += (tvx - this.vx) * k;
     this.vz += (tvz - this.vz) * k;
-    this.speed = Math.hypot(this.vx, this.vz);
+    this.speed = hyp(this.vx, this.vz);
     if (this.speed > 0.4) {
       const want = Math.atan2(this.vx, -this.vz);
       this.heading = lerpAngle(this.heading, want, 1 - Math.exp(-14 * dt));

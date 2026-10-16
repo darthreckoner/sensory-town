@@ -1,5 +1,6 @@
 // Walk along a road path and drop things beside it.
 import { ROAD_PATHS, nearestRoad } from '../world/townLayout';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 /**
  * Call fn every `spacing` units along a road path, `offset` to one side
@@ -16,7 +17,7 @@ export function along(
   let acc = start;
   for (let i = 0; i < p.pts.length - 1; i++) {
     const [x0, z0] = p.pts[i], [x1, z1] = p.pts[i + 1];
-    const len = Math.hypot(x1 - x0, z1 - z0);
+    const len = hyp(x1 - x0, z1 - z0);
     if (len < 1e-6) continue;
     const tx = (x1 - x0) / len, tz = (z1 - z0) / len;
     const lx = -tz, lz = tx;

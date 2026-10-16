@@ -11,6 +11,7 @@ import { surfaceBelow } from '../world/buildSpace';
 import { type ColliderGrid, pushOut } from './physics';
 import { clamp } from './envUtils';
 import type { FootPhysics } from './foot';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 const sm = (t: number): number => {
   const k = clamp(t, 0, 1);
@@ -56,7 +57,7 @@ export class Mantle {
     const m = tuning.movement3;
     this.cd = Math.max(0, this.cd - dt);
     if (this.cd > 0 || !f.grounded || f.swimming || f.wet > 0.3 || mag < 0.4) return false;
-    const len = Math.hypot(dirX, dirZ);
+    const len = hyp(dirX, dirZ);
     if (len < 0.5) return false;
     const dx = dirX / len, dz = dirZ / len;
     const r = tuning.drive.footRadius;

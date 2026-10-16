@@ -200,6 +200,7 @@ export function initLayoutChecks(): void {
     locker: lockerLayout,
     menu: menuLayout,
     lockerAt: lockerLayoutAt,
+    spikes: async () => (await import('./spikecheck')).popupSpikes(),
     menuAt: menuLayoutAt,
     async lockerNow() {
       if (scenes.current?.name !== 'dressup') await scenes.go('dressup');

@@ -16,12 +16,14 @@ import { buildSkate } from '../drive/skate';
 import { buildLookout } from '../drive/lookout';
 import { buildScenery } from '../drive/scenery';
 import { windTime } from '../drive/vegetation';
+import { quality } from '../core/perf';   // ── v3 perf ──
 import { buildSummit } from '../drive/summit';
 import { buildMeadow } from '../drive/meadow';
 import { buildGrove } from '../drive/grove';
 import { buildSands } from '../drive/sands';
 import { cameraBoxes } from '../drive/envUtils';
 import type { DoorDef, Piece } from '../drive/types';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export type Collider =
   | { kind: 'circle'; x: number; z: number; r: number; h?: number; y0?: number; only?: 'car' | 'foot' }
@@ -107,22 +109,23 @@ export function buildTownEnvironment(): TownEnv {
   const apply = (): void => {
     for (const p of pieces) {
       if (!p.cull) continue;
-      const dist = Math.hypot(vx - p.cull.x, vz - p.cull.z);
+      const dist = hyp(vx - p.cull.x, vz - p.cull.z);
       p.group.visible = dist < p.cull.r;
       const cast = dist < p.cull.r * 0.55;
       for (const m of casters.get(p)!) m.castShadow = cast;
     }
-    for (const c of terrain.chunks) c.visible = Math.hypot(vx - c.userData.cx, vz - c.userData.cz) < tuning.drive.cullTerrain;
+    for (const c of terrain.chunks) c.visible = hyp(vx - c.userData.cx, vz - c.userData.cz) < tuning.drive.cullTerrain;
     for (const c of sc.build.chunks) {
-      const dist = Math.hypot(vx - c.cx, vz - c.cz);
-      const vis = dist < tuning.drive.cullVegetation;
+      const dist = hyp(vx - c.cx, vz - c.cz);
+      const vis = dist < tuning.drive.cullVegetation * quality.vegDistScale;   // v3 perf: the quality ladder shortens the tree distance
       for (const mesh of c.meshes) {
         mesh.visible = vis;
-        mesh.castShadow = (chunkCast.get(mesh) ?? false) && dist < SHADOW_NEAR_TREES;
+        mesh.castShadow = (chunkCast.get(mesh) ?? false) && dist < SHADOW_NEAR_TREES && quality.smallCasters;
       }
     }
   };
   apply();
+  quality.listeners.push(apply);   // v3 perf: re-cull when the quality ladder moves
 
   return {
     group,

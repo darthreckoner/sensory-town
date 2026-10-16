@@ -14,7 +14,7 @@ import { FACE_REWARDS } from '../art/gear/catalog';
 import { equipSkin, getLocker, resolveSkinOutfit, setFace, setBackBling, setContrail, setEmote, setGlider, setRide, setWrap, wrapOf } from '../art/gear/lockerState';
 import { thumbs } from '../art/gear/thumbs';
 import { FACE_OPTIONS } from '../art/characterFace';
-import { rewardFor } from '../core/unlocks';
+import { REWARDS, charmCount, rewardFor } from '../core/unlocks';
 import { blingThumb, escapeHtml, gliderThumb, outfitThumb, rarityVars, rideThumb } from './lockerUI';
 import type { VehicleKind } from '../core/model';
 
@@ -30,6 +30,7 @@ const queue: Unlock[] = [];
 let showing = false;
 let burst = 0;
 let closeTimer = 0;
+const warmLater: { key: string; make: ReturnType<typeof outfitThumb> }[] = [];
 
 export function initReveal(): void {
   if (root) return;
@@ -49,8 +50,60 @@ export function initReveal(): void {
       }
     }, 2500);
   }
-  // item pictures are rendered a few at a time from the frame loop (works in every scene)
+  // item pictures are started from the frame loop, but only in idle slots (see thumbs.ts) — works in every scene
   scenes.frameHooks.push(() => thumbs.pump(tuning.locker.thumbBudgetMs));
+  // v3 perf: pre-warm. The next few unlocks' pictures + the ray pictures are made in idle time well BEFORE a charm is found, so the
+  // card pops up with everything cached: nothing is built, compiled or uploaded on the frame it appears.
+  window.setTimeout(prewarm, 4500);
+  bus.on('sceneChange', ({ to }) => {
+    if (to === 'town') window.setTimeout(prewarm, 3000);
+  });
+  bus.on('charmCollected', () => window.setTimeout(prewarm, 6000));
+}
+
+/** Idle-time pre-warm of the reveal pipeline: pictures of the next three unlocks, and the rays pictures. */
+function prewarm(): void {
+  const n = charmCount();
+  let left = 3;
+  for (const r of REWARDS) {
+    if (r.at <= n || !r.slot || !r.itemId) continue;
+    const t = thumbFor({ id: r.id, icon: r.icon, label: r.label, rarity: r.rarity, slot: r.slot, itemId: r.itemId });
+    if (t) thumbs.request(t.key, t.make, () => undefined);
+    if (--left <= 0) break;
+  }
+  for (const q of Object.keys(RARITY) as Rarity[]) raysPicture(q);
+}
+
+/** A pre-baked picture of the light rays in a rarity colour (a big masked conic gradient spinning over the canvas is far too heavy for iPad). */
+const raysCache = new Map<Rarity, string>();
+function raysPicture(r: Rarity): string {
+  const hit = raysCache.get(r);
+  if (hit) return hit;
+  const S = 384;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  g.translate(S / 2, S / 2);
+  g.fillStyle = RARITY[r].color;
+  const N = 18;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.arc(0, 0, S, a, a + ((Math.PI * 2) / N) * 0.32);
+    g.closePath();
+    g.fill();
+  }
+  g.globalCompositeOperation = 'destination-in';
+  const rg = g.createRadialGradient(0, 0, S * 0.03, 0, 0, S / 2);
+  rg.addColorStop(0, 'rgba(0,0,0,0.9)');
+  rg.addColorStop(0.5, 'rgba(0,0,0,0.4)');
+  rg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = rg;
+  g.fillRect(-S / 2, -S / 2, S, S);
+  const css = `url(${c.toDataURL('image/png')})`;
+  raysCache.set(r, css);
+  return css;
 }
 
 function next(): void {
@@ -82,6 +135,7 @@ function show(r: HTMLDivElement, u: Unlock): void {
   const rarity = (u.rarity as Rarity) in RARITY ? (u.rarity as Rarity) : 'common';
   r.className = `rv-root on${rarity === 'legendary' ? ' rv-legendary' : ''}`;
   rarityVars(r, rarity);
+  r.style.setProperty('--rv-rays', raysPicture(rarity));
   el('div', 'rv-dim', r);
   el('div', 'rv-rays', r);
   const card = el('div', 'rv-card', r);
@@ -91,17 +145,16 @@ function show(r: HTMLDivElement, u: Unlock): void {
   const item = el('div', 'rv-item', stage);
   // the item: a real 3D picture when we can render one, else the big emoji
   const big = el('span', 'big', item, u.icon);
+  // only a picture that is ALREADY cached (pre-warmed); never build or render one on the frame the card pops up
   const sub = thumbFor(u);
-  if (sub) {
-    thumbs.request(sub.key, sub.make, (url) => {
-      if (!item.isConnected) return;
-      const img = new Image();
-      img.src = url;
-      img.draggable = false;
-      item.appendChild(img);
-      big.style.display = 'none';
-    }, () => item.isConnected, true);
-  }
+  const url = sub ? thumbs.get(sub.key) : undefined;
+  if (url) {
+    const img = new Image();
+    img.src = url;
+    img.draggable = false;
+    item.appendChild(img);
+    big.style.display = 'none';
+  } else if (sub) warmLater.push(sub); // after the card is gone, in idle time, for the next time
   el('div', 'rv-name', card).textContent = u.label;
   const kind = u.slot ? KIND[u.slot] : undefined;
   el('div', 'rv-rar', card, `${RARITY[rarity].label} ${kind ?? 'Bonus'}`);
@@ -118,7 +171,7 @@ function show(r: HTMLDivElement, u: Unlock): void {
     button(btns, { label: 'Awesome!', cls: 'pink big', tap: 'big' }, close);
   }
   if (queue.length) el('div', 'rv-more', card, `+${queue.length} more…`);
-  if (rarity === 'epic' || rarity === 'legendary') confetti(r, RARITY[rarity].color, rarity === 'legendary' ? 46 : 28);
+  if (rarity === 'epic' || rarity === 'legendary') confetti(r, RARITY[rarity].color, rarity === 'legendary' ? 24 : 14);
   bus.emit('revealShown', { rarity });
   closeTimer = window.setTimeout(close, tuning.locker.revealSeconds * 1000);
 }
@@ -130,6 +183,7 @@ function dismiss(r: HTMLDivElement): void {
   window.setTimeout(() => {
     r.className = 'rv-root';
     r.innerHTML = '';
+    if (!queue.length) for (const w of warmLater.splice(0)) thumbs.request(w.key, w.make, () => undefined);
     next();
   }, 280);
 }

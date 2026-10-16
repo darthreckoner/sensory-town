@@ -16,6 +16,7 @@ import { bindTap, el } from '../ui/ui';
 import { clamp } from './envUtils';
 import type { Character } from '../art/character';
 import type { FootPhysics } from './foot';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface ZipDef {
   id: string;
@@ -135,7 +136,7 @@ export class ZipLines {
       const ga = groundHeight(def.a[0], def.a[1], true), gb = groundHeight(def.b[0], def.b[1], true);
       const ya = ga + def.poleA, yb = gb + def.poleB;
       const ddx = def.b[0] - def.a[0], ddz = def.b[1] - def.a[1];
-      const gl = Math.hypot(ddx, ddz);
+      const gl = hyp(ddx, ddz);
       const dx = ddx / gl, dz = ddz / gl;
       const sag = Math.min(4, gl * 0.022);
       const pts: THREE.Vector3[] = [];
@@ -199,7 +200,7 @@ export class ZipLines {
     if (this.active || this.cool > 0 || !f.grounded || f.swimming) return null;
     const R = tuning.movement3.zipRadius;
     for (const z of this.zips) {
-      if (Math.hypot(f.x - z.base.x, f.z - z.base.z) < R && Math.abs(f.y - z.base.y) < 2.2) return z;
+      if (hyp(f.x - z.base.x, f.z - z.base.z) < R && Math.abs(f.y - z.base.y) < 2.2) return z;
     }
     return null;
   }

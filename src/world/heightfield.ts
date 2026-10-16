@@ -13,6 +13,7 @@ import {
   BAY, BRIDGES, DECKS, GROUND, GROVE, ISLAND_DISCS, LOOKOUT, MEADOW, PIERS, ROAD_PATHS, SANDS, SPIRAL, STAIRS, STUNTS, SUMMIT, WATER_Y,
   nearestRoad, type Stunt,
 } from './townLayout';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 const STEP = 2;
 const N = Math.round((GROUND * 2) / STEP) + 1;
@@ -42,7 +43,7 @@ const smooth = (a: number, b: number, x: number): number => {
 
 function softRect(x: number, z: number, cx: number, cz: number, hw: number, hd: number, fall: number): number {
   const dx = Math.max(0, Math.abs(x - cx) - hw), dz = Math.max(0, Math.abs(z - cz) - hd);
-  return 1 - smooth(0, fall, Math.hypot(dx, dz));
+  return 1 - smooth(0, fall, hyp(dx, dz));
 }
 
 /** 1 where the ground is kept dead flat (towns, the skate plaza, house lots). */
@@ -65,7 +66,7 @@ export function shoreDist(x: number, z: number): number {
   let s = -1e9;
   for (let i = 0; i < ISLAND_DISCS.length; i++) {
     const d = ISLAND_DISCS[i];
-    const v = d.r - Math.hypot(x - d.x, z - d.z);
+    const v = d.r - hyp(x - d.x, z - d.z);
     s = i === 0 ? v : smax(s, v, 44);
   }
   s += (vnoise(x / 64 + 3, z / 64, 41) - 0.5) * 20 + (vnoise(x / 26, z / 26 + 9, 42) - 0.5) * 6;
@@ -79,9 +80,9 @@ export function shoreDist(x: number, z: number): number {
 export function cliffiness(x: number, z: number): number {
   let c = smooth(0.5, 0.63, vnoise(x / 120 + 7, z / 120 + 3, 31));
   const bay = smooth(-90, -60, z) * (1 - smooth(80, 110, z)) * smooth(-20, 30, x);
-  const sands = 1 - smooth(100, 130, Math.hypot(x - SANDS.x, z - SANDS.z));
-  const meadow = 1 - smooth(100, 130, Math.hypot(x - MEADOW.x, z - MEADOW.z));
-  const home = 1 - smooth(70, 100, Math.hypot(x + 150, z - 5)); // the west beach below Home Hills
+  const sands = 1 - smooth(100, 130, hyp(x - SANDS.x, z - SANDS.z));
+  const meadow = 1 - smooth(100, 130, hyp(x - MEADOW.x, z - MEADOW.z));
+  const home = 1 - smooth(70, 100, hyp(x + 150, z - 5)); // the west beach below Home Hills
   c *= 1 - Math.max(bay, sands, meadow, home);
   c = Math.max(c, 1 - smooth(SUMMIT.z - 74, SUMMIT.z - 46, z)); // high cliffs on the far side of the peak
   return c;
@@ -102,7 +103,7 @@ const lookoutElev = ROAD_PATHS[lookoutPath].elev!;
 /** Sprinkle Summit: a gentle shelf, a steep ridged peak above it, a flat pad for the ski lodge. */
 function summitH(x: number, z: number): number {
   const dx = x - SUMMIT.x, dz = z - SUMMIT.z;
-  const r = Math.hypot(dx, dz);
+  const r = hyp(dx, dz);
   if (r > SUMMIT.shelfR1) return 0;
   const th = Math.atan2(dz, dx);
   const rr = r * (1 + 0.14 * Math.sin(3 * th + 1) + 0.08 * Math.sin(5 * th + 2.3) + 0.05 * Math.sin(9 * th));
@@ -115,23 +116,23 @@ function summitH(x: number, z: number): number {
 
 /** Bloom Meadow: soft rolling hills with a rounded crest under every windmill. */
 function meadowH(x: number, z: number): number {
-  const dist = Math.hypot(x - MEADOW.x, z - MEADOW.z);
+  const dist = hyp(x - MEADOW.x, z - MEADOW.z);
   const mw = 1 - smooth(MEADOW.r - 16, MEADOW.r + 26, dist);
   if (mw <= 0) return 0;
   let h = ((vnoise(x / 70 + 5, z / 70, 61) - 0.3) * 10 + (vnoise(x / 30, z / 30, 62) - 0.5) * 2.2) * mw;
-  for (const [wx, wz] of MEADOW.windmills) h += 3.4 * (1 - smooth(0, 22, Math.hypot(x - wx, z - wz)));
+  for (const [wx, wz] of MEADOW.windmills) h += 3.4 * (1 - smooth(0, 22, hyp(x - wx, z - wz)));
   return h;
 }
 
 /** Sunny Sands: big smooth dunes, a flat resort, and the lazy river ring (carved below the waterline so it fills). */
 function sandsH(x: number, z: number, h: number): number {
-  const dist = Math.hypot(x - SANDS.x, z - SANDS.z);
+  const dist = hyp(x - SANDS.x, z - SANDS.z);
   const sw = 1 - smooth(SANDS.r - 6, SANDS.r + 30, dist);
   if (sw <= 0) return h;
   const d1 = Math.sin((x * 0.7 + z * 0.45) / 15 + vnoise(x / 40, z / 40, 91) * 4) * 0.5 + 0.5;
   h += (1.8 + 3.4 * d1 * d1 + 2 * vnoise(x / 50, z / 50, 92)) * sw;
   const P = SANDS.park;
-  const pd = Math.hypot(x - P.x, z - P.z);
+  const pd = hyp(x - P.x, z - P.z);
   const flat = 1 - smooth(P.ring + 22, P.ring + 46, pd);
   if (flat > 0) h = h * (1 - flat) + 1.5 * flat;
   const cw = P.w / 2;
@@ -145,11 +146,11 @@ function sandsH(x: number, z: number, h: number): number {
 
 /** Glow Grove: mossy hummocks and a small pond. */
 function groveH(x: number, z: number, h: number): number {
-  const dist = Math.hypot(x - GROVE.x, z - GROVE.z);
+  const dist = hyp(x - GROVE.x, z - GROVE.z);
   const gw = 1 - smooth(GROVE.r - 14, GROVE.r + 22, dist);
   if (gw > 0) h += (vnoise(x / 20, z / 20, 81) * 2.4 + vnoise(x / 8, z / 8, 82) * 0.5 + 0.6) * gw;
   const P = GROVE.pond;
-  const q = Math.hypot(x - P.x, z - P.z) / P.r;
+  const q = hyp(x - P.x, z - P.z) / P.r;
   if (q < 1.6) {
     const t = smooth(0.55, 1.6, q);
     h = -1.5 * (1 - t) + h * t;
@@ -163,7 +164,7 @@ function interior(x: number, z: number): number {
   // rolling countryside: always above sea level (water only where we put it); gentle, so a car never gets stuck
   let h = (vnoise(x / 46, z / 46, 1) * 2.4 + vnoise(x / 19, z / 19, 2) * 0.45) * (1 - flat);
   h *= 1 - 0.5 * softRect(x, z, 85, -104, 55, 45, 20); // the park is calmer
-  const hillR = Math.hypot(x - LOOKOUT.x, z - LOOKOUT.z);
+  const hillR = hyp(x - LOOKOUT.x, z - LOOKOUT.z);
   h *= 0.2 + 0.8 * smooth(SPIRAL.r0 - 12, SPIRAL.r0 + 8, hillR); // keep the cone (and its road) clean
 
   // Lookout Hill
@@ -187,7 +188,7 @@ function interior(x: number, z: number): number {
   // the new places
   h += summitH(x, z) * (1 - flat);
   {
-    const pd = Math.hypot(x - SUMMIT.pad.x, z - SUMMIT.pad.z);       // the ski lodge's flat pad overrides everything under it
+    const pd = hyp(x - SUMMIT.pad.x, z - SUMMIT.pad.z);       // the ski lodge's flat pad overrides everything under it
     const pw = 1 - smooth(SUMMIT.pad.r, SUMMIT.pad.r + 18, pd);
     if (pw > 0) h = h * (1 - pw) + SUMMIT.pad.h * pw;
   }
@@ -198,7 +199,7 @@ function interior(x: number, z: number): number {
 
   // the lake bridge lands on flat ground at both ends (its deck is anchored at endY = 0.4)
   for (const bx of [54, 122]) {
-    const bd = Math.hypot(x - bx, z + 100);
+    const bd = hyp(x - bx, z + 100);
     const bw = 1 - smooth(10, 26, bd);
     if (bw > 0) h = h * (1 - bw) + 0.4 * bw;
   }
@@ -206,7 +207,7 @@ function interior(x: number, z: number): number {
   // Lake
   const lx = (x - LAKE.x) / LAKE.rx, lz = (z - LAKE.z) / LAKE.rz;
   const phi = Math.atan2(lz, lx);
-  const q = Math.hypot(lx, lz) / (1 + 0.08 * Math.sin(3 * phi) + 0.05 * Math.sin(5 * phi + 1));
+  const q = hyp(lx, lz) / (1 + 0.08 * Math.sin(3 * phi) + 0.05 * Math.sin(5 * phi + 1));
   if (q < 1.4) {
     const s = smooth(0.7, 1.4, q);
     h = -1.7 * (1 - s) + h * s;
@@ -216,7 +217,7 @@ function interior(x: number, z: number): number {
 
 /** A little rocky islet / sandbar: raises the floor to `top` metres (absolute) inside r. */
 function islet(h: number, x: number, z: number, cx: number, cz: number, r: number, top: number): number {
-  const t = 1 - smooth(r * 0.35, r, Math.hypot(x - cx, z - cz));
+  const t = 1 - smooth(r * 0.35, r, hyp(x - cx, z - cz));
   return t > 0 ? h * (1 - t) + top * t : h;
 }
 
@@ -302,7 +303,7 @@ function stuntOverlay(s: Stunt): Overlay {
       x0: s.x - R, z0: s.z - R, x1: s.x + R, z1: s.z + R, foot: false,
       h(x, z) {
         const dx = x - s.x, dz = z - s.z;
-        const r = Math.hypot(dx, dz);
+        const r = hyp(dx, dz);
         if (r < s.r0 || r > s.r1) return NaN;
         let a = Math.atan2(dz, dx) - s.a0;
         a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -314,7 +315,7 @@ function stuntOverlay(s: Stunt): Overlay {
   const fx = Math.sin(s.yaw), fz = -Math.cos(s.yaw);
   const rx = Math.cos(s.yaw), rz = Math.sin(s.yaw);
   const len = s.kind === 'roller' ? s.n * s.hl : s.len;
-  const R = Math.hypot(len / 2, s.w / 2) + 1;
+  const R = hyp(len / 2, s.w / 2) + 1;
   const base = { x0: s.x - R, z0: s.z - R, x1: s.x + R, z1: s.z + R, foot: false };
   return {
     ...base,
@@ -376,7 +377,7 @@ for (const s of STUNTS) {
 
 for (const b of BRIDGES) {
   const dx = b.bx - b.ax, dz = b.bz - b.az;
-  const L = Math.hypot(dx, dz);
+  const L = hyp(dx, dz);
   const fx = dx / L, fz = dz / L;
   OVERLAYS.push({
     x0: Math.min(b.ax, b.bx) - b.w, z0: Math.min(b.az, b.bz) - b.w, x1: Math.max(b.ax, b.bx) + b.w, z1: Math.max(b.az, b.bz) + b.w,
@@ -393,7 +394,7 @@ for (const b of BRIDGES) {
 
 for (const p of PIERS) {
   const dx = p.bx - p.ax, dz = p.bz - p.az;
-  const L = Math.hypot(dx, dz);
+  const L = hyp(dx, dz);
   const fx = dx / L, fz = dz / L;
   OVERLAYS.push({
     x0: Math.min(p.ax, p.bx) - p.w, z0: Math.min(p.az, p.bz) - p.w, x1: Math.max(p.ax, p.bx) + p.w, z1: Math.max(p.az, p.bz) + p.w,
@@ -412,7 +413,7 @@ for (const p of PIERS) {
 for (const s of STAIRS) {
   const fx = Math.sin(s.yaw), fz = -Math.cos(s.yaw);
   const rx = Math.cos(s.yaw), rz = Math.sin(s.yaw);
-  const R = Math.hypot(s.len / 2, s.w / 2) + 1;
+  const R = hyp(s.len / 2, s.w / 2) + 1;
   OVERLAYS.push({
     x0: s.x - R, z0: s.z - R, x1: s.x + R, z1: s.z + R, foot: true,
     h(x, z) {

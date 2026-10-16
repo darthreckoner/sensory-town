@@ -11,6 +11,7 @@ import * as Layout from '../world/townLayout';
 import { button, el } from '../ui/ui';
 import { roundedBox, toyMat } from '../art/materials';
 import { clamp, wrapAngle } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface BusPath {
   ax: number;
@@ -272,7 +273,7 @@ export class BusDrop {
     // pure pursuit toward the next end of the route: the turn-around is a wide, lazy loop
     const p = this.path;
     const tx = this.toB ? p.bx : p.ax, tz = this.toB ? p.bz : p.az;
-    if (Math.hypot(tx - this.x, tz - this.z) < 26) this.toB = !this.toB;
+    if (hyp(tx - this.x, tz - this.z) < 26) this.toB = !this.toB;
     const want = Math.atan2(tx - this.x, -(tz - this.z));
     const turn = 0.75 * dt;
     this.heading += clamp(wrapAngle(want - this.heading), -turn, turn);

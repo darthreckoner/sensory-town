@@ -49,6 +49,20 @@ function centerOf(el: HTMLElement): [number, number] {
   return [r.x + r.width / 2, r.y + r.height / 2];
 }
 
+/** The build HUD must leave the middle half of the screen (both ways) free: that is where the player aims. Returns what sits in it. */
+function aimIssues(label: string): string[] {
+  const W = window.innerWidth, H = window.innerHeight;
+  const l = W * 0.25, r = W * 0.75, t = H * 0.25, b = H * 0.75;
+  const out: string[] = [];
+  for (const e of document.querySelectorAll<HTMLElement>('.b3-pieces, .b3-pieces .b3-btn, .b3-tools .tg, .b3-tools .b3-btn, .b3-drawer, .b3-panel, .b3-place, .b3-hint, .b3-info')) {
+    if (e.offsetParent === null) continue;   // not showing
+    const rc = e.getBoundingClientRect();
+    if (rc.width < 1 || (e.classList.contains('b3-hint') && getComputedStyle(e).opacity === '0')) continue;
+    if (Math.min(rc.right, r) - Math.max(rc.left, l) > 2 && Math.min(rc.bottom, b) - Math.max(rc.top, t) > 2) out.push(`${label}: ${(e.className as string).split(' ').slice(0, 2).join('.')} sits in the aim area`);
+  }
+  return out;
+}
+
 function count(type: string, fn: () => Promise<void>): Promise<number> {
   let n = 0;
   const off = bus.on(type as any, () => n++);
@@ -407,6 +421,32 @@ const TESTS: Record<string, () => Promise<Result>> = {
     };
     ensureFoot(d);
     check('foot');
+    // build mode: the aim area (the middle 50% x 50%) stays clear in every state of the build HUD
+    {
+      d.build3.toggle(true);
+      const place = document.querySelector<HTMLElement>('.b3-place');
+      const placeWas = place?.style.display ?? '';
+      if (place) place.style.display = 'flex';   // (it only shows on touch devices)
+      const hint = document.querySelector<HTMLElement>('.b3-hint');
+      hint?.classList.add('show');
+      const aim = (label: string) => {
+        scenes.step(2);
+        problems.push(...aimIssues(label));
+      };
+      aim('build');
+      d.build3.toggleStarters();
+      aim('build starters');
+      d.build3.setTool('decor');
+      aim('build decor');
+      d.build3.setTool('build');
+      d.build3.openEdit({ id: 'hud-test', kind: 'wall', mat: 'wood', ix: 0, iy: 0, iz: 0, dir: 0, ownerId: 'x' });
+      aim('build edit');
+      d.build3.closePanels();
+      d.build3.toggle(false);
+      hint?.classList.remove('show');
+      if (place) place.style.display = placeWas;
+      notes.push('aim area clear');
+    }
     ensureCar(d);
     check('ride');
     d.controls.setHop(true);   // the hoverboard's HOP button stacks up the right edge
@@ -435,7 +475,8 @@ const TESTS: Record<string, () => Promise<Result>> = {
     const saved = keys.map((k) => root.style.getPropertyValue(k));
     const W = window.innerWidth, H = window.innerHeight;
     const phone = Math.min(W, H) <= 520;   // a phone has a notch on its side; an iPad only has the home bar
-    const S = phone ? { t: 0, r: 59, b: 21, l: 59 } : { t: 24, r: 0, b: 20, l: 0 };   // (an iPad web app: a status bar on top, the home bar below)
+    // (a notch phone on its side: 59 px each side and a home bar; an old 667-wide phone has no notch; an iPad web app: a status bar on top, the home bar below)
+    const S = phone ? (W >= 800 ? { t: 0, r: 59, b: 21, l: 59 } : { t: 0, r: 0, b: 0, l: 0 }) : { t: 24, r: 0, b: 20, l: 0 };
     keys.forEach((k, i) => root.style.setProperty(k, `${[S.t, S.r, S.b, S.l][i]}px`));
     const prevShow: boolean = d.controls.touchShown;
     d.controls.showTouch(true);
@@ -450,8 +491,8 @@ const TESTS: Record<string, () => Promise<Result>> = {
     const seen = (e: HTMLElement): DOMRect | null => {
       let r = e.getBoundingClientRect();
       for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
-        const o = getComputedStyle(a).overflowX;
-        if (o !== 'auto' && o !== 'scroll') continue;
+        const cs = getComputedStyle(a);
+        if (!/auto|scroll|hidden/.test(cs.overflowX + cs.overflowY) || a.id === 'ui') continue;
         const c = a.getBoundingClientRect();
         const l = Math.max(r.left, c.left), t = Math.max(r.top, c.top), rt = Math.min(r.right, c.right), bt = Math.min(r.bottom, c.bottom);
         if (rt - l < 2 || bt - t < 2) return null;
@@ -467,9 +508,13 @@ const TESTS: Record<string, () => Promise<Result>> = {
     };
     const taps = (label: string, els: HTMLElement[]) => {
       for (const e of els) {
-        if (!seen(e)) continue;
+        const v = seen(e);
+        if (!v) continue;
         const r = e.getBoundingClientRect();
+        if (v.width < r.width - 1 || v.height < r.height - 1) continue;   // (half scrolled out of a drawer: not on show as a button)
         if (Math.min(r.width, r.height) < 43.5) fail(`${label}: ${tag(e)} is ${Math.round(r.width)}x${Math.round(r.height)}, too small to tap`);
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (top && !e.contains(top) && !top.contains(e)) fail(`${label}: ${tag(e)} is covered by ${tag(top)}`);
       }
     };
     const apart = (label: string, a: HTMLElement[], b: HTMLElement[]) => {
@@ -558,37 +603,55 @@ const TESTS: Record<string, () => Promise<Result>> = {
       poiRoot.className = was[2] as string;
     }
 
-    // the build bar and its panels
+    // the build HUD: piece cluster + material button, the tool strip, the side drawer, the place button, the hint; the aim area (middle 50% x 50%) stays clear
     d.build3.toggle(true);
     scenes.step(3);
     {
       const place = document.querySelector<HTMLElement>('.b3-place');
       const placeWas = place?.style.display ?? '';
       if (place) place.style.display = 'flex';   // (only shows on touch devices; show it so it is measured too)
+      const hint = document.querySelector<HTMLElement>('.b3-hint');
+      if (hint) {
+        hint.textContent = '🔨 Tap to place · hold and sweep to build a run';
+        hint.classList.add('show');
+      }
       const stage = (label: string) => {
         scenes.step(2);
         const h = hud();
-        const dock = q('.b3-dock .b3-bar, .b3-dock .b3-panel.show');
-        const btns = q('.b3-bar .b3-btn, .b3-panel.show .b3-btn, .b3-panel.show .item, .b3-panel.show .sw, .b3-panel.show .card, .b3-panel.show .cell');
-        inside(label, [...dock, ...btns, ...q('.b3-place'), ...q('.b3-edit.show')]);
-        taps(label, [...btns, ...q('.b3-place')]);
-        apart(label, [...dock, ...q('.b3-edit.show')], [...h.map, ...h.menu, ...h.pills, ...h.pedals, ...h.stick, ...h.col, ...q('.b3-place')]);
-        apart(label, q('.b3-place'), [...h.pedals, ...h.col, ...h.map, ...h.stick]);
-        const all = [...dock, ...q('.b3-edit.show')];
-        const hh = Math.max(...all.map((e) => e.getBoundingClientRect().bottom)) - Math.min(...all.map((e) => e.getBoundingClientRect().top));
-        notes.push(`${label} ${Math.round((hh / H) * 100)}%`);
-        if (hh > H * 0.62) fail(`${label}: the build UI covers ${Math.round((hh / H) * 100)}% of the screen height`);
+        const shell = q('.b3-pieces, .b3-tools .tg, .b3-drawer.show, .b3-place, .b3-hint.show, .b3-info');
+        const btns = q('.b3-pieces .b3-btn, .b3-tools .tg .b3-btn, .b3-place, .b3-tab, .b3-decor .tab, .b3-decor .item, .b3-colors .sw, .b3-edit .cell, .b3-starter .card');
+        problems.push(...aimIssues(label));
+        inside(label, [...shell, ...btns]);
+        taps(label, btns);
+        apart(label, shell, [...h.map, ...h.menu, ...h.pedals, ...h.stick, ...h.col, ...h.pills]);
+        apart(label, q('.b3-pieces'), [...q('.b3-drawer.show'), ...q('.b3-place'), ...q('.b3-tools .tg')]);
+        apart(label, q('.b3-drawer.show'), [...q('.b3-tools .tg'), ...q('.b3-place')]);
+        const cluster = q('.b3-pieces')[0]?.getBoundingClientRect();
+        const dr = q('.b3-drawer.show')[0]?.getBoundingClientRect();
+        notes.push(`${label}${cluster ? ` ${Math.round(cluster.width)}x${Math.round(cluster.height)}` : ''}${dr ? ` drawer ${Math.round(dr.width)}px (${Math.round((dr.width / W) * 100)}%)` : ''}`);
+        if (dr && dr.width > W * 0.32) fail(`${label}: the drawer is ${Math.round((dr.width / W) * 100)}% of the screen width`);
       };
-      stage('bar');
+      const tapIt = (e: HTMLElement | undefined, id: number) => {
+        if (!e) return fail('build: nothing to tap');
+        const [cx, cy] = centerOf(e);
+        tapAt(cx, cy, id);
+      };
+      stage('hud');
       d.build3.toggleStarters();
       stage('starters');
       d.build3.setTool('decor');
-      stage('decor');
+      stage('catalog');
+      tapIt(q('.b3-decor .item')[0], 902);   // pick an item: the catalog folds into a chip in the strip
+      stage('chip');
+      if (q('.b3-drawer.show').length) fail('chip: the drawer should fold away once an item is picked');
+      tapIt(q('.b3-tools .ctxdecor .b3-btn')[2], 903);   // the colour button: the swatches pop out
+      stage('colours');
       d.build3.setTool('build');
       d.build3.openEdit({ id: 'phone-test', kind: 'wall', mat: 'wood', ix: 0, iy: 0, iz: 0, dir: 0, ownerId: 'x' });
       stage('edit');
       d.build3.closePanels();
       if (place) place.style.display = placeWas;
+      hint?.classList.remove('show');
     }
     d.build3.toggle(false);
 
@@ -831,6 +894,13 @@ const TESTS: Record<string, () => Promise<Result>> = {
     const { menuLayoutAt } = await import('../ui/layoutcheck');
     const r = await menuLayoutAt();
     return { name: 'menuLayout', pass: r.pass, detail: r.detail };
+  },
+
+  /** v3 perf (W2): how much does each pop-up (toast, POI card, reveal card cold + warm, Drive prompt, charm pop) hitch the town? Max frame ms + long tasks per pop-up. */
+  async popupSpikes() {
+    const { popupSpikes } = await import('../ui/spikecheck');
+    const r = await popupSpikes();
+    return { name: 'popupSpikes', pass: r.pass, detail: r.detail };
   },
 
   async drawCallsTown() {

@@ -2,6 +2,7 @@
 // particle pool (sparkle trail, boost flames, tyre smoke) and the boost
 // speed lines that streak past the camera.
 import * as THREE from 'three';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 // ── skid marks ──────────────────────────────────────────────────────────────
 export class SkidMarks {
@@ -34,7 +35,7 @@ export class SkidMarks {
     }
     if (l.ok) {
       const dx = x - l.x, dz = z - l.z;
-      const len = Math.hypot(dx, dz);
+      const len = hyp(dx, dz);
       if (len > 0.35) {
         this.dummy.position.set((x + l.x) / 2, y + 0.07, (z + l.z) / 2);
         this.dummy.rotation.set(0, Math.atan2(dx, dz), 0);

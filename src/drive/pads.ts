@@ -7,6 +7,7 @@ import { tuning } from '../tuning';
 import { groundHeight } from '../world/heightfield';
 import { ROAD_LIFT } from './terrain';
 import { emojiSprite, lightBeam } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface Pad {
   group: THREE.Group;
@@ -65,7 +66,7 @@ export function makePad(x: number, z: number, color: string, emoji: string): Pad
   return {
     group,
     update(t: number, vx: number, vz: number, onFoot = false) {
-      const near = Math.hypot(vx - x, vz - z) < 120;
+      const near = hyp(vx - x, vz - z) < 120;
       group.visible = near;
       if (!near) return;
       beam.visible = !onFoot;

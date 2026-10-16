@@ -1,7 +1,7 @@
 # DESIGN — Sensory Town v3 ("Fortnite-style, for a 10-year-old girl")
 
 ## Vision (one paragraph)
-A bright, open island you drop onto from a party bus. You glide down, then walk, sprint, swim, drive or build anywhere. Pick a ride from a garage of chunky cartoon vehicles, raise a house out of wood, brick or metal in seconds, then fill it with your own furniture. Collect charms hidden all over the island to unlock new outfits, back blings, gliders, emotes and rides. Dance with your friends' characters in the plaza, then duck into the Studio for the ASMR crafts (squishies, slime, wax cracking). It plays like Fortnite (the movement, the vehicles, the build-anything freedom, the locker) with every bit of combat removed: no weapons, no damage, no storm, no elimination. It's just silly fun.
+A bright, open island you drop onto from a party bus. You glide down, then walk, sprint, swim, drive or build anywhere. Pick a ride from a garage of vehicles, raise a house out of wood, brick or metal in seconds, then fill it with your own furniture. Collect charms hidden all over the island to unlock new outfits, back blings, gliders, emotes and rides. Dance with your friends' characters in the plaza, then duck into the Studio for the ASMR crafts (squishies, slime, wax cracking). It plays like Fortnite (the movement, the vehicles, the build-anything freedom, the locker) with every bit of combat removed: no weapons, no damage, no storm, no elimination. It's just silly fun.
 
 ## Audience
 - One 10-year-old girl and her 9/11-year-old sibling, on iPad.
@@ -87,7 +87,7 @@ A bright, open island you drop onto from a party bus. You glide down, then walk,
   - The four build pieces in three materials, the 3×3 wall edit, drag-building.
   - The locker slots and rarity colours.
   - Emotes, parked vehicles, POI title cards, bright saturated stylized-real art.
-- **Roblox Bloxburg:** furniture and decor placement inside builds.
+- **Roblox Dubai RP:** furniture and decor placement inside builds, flashy cars and driving. 
 - **Coverstar, Glitter Slime, Fidget Toys:** the Studio ASMR (unchanged).
 
 ## Anti-goals (must NOT become)
@@ -99,7 +99,6 @@ A bright, open island you drop onto from a party bus. You glide down, then walk,
 
 ## Scope
 - **Platform:** offline PWA on iPad (Safari, Add to Home Screen); also runs in a desktop browser. Touch first; keyboard and mouse on PC.
-- **Deadline:** v3 playable and deployed before **3:00 p.m. Central, Fri Oct 16, 2026**.
 - **Done means:**
   - Every mechanic above is playable.
   - World sweeps are clean and repros pass.

@@ -103,9 +103,12 @@ export class BuildMode {
 
   // ui
   private root: HTMLElement | null = null;
-  private bar!: HTMLElement;
+  // (the build HUD: a piece cluster + one material button at the right thumb, a slim tool strip along the top, a side drawer on the right; the middle of the screen stays clear)
+  private pieces!: HTMLElement;
+  private tools!: HTMLElement;
+  private drawer!: HTMLElement;
   private kindBtns = new Map<BuildKind, HTMLElement>();
-  private matBtns = new Map<BuildMat, HTMLElement>();
+  private matBtn!: HTMLElement;
   private toolBtns = new Map<Tool, HTMLElement>();
   private info!: HTMLElement;
   private hint!: HTMLElement;
@@ -114,8 +117,15 @@ export class BuildMode {
   private editTitle!: HTMLElement;
   private editCells: HTMLElement[] = [];
   private decorPanel!: HTMLElement;
-  private decorList!: HTMLElement;
-  private decorSel!: HTMLElement;
+  private decorTabs!: HTMLElement;
+  private decorGrid!: HTMLElement;
+  private decorCats = new Map<string, PieceDef[]>();
+  private decorCat = '';
+  /** the catalog is open, the picked item is a chip in the strip, or the colour swatches are out */
+  private decorMode: 'catalog' | 'chip' | 'colors' = 'catalog';
+  private colorsPanel!: HTMLElement;
+  private chipIco!: HTMLElement;
+  private chipRemove!: HTMLElement;
   private starterPanel!: HTMLElement;
   private hintT = 0;
   private placeBtn!: HTMLElement;
@@ -196,7 +206,7 @@ export class BuildMode {
       add(window, 'pointerup', this.onUp as EventListener);
       add(window, 'pointercancel', this.onUp as EventListener);
       this.setTool('build');
-      this.showHint(`🔨 Build: tap to place a ${this.mat} ${this.kind}. Hold and sweep to build a run.`, 7);
+      this.showHint(`🔨 Tap to place · hold and sweep to build a run`, 6);
     } else {
       this.ptr = null;
       this.placeHeld = false;
@@ -483,6 +493,7 @@ export class BuildMode {
     this.editTitle.textContent = p.kind === 'wall' ? `Edit ${p.mat} wall` : `Edit ${p.mat} floor`;
     this.renderEdit();
     this.ring.visible = false;
+    this.syncUi();
   }
 
   private flipFor(p: BuildPiece): boolean {
@@ -647,12 +658,16 @@ export class BuildMode {
 
   private selectDecor(d: WorldDecor | null): void {
     this.selDecor = d;
-    this.decorSel.classList.toggle('show', !!d);
     if (d) {
       const def = pieceDef(d.type as never);
       if (def) this.decorDef = def;
+      // a placed item is selected: the catalog / colours fold away, the strip shows its chip (turn, colour, remove, done)
+      this.decorMode = 'chip';
+      this.decorPanel.classList.remove('show');
+      this.colorsPanel.classList.remove('show');
     }
     this.updateRing();
+    this.syncUi();
   }
 
   private editSelected(change: (d: WorldDecor) => void): void {
@@ -682,6 +697,10 @@ export class BuildMode {
   private recolorDecor(c: string): void {
     this.decorColor = c;
     if (this.selDecor) this.editSelected((d) => (d.color = c));
+    if (this.decorMode === 'colors') {
+      this.decorMode = 'chip';   // (the swatches pop out of the chip and fold back after one pick)
+      this.colorsPanel.classList.remove('show');
+    }
     this.refreshUi();
   }
 
@@ -773,14 +792,14 @@ export class BuildMode {
     this.tool = t;
     this.closePanels();
     if (t === 'decor') {
-      this.decorPanel.classList.add('show');
       if (!this.decorDef) this.decorDef = decorCatalog()[0] ?? null;
       this.fillDecorList();
+      this.decorMode = 'catalog';
+      this.decorPanel.classList.add('show');
     } else this.selDecor = null;
-    this.placeBtn.style.display = t === 'build' ? '' : 'none';
-    if (t === 'edit') this.showHint('✏️ Edit: tap a wall or floor, then tap squares to cut windows, doors and arches.', 6);
-    if (t === 'delete') this.showHint('🗑️ Delete: tap any piece or decor to remove it. ↶ brings it back.', 6);
-    if (t === 'decor') this.showHint('🛋️ Decor: pick something, tap to put it down. Tap an item to turn, recolour or remove it.', 7);
+    if (t === 'edit') this.showHint('✏️ Tap a wall or floor, then its squares', 6);
+    if (t === 'delete') this.showHint('🗑️ Tap a piece to remove it · ↶ undoes', 6);
+    if (t === 'decor') this.showHint('🛋️ Pick one, then tap to put it down', 7);
     this.refreshUi();
   }
 
@@ -788,6 +807,7 @@ export class BuildMode {
     const open = !this.starterPanel.classList.contains('show');
     this.setTool('build');
     if (open) this.starterPanel.classList.add('show');
+    this.syncUi();
   }
 
   /** Raise a ready-made little house (or ramp park) in front of the player, door toward them. */
@@ -832,15 +852,17 @@ export class BuildMode {
     const ids = pieces.map((p) => p.id);
     this.push({ undo: () => ids.forEach((id) => void this.removePiece(id, id === ids[0])) });
     this.starterPanel.classList.remove('show');
-    this.showHint(`${st.icon} ${st.name} is going up! Edit it, add decor, make it yours.`, 5);
+    this.syncUi();
+    this.showHint(`${st.icon} ${st.name} is going up!`, 5);
   }
 
   private closePanels(): void {
     this.starterPanel?.classList.remove('show');
     this.editPanel?.classList.remove('show');
     this.decorPanel?.classList.remove('show');
-    this.decorSel?.classList.remove('show');
+    this.colorsPanel?.classList.remove('show');
     this.selPiece = null;
+    this.syncUi();
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -854,6 +876,7 @@ export class BuildMode {
 
   private mkBtn(parent: HTMLElement, cls: string, icon: string, label: string, on: () => void, key?: string): HTMLElement {
     const b = el('button', 'b3-btn ' + cls, parent);
+    if (label) b.title = label;
     el('span', 'ico', b, icon);
     if (label) el('span', 'lbl', b, label);
     if (key) el('span', 'key', b, key);
@@ -870,27 +893,42 @@ export class BuildMode {
     this.hint = el('div', 'b3-hint', root);
     this.info = el('div', 'b3-info', root);
 
-    // the dock: the bar at the bottom, the starter / decor panels stacked above it (so they never overlap)
-    const dock = el('div', 'b3-dock', root);
-    this.bar = el('div', 'b3-bar interactive', dock);
-    const kinds = el('div', 'b3-row', this.bar);
+    // ── right thumb: the piece cluster (wall / floor / ramp / roof) with ONE material button beside it, just left of JUMP / SLIDE ──
+    this.pieces = el('div', 'b3-pieces interactive', root);
+    this.matBtn = this.mkBtn(this.pieces, 'mat', MATS.wood.icon, 'Material: tap to change', () => this.setMat(MAT_ORDER[(MAT_ORDER.indexOf(this.mat) + 1) % MAT_ORDER.length]), 'T');
     for (const k of KIND_UI) {
-      this.kindBtns.set(k.kind, this.mkBtn(kinds, 'kind', k.icon, k.label, () => this.setKind(k.kind), k.key));
+      this.kindBtns.set(k.kind, this.mkBtn(this.pieces, 'kind', k.icon, k.label, () => this.setKind(k.kind), k.key));
     }
-    const mats = el('div', 'b3-row mats', this.bar);
-    for (const m of MAT_ORDER) {
-      const b = this.mkBtn(mats, 'mat ' + m, MATS[m].icon, MATS[m].label, () => this.setMat(m));
-      this.matBtns.set(m, b);
-    }
-    const tools = el('div', 'b3-row tools', this.bar);
-    this.toolBtns.set('edit', this.mkBtn(tools, 'tool', '✏️', 'Edit', () => this.setTool(this.tool === 'edit' ? 'build' : 'edit'), 'G'));
-    this.toolBtns.set('delete', this.mkBtn(tools, 'tool', '🗑️', 'Delete', () => this.setTool(this.tool === 'delete' ? 'build' : 'delete'), 'X'));
-    this.toolBtns.set('decor', this.mkBtn(tools, 'tool', '🛋️', 'Decor', () => this.setTool(this.tool === 'decor' ? 'build' : 'decor'), 'V'));
-    this.mkBtn(tools, 'tool', '🏠', 'Starter', () => this.toggleStarters());
-    this.mkBtn(tools, 'undo', '↶', 'Undo', () => this.undo(), 'U');
-    this.mkBtn(tools, 'done', '✓', 'Done', () => this.setActive(false), 'B');
 
-    // the big touch place button
+    // ── a slim strip (top, between the menu button and the minimap): the tools, or the buttons of what is open ──
+    this.tools = el('div', 'b3-tools', root);
+    this.tools.dataset.ctx = 'main';
+    const main = el('div', 'tg main interactive', this.tools);
+    this.toolBtns.set('edit', this.mkBtn(main, 'tool', '✏️', 'Edit', () => this.setTool(this.tool === 'edit' ? 'build' : 'edit'), 'G'));
+    this.toolBtns.set('delete', this.mkBtn(main, 'tool', '🗑️', 'Delete', () => this.setTool(this.tool === 'delete' ? 'build' : 'delete'), 'X'));
+    this.toolBtns.set('decor', this.mkBtn(main, 'tool', '🛋️', 'Decor', () => this.setTool(this.tool === 'decor' ? 'build' : 'decor'), 'V'));
+    this.mkBtn(main, 'tool', '🏠', 'Starter houses', () => this.toggleStarters());
+    this.mkBtn(main, 'undo', '↶', 'Undo', () => this.undo(), 'U');
+    this.mkBtn(main, 'done', '✓', 'Done', () => this.setActive(false), 'B');
+    // editing a wall / floor: the cut-outs, and Done
+    const ed = el('div', 'tg ctxedit interactive', this.tools);
+    for (const p of PRESETS) this.mkBtn(ed, 'preset', p.icon, p.label, () => this.applyPreset(p.id));
+    this.mkBtn(ed, 'done', '✓', 'Done editing', () => this.closePanels());
+    // decor picked: the chip (the item: tap for the catalog), turn, colour, remove (a placed one), done
+    const dc = el('div', 'tg ctxdecor interactive', this.tools);
+    const chip = this.mkBtn(dc, 'chip', '🛋️', 'Pick another (catalog)', () => this.openCatalog());
+    this.chipIco = chip.querySelector('.ico') as HTMLElement;
+    this.mkBtn(dc, 'tool', '⟳', 'Turn', () => this.rotateDecor(), 'R');
+    this.mkBtn(dc, 'tool', '🎨', 'Colour', () => this.toggleColors());
+    this.chipRemove = this.mkBtn(dc, 'tool', '🗑️', 'Remove', () => {
+      if (this.selDecor) this.deleteDecor(this.selDecor);
+    });
+    this.mkBtn(dc, 'done', '✓', 'Done with decor', () => {
+      this.selectDecor(null);
+      this.setTool('build');
+    });
+
+    // the big touch place button (above JUMP)
     this.placeBtn = el('button', 'b3-place interactive', root);
     el('span', 'ico', this.placeBtn, '🔨');
     const down = (e: PointerEvent) => {
@@ -917,8 +955,37 @@ export class BuildMode {
     this.placeBtn.addEventListener('pointerup', up);
     this.placeBtn.addEventListener('pointercancel', up);
 
-    // edit panel
-    this.editPanel = el('div', 'b3-panel b3-edit interactive', root);
+    // ── the side drawer (right edge, never past the middle of the screen): starters, the decor catalog, colours, the edit grid ──
+    this.drawer = el('div', 'b3-drawer interactive', root);
+    this.starterPanel = el('div', 'b3-panel b3-starter', this.drawer);
+    el('div', 'ttl', this.starterPanel, 'Raise a starter');
+    const cards = el('div', 'cards', this.starterPanel);
+    for (const st of STARTERS) {
+      const c = el('button', 'card', cards);
+      c.title = st.name;
+      el('span', 'ico', c, st.icon);
+      el('span', 'nm', c, st.name);
+      el('span', 'bl', c, `${st.blurb} · ${st.pieces.length} pieces`);
+      bindTap(c, () => {
+        bus.emit('uiTap', { kind: 'big' });
+        this.stampStarter(st);
+      });
+    }
+
+    this.decorPanel = el('div', 'b3-panel b3-decor', this.drawer);
+    this.decorTabs = el('div', 'tabs', this.decorPanel);
+    this.decorGrid = el('div', 'grid', this.decorPanel);
+
+    this.colorsPanel = el('div', 'b3-panel b3-colors', this.drawer);
+    for (const c of DECOR_COLORS) {
+      const s = el('button', 'sw', this.colorsPanel);
+      s.style.background = c;
+      s.dataset.c = c;
+      s.title = 'Colour';
+      bindTap(s, () => this.recolorDecor(c));
+    }
+
+    this.editPanel = el('div', 'b3-panel b3-edit', this.drawer);
     this.editTitle = el('div', 'ttl', this.editPanel, 'Edit');
     this.editGrid = el('div', 'grid3', this.editPanel);
     for (let i = 0; i < 9; i++) {
@@ -929,77 +996,93 @@ export class BuildMode {
       });
       this.editCells.push(c);
     }
-    const pre = el('div', 'b3-row presets', this.editPanel);
-    for (const p of PRESETS) this.mkBtn(pre, 'preset', p.icon, p.label, () => this.applyPreset(p.id));
-    this.mkBtn(this.editPanel, 'done wide', '✓', 'Done', () => this.closePanels());
-
-    // starter houses
-    this.starterPanel = el('div', 'b3-panel b3-starter interactive', dock);
-    el('div', 'ttl', this.starterPanel, 'Raise a starter');
-    const cards = el('div', 'cards', this.starterPanel);
-    for (const st of STARTERS) {
-      const c = el('button', 'card', cards);
-      el('span', 'ico', c, st.icon);
-      el('span', 'nm', c, st.name);
-      el('span', 'bl', c, `${st.blurb} · ${st.pieces.length} pieces`);
-      bindTap(c, () => {
-        bus.emit('uiTap', { kind: 'big' });
-        this.stampStarter(st);
-      });
-    }
-
-    // decor shelf
-    this.decorPanel = el('div', 'b3-panel b3-decor interactive', dock);
-    this.decorList = el('div', 'list', this.decorPanel);
-    const ctl = el('div', 'b3-row ctl', this.decorPanel);
-    this.mkBtn(ctl, 'tool', '⟳', 'Turn', () => this.rotateDecor(), 'R');
-    const sw = el('div', 'swatches', ctl);
-    for (const c of DECOR_COLORS) {
-      const s = el('button', 'sw', sw);
-      s.style.background = c;
-      s.dataset.c = c;
-      bindTap(s, () => this.recolorDecor(c));
-    }
-    this.decorSel = el('div', 'b3-sel', this.decorPanel);
-    el('span', 'lbl', this.decorSel, 'Selected');
-    this.mkBtn(this.decorSel, 'tool', '🗑️', 'Remove', () => {
-      if (this.selDecor) this.deleteDecor(this.selDecor);
-    });
-    this.mkBtn(this.decorSel, 'tool', '✓', 'Done', () => this.selectDecor(null));
+    this.syncUi();
   }
 
+  /** Decor catalog: category tabs on top, a scrolling grid of the items of the open tab underneath. */
   private fillDecorList(): void {
-    if (this.decorList.childElementCount) return;
+    if (this.decorTabs.childElementCount) return;
     const cats = new Map<string, PieceDef[]>();
     for (const d of decorCatalog()) {
       const k = String(d.cat);
       if (!cats.has(k)) cats.set(k, []);
       cats.get(k)!.push(d);
     }
-    for (const [cat, list] of cats) {
-      el('div', 'cat', this.decorList, cat);
-      for (const d of list) {
-        const b = el('button', 'item', this.decorList);
-        b.dataset.type = d.type;
-        el('span', 'ico', b, d.icon);
-        el('span', 'lbl', b, d.name);
-        bindTap(b, () => {
-          bus.emit('uiTap', { kind: 'soft' });
-          this.decorDef = d;
-          this.selectDecor(null);
-          this.refreshUi();
-        });
-      }
+    this.decorCats = cats;
+    for (const cat of cats.keys()) {
+      const t = el('button', 'tab', this.decorTabs, cat);
+      t.dataset.cat = cat;
+      bindTap(t, () => {
+        bus.emit('uiTap', { kind: 'tab' });
+        this.showCat(cat);
+      });
     }
+    this.showCat(this.decorDef ? String(this.decorDef.cat) : cats.keys().next().value ?? '');
+  }
+
+  private showCat(cat: string): void {
+    this.decorCat = cat;
+    this.decorTabs.querySelectorAll<HTMLElement>('.tab').forEach((t) => t.classList.toggle('on', t.dataset.cat === cat));
+    this.decorGrid.textContent = '';
+    for (const d of this.decorCats.get(cat) ?? []) {
+      const b = el('button', 'item', this.decorGrid);
+      b.dataset.type = d.type;
+      b.title = d.name;
+      el('span', 'ico', b, d.icon);
+      el('span', 'lbl', b, d.name);
+      bindTap(b, () => {
+        bus.emit('uiTap', { kind: 'soft' });
+        this.decorDef = d;
+        this.selectDecor(null);
+        this.decorMode = 'chip';   // picked: the catalog folds away into the chip in the strip
+        this.decorPanel.classList.remove('show');
+        this.colorsPanel.classList.remove('show');
+        this.refreshUi();
+      });
+    }
+    this.refreshUi();
+  }
+
+  private openCatalog(): void {
+    this.decorMode = 'catalog';
+    this.colorsPanel.classList.remove('show');
+    this.decorPanel.classList.add('show');
+    this.syncUi();
+  }
+
+  private toggleColors(): void {
+    const open = !this.colorsPanel.classList.contains('show');
+    this.decorPanel.classList.remove('show');
+    this.colorsPanel.classList.toggle('show', open);
+    this.decorMode = open ? 'colors' : 'chip';
+    this.syncUi();
+  }
+
+  /** Which buttons and panels are up: the drawer when something is open, the strip's group, the place button. */
+  private syncUi(): void {
+    if (!this.drawer) return;
+    const open = [this.starterPanel, this.editPanel, this.decorPanel, this.colorsPanel].some((p) => p.classList.contains('show'));
+    this.drawer.classList.toggle('show', open);
+    // (the catalog fills the drawer's height; the swatches, the starters and the edit grid take only what they need)
+    this.drawer.classList.toggle('fit', [this.starterPanel, this.editPanel, this.colorsPanel].some((p) => p.classList.contains('show')));
+    // (no place button while a drawer covers the right side; it is for pieces)
+    this.placeBtn.style.display = this.tool === 'build' && !open ? '' : 'none';
+    const ctx = this.editPanel.classList.contains('show') ? 'edit' : this.tool === 'decor' && this.decorMode !== 'catalog' ? 'decor' : 'main';
+    this.tools.dataset.ctx = ctx;
+    this.chipRemove.style.display = this.selDecor ? '' : 'none';
+    this.chipIco.textContent = this.decorDef?.icon ?? '🛋️';
   }
 
   private refreshUi(): void {
     for (const [k, b] of this.kindBtns) b.classList.toggle('on', this.tool === 'build' && this.kind === k);
-    for (const [m, b] of this.matBtns) b.classList.toggle('on', this.mat === m);
+    const mi = this.matBtn?.querySelector('.ico');
+    if (mi && mi.textContent !== MATS[this.mat].icon) mi.textContent = MATS[this.mat].icon;
+    if (this.matBtn) this.matBtn.dataset.mat = this.mat;
     for (const [t, b] of this.toolBtns) b.classList.toggle('on', this.tool === t);
-    this.decorList?.querySelectorAll('.item').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.type === this.decorDef?.type));
-    this.decorPanel?.querySelectorAll('.sw').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.c === this.decorColor));
+    this.decorGrid?.querySelectorAll('.item').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.type === this.decorDef?.type));
+    this.colorsPanel?.querySelectorAll('.sw').forEach((n) => n.classList.toggle('on', (n as HTMLElement).dataset.c === this.decorColor));
     this.updateInfo();
+    this.syncUi();
   }
 
   private updateInfo(): void {

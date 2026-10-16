@@ -24,6 +24,7 @@ import type { Character } from '../art/character';
 import { makeGlider } from '../art/gear/gliders';
 import { makeContrail, type Contrail } from '../art/gear/contrails';
 import { disposeGear } from '../art/gear/gearKit';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 /** What a walker can stand on at (x, z) for a body at height yRef: ground, stairs, decks, and whatever the player built. */
 export function surfaceY(x: number, z: number, yRef: number): number {
@@ -361,7 +362,7 @@ export class Glide {
     this.vy = vy;
     this.vz = vz;
     this.heading = heading;
-    this.speedH = Math.hypot(vx, vz);
+    this.speedH = hyp(vx, vz);
     this.peak = y;
     this.age = 0;
     this.yawRate = 0;
@@ -415,7 +416,7 @@ export class Glide {
       const sp = 4.5 * inp.mag;
       this.vx += (inp.dx * sp - this.vx) * k;
       this.vz += (inp.dz * sp - this.vz) * k;
-      if (Math.hypot(this.vx, this.vz) > 1) this.heading = lerpAngle(this.heading, Math.atan2(this.vx, -this.vz), 1 - Math.exp(-6 * dt));
+      if (hyp(this.vx, this.vz) > 1) this.heading = lerpAngle(this.heading, Math.atan2(this.vx, -this.vz), 1 - Math.exp(-6 * dt));
     } else {
       const diving = this.phase === 'dive';
       const turn = (diving ? m.diveTurn : m.glideTurn) * dt * (0.45 + 0.55 * inp.mag);

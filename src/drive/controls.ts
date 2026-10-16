@@ -12,6 +12,7 @@ import { tuning } from '../tuning';
 import { el } from '../ui/ui';
 import { clamp } from './envUtils';
 import type { CarInput } from './physics';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 interface Pedal {
   el: HTMLElement;
@@ -261,7 +262,7 @@ export class DriveControls {
     const d = tuning.drive;
     let sx = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0);
     let sy = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0);
-    const keyMag = Math.hypot(sx, sy);
+    const keyMag = hyp(sx, sy);
     let mag: number;
     if (keyMag > 0) {
       sx /= keyMag;
@@ -269,7 +270,7 @@ export class DriveControls {
       mag = 1;
     } else {
       // stick: up = forward
-      const len = Math.hypot(this.stickX, this.stickY);
+      const len = hyp(this.stickX, this.stickY);
       if (len > d.joyDeadzone) {
         mag = clamp((len - d.joyDeadzone) / (1 - d.joyDeadzone), 0, 1);
         sx = this.stickX / len;
@@ -304,7 +305,7 @@ export class DriveControls {
       const throwR = R * 0.62;
       let dx = (e.clientX - (r.left + R)) / throwR;
       let dy = (e.clientY - (r.top + R)) / throwR;
-      const len = Math.hypot(dx, dy);
+      const len = hyp(dx, dy);
       if (len > 1) {
         dx /= len;
         dy /= len;

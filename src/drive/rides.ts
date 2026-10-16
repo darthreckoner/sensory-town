@@ -1161,14 +1161,16 @@ export class Ride {
       const R = this.spec.wheelR;
       this.spin += (m.speed / R) * dt;
       const steer = -m.steer * d.wheelSteerAngle * (this.kind === 'golfcart' ? 1.5 : 1);
-      this.spec.wheels.forEach((w, i) => {
+      const wheels = this.spec.wheels;   // ── v3 perf ── a plain loop: forEach(closure) allocated a closure per ride per frame
+      for (let i = 0; i < wheels.length; i++) {
+        const w = wheels[i];
         EUL.set(-this.spin, (w.front ? steer : 0) + (w.x < 0 ? Math.PI : 0), 0, 'YXZ');
         QUAT.setFromEuler(EUL);
         // the wheel sits on the leaning, bouncing body: apply the rig's lean around the origin too
         V3.set(w.x, w.y + this.rig.position.y * 0.6, w.z);
         TMP.compose(V3, QUAT, ONE);
         wm.setMatrixAt(i, TMP);
-      });
+      }
       wm.instanceMatrix.needsUpdate = true;
       void TMP2;
     }

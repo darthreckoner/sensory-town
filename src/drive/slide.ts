@@ -17,6 +17,7 @@ import { clamp, wrapAngle } from './envUtils';
 import type { Character } from '../art/character';
 import type { FootInput } from './controls';
 import type { FootPhysics } from './foot';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 const HIPS = 0.9; // the walker leans about her hips
 const HIPS_LOW = 0.5; // ... which sink to this height
@@ -60,7 +61,7 @@ export class Slide {
     }
 
     // ── sliding ──
-    const real = Math.hypot(f.velX, f.velZ);
+    const real = hyp(f.velX, f.velZ);
     if (f.grounded) this.airT = 0;
     else this.airT += dt;
     if (edge || jumpEdge || f.swimming || f.wet > 0.3 || real < 0.4 || this.airT > 0.35) {
@@ -97,7 +98,7 @@ export class Slide {
     }
     f.coast = true;
     f.setVelocity(dx * this.speed, dz * this.speed);
-    this.snow = f.y > 11 && Math.hypot(f.x - SUMMIT.x, f.z - SUMMIT.z) < SUMMIT.shelfR1 + 24;
+    this.snow = f.y > 11 && hyp(f.x - SUMMIT.x, f.z - SUMMIT.z) < SUMMIT.shelfR1 + 24;
 
     // spray and the sound
     this.spray += dt;
@@ -110,7 +111,7 @@ export class Slide {
 
   private start(f: FootPhysics): void {
     const m = tuning.movement3;
-    const real = Math.hypot(f.velX, f.velZ) || f.speed;
+    const real = hyp(f.velX, f.velZ) || f.speed;
     if (real < 0.5) return;
     this.active = true;
     this.hopping = false;

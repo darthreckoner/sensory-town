@@ -40,6 +40,7 @@ import type { DoorDef } from '../drive/types';
 import { BuildMode } from '../build/world3/mode';   // v3 build
 import { EmoteWheel } from '../drive/emotewheel';   // v3 emote
 import { Movement } from '../drive/movement';   // ── v3 movement ── over-the-shoulder cam, sprint, mantle, glide, pads, bus drop, POI cards
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 // ── what survives leaving the town scene (Studio, Style, Build...) ──────────
 interface Pose { x: number; z: number; heading: number }
@@ -452,7 +453,7 @@ export class DriveScene extends GameScene {
     this.env.setViewer?.(this.camera.position.x, this.camera.position.y, this.camera.position.z);
     this.updateSun();
     // do not re-trigger the door we just came out of
-    for (const tr of this.triggers) if (Math.hypot(this.mx - tr.def.x, this.mz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
+    for (const tr of this.triggers) if (hyp(this.mx - tr.def.x, this.mz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
 
     // ── charms, jobs, fx, HUD ──
     this.charms.refresh();
@@ -636,6 +637,7 @@ export class DriveScene extends GameScene {
   }
 
   // ── driving ───────────────────────────────────────────────────────────────
+  private readonly carInput: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false, hop: false };   // ── v3 perf ──
   private updateCar(dt: number, t: number): void {
     const d = tuning.drive;
     const p = this.phys;
@@ -657,9 +659,23 @@ export class DriveScene extends GameScene {
     this.boostLevel += ((this.boostOn ? 1 : 0) - this.boostLevel) * (1 - Math.exp(-7 * dt));
     this.controls.setBoostMeter(this.boostMeter, this.boostMeter >= 0.6 && !this.boostOn, this.boostOn);
 
-    const input: CarInput = this.leaving || this.controls.suspended
-      ? { steer: 0, gas: 0, brake: 0, handbrake: true, boost: false, hop: false }
-      : { steer: raw.steer, gas: raw.gas, brake: raw.brake, handbrake: raw.handbrake, boost: this.boostOn, hop: !!raw.hop };
+    // ── v3 perf ── one reusable CarInput (a literal per frame is garbage)
+    const input: CarInput = this.carInput;
+    if (this.leaving || this.controls.suspended) {
+      input.steer = 0;
+      input.gas = 0;
+      input.brake = 0;
+      input.handbrake = true;
+      input.boost = false;
+      input.hop = false;
+    } else {
+      input.steer = raw.steer;
+      input.gas = raw.gas;
+      input.brake = raw.brake;
+      input.handbrake = raw.handbrake;
+      input.boost = this.boostOn;
+      input.hop = !!raw.hop;
+    }
 
     // small fixed sub-steps so thin colliders never tunnel
     const steps = Math.max(1, Math.ceil(dt / (1 / 90)));
@@ -1019,7 +1035,7 @@ export class DriveScene extends GameScene {
       active = this.rides.find((w) => w.mine) ?? this.spawnRide(kind, carPose.x, carPose.z, carPose.heading, true);
     }
     // the ride you were in / left last is exactly where the player says it is
-    if (Math.hypot(active.x - carPose.x, active.z - carPose.z) > 0.05) active.y = null;   // moved: forget the old level
+    if (hyp(active.x - carPose.x, active.z - carPose.z) > 0.05) active.y = null;   // moved: forget the old level
     active.x = carPose.x;
     active.z = carPose.z;
     active.heading = carPose.heading;
@@ -1096,7 +1112,7 @@ export class DriveScene extends GameScene {
   private nearestRide(x: number, z: number, extra = 0): WorldRide | null {
     let best: WorldRide | null = null, bd = 1e9;
     for (const w of this.rides) {
-      const dd = Math.hypot(w.x - x, w.z - z);
+      const dd = hyp(w.x - x, w.z - z);
       const lim = tuning.drive.getInRadius + w.ride.spec.length * 0.2 + extra;
       if (dd < lim && dd < bd) {
         bd = dd;
@@ -1143,7 +1159,7 @@ export class DriveScene extends GameScene {
       const active = w === this.driving;
       const px = active ? this.phys.x : w.x, pz = active ? this.phys.z : w.z;
       const hd = active ? this.phys.heading : w.heading;
-      const dist = Math.hypot(px - this.mx, pz - this.mz);
+      const dist = hyp(px - this.mx, pz - this.mz);
       const show = active || dist < 120; // a parked ride is a few pixels beyond this (and each one costs up to 4 draw calls)
       w.ride.group.visible = show;
       if (!show) continue;
@@ -1205,7 +1221,7 @@ export class DriveScene extends GameScene {
     this.foot.reset(sx, sz, p.heading, refY);
     this.syncDriving();
     // stepping out onto a mat must not trigger it: it stays asleep until you step off and back on
-    for (const tr of this.triggers) if (Math.hypot(sx - tr.def.x, sz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
+    for (const tr of this.triggers) if (hyp(sx - tr.def.x, sz - tr.def.z) < (tr.def.radius ?? 1.5) + 2.5) tr.armed = false;
     this.camYaw = p.heading;
     this.camPitch = tuning.movement3.camPitchDefault;   // ── v3 movement ──
     this.dragIdle = 0;
@@ -1271,9 +1287,9 @@ export class DriveScene extends GameScene {
       }
     }
     // never on a door mat, a FOR SALE lot or the Studio / builder pads
-    for (const tr of this.triggers) if (Math.hypot(x - tr.def.x, z - tr.def.z) < (tr.def.radius ?? 1.5) + 3.4) return false;
+    for (const tr of this.triggers) if (hyp(x - tr.def.x, z - tr.def.z) < (tr.def.radius ?? 1.5) + 3.4) return false;
     // not right on top of the walker
-    return Math.hypot(x - this.foot.x, z - this.foot.z) >= 2.6;
+    return hyp(x - this.foot.x, z - this.foot.z) >= 2.6;
   }
 
   private callCar(): void {
@@ -1328,7 +1344,7 @@ export class DriveScene extends GameScene {
     this.promptHold = true;
     this.setPrompt(null);
     // landing next to a mat must not trigger it when you get in: they sleep until you step off
-    for (const tr of this.triggers) if (Math.hypot(spot.x - tr.def.x, spot.z - tr.def.z) < (tr.def.radius ?? 1.5) + 4) tr.armed = false;
+    for (const tr of this.triggers) if (hyp(spot.x - tr.def.x, spot.z - tr.def.z) < (tr.def.radius ?? 1.5) + 4) tr.armed = false;
     this.applyCarPose(0, true);
     bus.emit('carAppear', { pos: { x: spot.x, y: this.phys.y + 0.6, z: spot.z } });
   }
@@ -1428,7 +1444,7 @@ export class DriveScene extends GameScene {
     let prompt: Trigger | null = null;
     for (const tr of this.triggers) {
       const def = tr.def;
-      const dist = Math.hypot(this.mx - def.x, this.mz - def.z);
+      const dist = hyp(this.mx - def.x, this.mz - def.z);
       const R = (def.radius ?? 1.5) + (onFoot ? 0 : 0.9);
       // a car on a FOR SALE mat never claims by itself: it gets a big "Build here?" bubble until it drives off
       if (!onFoot && def.carPrompt) {
@@ -1616,7 +1632,7 @@ export class DriveScene extends GameScene {
   private freeFraction(ax: number, az: number, bx: number, bz: number, yLevel: number): number {
     let best = 1;
     const dx = bx - ax, dz = bz - az;
-    const cols = this.grid.near((ax + bx) / 2, (az + bz) / 2, Math.hypot(dx, dz) / 2 + 2);
+    const cols = this.grid.near((ax + bx) / 2, (az + bz) / 2, hyp(dx, dz) / 2 + 2);
     const nc = cols.length, rb = this.rideBoxes;   // ── v3 rides ── plus the parked rides' camera boxes
     for (let i = 0; i < nc + rb.length; i++) {
       const b = i < nc ? cols[i] : rb[i - nc];
@@ -1678,19 +1694,31 @@ export class DriveScene extends GameScene {
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────────
+  private hudHeading = 0;
+  private jobLabelFor: object | null = null;
+  private jobLabel = '';
+  /** Clockwise angle on the screen from straight up to a world point (set up by updateHud). */
+  private bearing(x: number, z: number): number {
+    return wrapAngle(Math.atan2(x - this.mx, -(z - this.mz)) - this.hudHeading);
+  }
   private updateHud(dt: number, t: number): void {
     const d = tuning.drive;
     const car = this.mode === 'car';
     this.camera.getWorldDirection(this.camDir);
-    const camHeading = Math.atan2(this.camDir.x, -this.camDir.z);
-    const bearing = (x: number, z: number): number => wrapAngle(Math.atan2(x - this.mx, -(z - this.mz)) - camHeading);
+    this.hudHeading = Math.atan2(this.camDir.x, -this.camDir.z);   // ── v3 perf ── bearing() is a method now (a closure per frame is garbage)
 
     // 💎 counter
     this.top.setCharms(this.charms.collected, this.charms.total, nextReward());
 
     // the job bubble
     const target = this.jobs.target;
-    if (target) this.top.job.show(target.icon, `${target.name}!`, target.kind, bearing(target.x, target.z));
+    if (target) {
+      if (target !== this.jobLabelFor) {   // ── v3 perf ── the label string is built once per target, not every frame
+        this.jobLabelFor = target;
+        this.jobLabel = `${target.name}!`;
+      }
+      this.top.job.show(target.icon, this.jobLabel, target.kind, this.bearing(target.x, target.z));
+    }
     else this.top.job.hide();
 
     // the home guide: nearest empty lot until you own a house, then a button to find it
@@ -1709,7 +1737,7 @@ export class DriveScene extends GameScene {
         let best = Infinity;
         for (const pl of this.emptyPlots) {
           const fr = plotFront(pl);
-          const dd = Math.hypot(fr.x - this.mx, fr.z - this.mz);
+          const dd = hyp(fr.x - this.mx, fr.z - this.mz);
           if (dd < best) {
             best = dd;
             this.homeTarget = { x: fr.x, z: fr.z };
@@ -1717,7 +1745,7 @@ export class DriveScene extends GameScene {
         }
       }
     }
-    if (this.homeTarget) this.top.home.point(bearing(this.homeTarget.x, this.homeTarget.z), Math.hypot(this.homeTarget.x - this.mx, this.homeTarget.z - this.mz));
+    if (this.homeTarget) this.top.home.point(this.bearing(this.homeTarget.x, this.homeTarget.z), hyp(this.homeTarget.x - this.mx, this.homeTarget.z - this.mz));
     if (this.nudgeIn > 0) {
       this.nudgeIn -= dt;
       if (this.nudgeIn <= 0) {
@@ -1749,7 +1777,7 @@ export class DriveScene extends GameScene {
 
     // the parked car marker + the get-in button glow
     if (!car) {
-      const dc = Math.hypot(this.foot.x - this.phys.x, this.foot.z - this.phys.z);
+      const dc = hyp(this.foot.x - this.phys.x, this.foot.z - this.phys.z);
       this.carMarker.visible = dc > 9;
       if (this.carMarker.visible) {
         this.carMarker.position.set(this.phys.x, this.phys.y + 3.6 + Math.sin(t * 2.4) * 0.25, this.phys.z);

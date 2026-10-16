@@ -6,6 +6,7 @@ import { tuning } from '../tuning';
 import * as Layout from '../world/townLayout';
 import { groundHeight } from '../world/heightfield';
 import { lightBeam } from './envUtils';
+import { hyp } from '../core/fastmath';   // ── v3 perf ── Math.hypot is ~12x slower than this
 
 export interface PadSpot {
   x: number;
@@ -142,7 +143,7 @@ export class LaunchPads {
     const cull = tuning.movement3.padCullDist;
     for (const p of this.pads) {
       p.cool = Math.max(0, p.cool - dt);
-      const near = Math.hypot(p.x - px, p.z - pz) < cull;
+      const near = hyp(p.x - px, p.z - pz) < cull;
       p.group.visible = near;
       if (!near) continue;
       // idle: the glow breathes
