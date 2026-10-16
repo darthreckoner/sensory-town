@@ -11,15 +11,17 @@
 import * as THREE from 'three';
 import { roundedBox as roundedBoxFull } from './materials';
 /** Low-poly rounded box (one bevel segment) — plenty for small details. */
-const roundedBox = (w: number, h: number, d: number, r = 0.02) => roundedBoxFull(w, h, d, r, 1);
+const roundedBox = (w: number, h: number, d: number, r = 0.02) => roundedBoxFull(w, h, d, r, 2);
 import { HAIR_COUNT, HAIR_V3_ITEMS } from './characterHair';
 import { TOP_V3 } from './wardrobeTops';
 import { BOTTOM_V3 } from './wardrobeBottoms';
 import { SHOE_V3 } from './wardrobeShoes';
 import { ACC_V3 } from './wardrobeAcc';
-import { overShoulder, shoulderPad } from './wardrobeKit';
+import { sneaker, boot, lowShoe } from './wardrobeShoes';
+import { hoodCowl } from './wardrobeKit';
+import { GB, armRL, armRU, bodyR, cap, capsule, fitBodyPieces, fitTube, legTube, overShoulder, pieces, shell, shoulderPad, spike, torsoSpace, torus, tubeGeo } from './wardrobeKit'; // smooth primitives (v3.2)
 import {
-  B, EYE, TAU, TY, bodyR, capsule, flare, frameQ, facePoint, GB, pieces, shell, sph, spike, torsoSpace, torus, tubeGeo, arr3,
+  B, EYE, TAU, TY, flare, frameQ, facePoint, sph, arr3,
   type Piece, type PB, type V3t,
 } from './characterKit';
 
@@ -160,8 +162,7 @@ function buildTopTorso(pb: PB, st: number, off: number): void {
       const o = (y: number) => 0.034 + 0.024 * Math.max(0, (1.1 - y) / 0.26);
       shell(main, 0.84, NECK, o);
       trim.ring(0.84, bodyR(0.84) + o(0.84) + 0.002, 0.017);
-      main.add(torus(0.082, 0.03), { p: [0, 1.418, -0.006], r: [Math.PI / 2, 0, 0], s: [1.05, 1, 1] });
-      main.e([0, 1.4, -0.085], [0.09, 0.045, 0.055]);
+      hoodCowl(main); // the hood bunched at the neck has thickness
       trim.add(roundedBox(0.19, 0.08, 0.03, 0.02), { p: [0, 0.99, front(0.99, o(0.99), 0.008)] });
       for (const s of [-1, 1]) {
         pb.at('white').seg([0.032 * s, 1.40, front(1.40, o(1.40), 0.004)], [0.038 * s, 1.27, front(1.27, o(1.27), 0.006)], 0.0045);
@@ -262,8 +263,9 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
   if (st >= 10) return TOP_V3[st - 10].arm?.(pb, upper, s); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
-  const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => gb.add(tubeGeo(yT, yB, rT, rB, 12), {}, true);
-  const cap = (gb: GB, r: number, y = 0.0) => gb.e([0, y - 0.006, 0], [r * 0.96, r * 0.9, r * 0.96]);
+  // sleeves follow the current limb profiles (deltoid / biceps / forearm) with the style's own radius as the minimum cloth size
+  const limb = upper ? armRU : (y: number) => (y > 0 ? armRU(-B.armUp) : armRL(y));
+  const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => fitTube(gb, yT, yB, rT, rB, limb);
   switch (st) {
     case 0: // tee: short
       if (upper) {
@@ -303,7 +305,7 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
         pts.push(new THREE.Vector2(base + o() + (i === 12 ? 0 : 0.02 * Math.pow(Math.sin(Math.PI * u), 0.55)), y));
       }
       pts.reverse();
-      main.add(new THREE.LatheGeometry(pts, 10), {}, true);
+      main.add(new THREE.LatheGeometry(pts, 20), {}, true);
       if (upper) cap(main, 0.058, 0);
       else trim.ring(-0.232, 0.04, 0.012);
       break;
@@ -446,15 +448,8 @@ function buildLeg(pb: PB, st: number, thigh: boolean, s: number): void {
   if (st >= 8) return BOTTOM_V3[st - 8].leg?.(pb, thigh, s); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
-  const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => {
-    if (thigh && yT > 0 && rT > 0.09) {
-      // baggy legs start narrow at the hip (so long shirts don't get pierced) and widen below
-      gb.add(new THREE.LatheGeometry([new THREE.Vector2(rB, yB), new THREE.Vector2(rT, -0.12), new THREE.Vector2(0.09, yT)], 14), {}, true);
-    } else gb.add(tubeGeo(yT, yB, rT, rB, 14), {}, true);
-    // joint balls hide the tube rims when the hip / knee bends
-    if (thigh && yT > 0) gb.e([0, 0.0, 0], [Math.min(rT, 0.09), Math.min(rT, 0.09) * 0.95, Math.min(rT, 0.09)]);
-    if (!thigh) gb.e([0, 0.0, 0], [rT * 1.0, rT * 0.9, rT * 1.0]);
-  };
+  // trouser legs follow the current thigh / shin profiles (legTube also adds the joint balls that hide the rims when the hip / knee bends)
+  const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => legTube(gb, thigh, yT, yB, rT, rB);
   const L = B.thighLen;
   const SL = B.shinLen;
   switch (st) {
@@ -522,69 +517,32 @@ export function getShoes(style: number): Piece[] {
     const trim = pb.at('trim');
     if (st >= 7) return SHOE_V3[st - 7].build(pb); // v3 wardrobe
     switch (st) {
-      case 0: // chunky sneakers
-      case 6: { // LED sneakers (glowing soles)
-        const sole = st === 6 ? pb.at('led') : white;
-        sole.e([0, -0.068, 0.065], [0.052, 0.026, 0.125]);
-        main.e([0, -0.026, 0.055], [0.047, 0.047, 0.103]);
-        white.e([0, -0.045, 0.145], [0.041, 0.03, 0.05]);
-        dark.e([0, -0.035, -0.045], [0.042, 0.042, 0.04]);
-        dark.ring(0.008, 0.04, 0.012);
-        white.e([0, 0.018, 0.045], [0.022, 0.022, 0.03]);
-        white.e([0, -0.004, 0.09], [0.026, 0.007, 0.02]);
-        for (const s of [-1, 1]) trim.e([0.047 * s, -0.03, 0.04], [0.006, 0.022, 0.05]);
-        if (st === 6) for (const s of [-1, 1]) pb.at('led').seg([0.054 * s, -0.04, -0.05], [0.054 * s, -0.04, 0.09], 0.004);
+      case 0: // chunky sneakers (sculpted: lofted sole + upper)
+        sneaker(pb);
         break;
-      }
-      case 1: { // high-tops
-        white.e([0, -0.068, 0.065], [0.052, 0.026, 0.125]);
-        main.e([0, -0.026, 0.055], [0.047, 0.047, 0.103]);
-        main.e([0, 0.03, -0.012], [0.05, 0.064, 0.054]);
-        white.e([0, -0.045, 0.145], [0.041, 0.03, 0.05]);
-        white.ring(0.086, 0.047, 0.012);
-        for (const y of [0.0, 0.03, 0.06]) white.e([0, y, 0.043], [0.024, 0.006, 0.014]);
-        for (const s of [-1, 1]) white.e([0.05 * s, 0.03, -0.004], [0.005, 0.022, 0.022]);
+      case 6: // LED sneakers (glowing soles)
+        sneaker(pb, { ledSole: true });
+        for (const s of [-1, 1]) pb.at('led').seg([0.054 * s, -0.04, -0.05], [0.054 * s, -0.04, 0.09], 0.004);
         break;
-      }
+      case 1: // high-tops
+        sneaker(pb, { hi: 1 });
+        break;
       case 2: { // platform boots
-        dark.e([0, -0.066, 0.06], [0.056, 0.03, 0.13]);
-        dark.e([0, -0.06, -0.04], [0.052, 0.034, 0.04]);
-        main.e([0, -0.022, 0.055], [0.05, 0.05, 0.102]);
-        main.add(capsule(0.052, 0.085), { p: [0, 0.07, -0.006] });
-        trim.ring(0.148, 0.054, 0.011);
-        dark.ring(0.075, 0.055, 0.008);
+        boot(pb, { h: 0.15, r0: 0.05, r1: 0.056, heel: 0.012 });
+        dark.ring(0.075, 0.053, 0.008);
         pb.at('gold').e([0.0, 0.075, 0.056], [0.013, 0.012, 0.006]);
         break;
       }
-      case 3: { // slides over white socks
-        const sock = pb.at('white', 'fabric');
-        sock.e([0, 0.025, -0.004], [0.043, 0.056, 0.045]);
-        sock.e([0, -0.045, 0.045], [0.04, 0.026, 0.092]);
-        main.e([0, 0.058, -0.004], [0.044, 0.008, 0.046]);
-        dark.e([0, -0.078, 0.06], [0.049, 0.015, 0.125]);
-        main.e([0, -0.03, 0.07], [0.047, 0.016, 0.042]);
+      case 3: // slides over white socks
+        lowShoe(pb, { sock: 'ankle', band: true });
         break;
-      }
-      case 4: { // skate shoes
-        white.e([0, -0.078, 0.06], [0.048, 0.013, 0.12]);
-        main.e([0, -0.046, 0.05], [0.045, 0.035, 0.1]);
-        white.e([0, -0.056, 0.138], [0.04, 0.026, 0.046]);
-        dark.ring(0.003, 0.04, 0.012);
-        white.e([0, 0.0, 0.07], [0.03, 0.007, 0.032]);
-        for (const s of [-1, 1]) trim.seg([0.046 * s, -0.04, 0.0], [0.046 * s, -0.045, 0.07], 0.005);
+      case 4: // skate shoes (the sculpted sneaker, flat sole)
+        sneaker(pb, { sole: 'white' });
+        for (const s of [-1, 1]) trim.seg([0.05 * s, -0.04, 0.0], [0.05 * s, -0.045, 0.07], 0.005);
         break;
-      }
-      case 5: { // Mary Janes + frilly socks
-        const sock = pb.at('white', 'fabric');
-        sock.e([0, 0.022, -0.004], [0.04, 0.048, 0.042]);
-        sock.ring(0.062, 0.043, 0.009);
-        main.e([0, -0.05, 0.05], [0.043, 0.034, 0.098]);
-        dark.e([0, -0.082, 0.056], [0.044, 0.01, 0.105]);
-        dark.e([0, -0.07, -0.03], [0.038, 0.02, 0.03]);
-        trim.seg([-0.044, -0.022, 0.035], [0.044, -0.022, 0.035], 0.0065);
-        pb.at('gold').e([0.041, -0.022, 0.04], [0.008, 0.01, 0.008]);
+      case 5: // Mary Janes + frilly socks
+        lowShoe(pb, { sock: 'frill', cover: 0.05, strap: true });
         break;
-      }
     }
   }, chunkyFoot, true);
 }
@@ -635,6 +593,7 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
   if (st >= 14) {
     // v3 wardrobe (wardrobeAcc.ts)
     const a = ACC_V3[st - 14].make(topOff);
+    fitBodyPieces(a.body); // authored at the v3.1 heights: fit to the current body
     accCache.set(key, a);
     return a;
   }
@@ -874,6 +833,7 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
       });
       break;
   }
+  fitBodyPieces(acc.body);
   accCache.set(key, acc);
   return acc;
 }

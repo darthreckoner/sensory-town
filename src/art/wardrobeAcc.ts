@@ -5,9 +5,9 @@
 //   wristL left wrist space (hand hangs down -y)   handR right palm space (held items; the arm bends)
 //   back   wings (two flapping bones; authored in upper-body space)
 import * as THREE from 'three';
-import { B, GB, TAU, TY, bodyR, capsule, facePoint, frameQ, pieces, spike, torus, arr3, type Piece } from './characterKit';
+import { B, TAU, TY, facePoint, frameQ, arr3, type Piece } from './characterKit';
 import type { AccPart } from './characterParts';
-import { PI, blobRing, box, heartGeo, rbox, starGeo, starShape, wrapHead, type Rarity } from './wardrobeKit';
+import { GB, PI, bodyR, blobRing, box, capsule, heartGeo, pieces, rbox, spike, starGeo, starShape, torus, wrapHead, type Rarity } from './wardrobeKit';
 
 export interface AccDef {
   name: string;
