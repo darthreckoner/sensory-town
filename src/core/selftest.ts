@@ -417,7 +417,401 @@ const TESTS: Record<string, () => Promise<Result>> = {
     return { name: 'hudLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join(', ')}${problems.length ? ' | ' + problems.slice(0, 6).join('; ') : ''}` };
   },
 
+  /**
+   * v3 phone: the in-world UI on a phone, at the CURRENT window size (run it at 852x393, 844x390, 667x375, 932x430 and portrait 390x844). With the notch / home-indicator
+   * insets faked (59 px left and right, 21 px at the bottom) it checks that: the pill stack, prompt bubbles (Drive, Zip!), POI card, build bar and its panels, emote wheel
+   * and the party-bus overlay all stay inside the safe area, are not smaller than 44 px to tap, and do not run into each other, the button column, the pedals / stick,
+   * the minimap or the menu button. In portrait the "turn your phone sideways" card must be up (and only then).
+   */
+  async phoneLayout() {
+    const { SPAWN } = await import('../world/townLayout');
+    await scenes.go('town');
+    await sleep(300);
+    const d = cur();
+    d.mv?.cancel?.();
+    ensureFoot(d);
+    const root = document.documentElement;
+    const keys = ['--safe-t', '--safe-r', '--safe-b', '--safe-l'];
+    const saved = keys.map((k) => root.style.getPropertyValue(k));
+    const W = window.innerWidth, H = window.innerHeight;
+    const phone = Math.min(W, H) <= 520;   // a phone has a notch on its side; an iPad only has the home bar
+    const S = phone ? { t: 0, r: 59, b: 21, l: 59 } : { t: 24, r: 0, b: 20, l: 0 };   // (an iPad web app: a status bar on top, the home bar below)
+    keys.forEach((k, i) => root.style.setProperty(k, `${[S.t, S.r, S.b, S.l][i]}px`));
+    const prevShow: boolean = d.controls.touchShown;
+    d.controls.showTouch(true);
+    const problems: string[] = [];
+    const notes: string[] = [];
+    const shown = (e: HTMLElement) => e.offsetParent !== null && e.getBoundingClientRect().width > 0;
+    const q = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)].filter(shown);
+    const tag = (e: Element) => (e.className as string).split(/\s+/).filter((c) => c && !/^(btn|round|interactive|passthrough)$/.test(c)).slice(0, 2).join('.') || e.tagName.toLowerCase();
+    const hit = (a: DOMRect, b: DOMRect) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
+    const fail = (m: string) => problems.length < 14 && problems.push(m);
+    // what of an element can be seen: a scrolling strip (decor items, swatches) clips the part outside it; null = scrolled right out of sight
+    const seen = (e: HTMLElement): DOMRect | null => {
+      let r = e.getBoundingClientRect();
+      for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
+        const o = getComputedStyle(a).overflowX;
+        if (o !== 'auto' && o !== 'scroll') continue;
+        const c = a.getBoundingClientRect();
+        const l = Math.max(r.left, c.left), t = Math.max(r.top, c.top), rt = Math.min(r.right, c.right), bt = Math.min(r.bottom, c.bottom);
+        if (rt - l < 2 || bt - t < 2) return null;
+        r = new DOMRect(l, t, rt - l, bt - t);
+      }
+      return r;
+    };
+    const inside = (label: string, els: HTMLElement[]) => {
+      for (const e of els) {
+        const r = seen(e);
+        if (r && (r.left < S.l - 1 || r.right > W - S.r + 1 || r.top < S.t - 1 || r.bottom > H - S.b + 1)) fail(`${label}: ${tag(e)} outside the safe area (${Math.round(r.left)},${Math.round(r.top)} to ${Math.round(r.right)},${Math.round(r.bottom)})`);
+      }
+    };
+    const taps = (label: string, els: HTMLElement[]) => {
+      for (const e of els) {
+        if (!seen(e)) continue;
+        const r = e.getBoundingClientRect();
+        if (Math.min(r.width, r.height) < 43.5) fail(`${label}: ${tag(e)} is ${Math.round(r.width)}x${Math.round(r.height)}, too small to tap`);
+      }
+    };
+    const apart = (label: string, a: HTMLElement[], b: HTMLElement[]) => {
+      for (const x of a) {
+        const rx = seen(x);
+        if (!rx) continue;
+        for (const y of b) {
+          const ry = seen(y);
+          if (ry && x !== y && !x.contains(y) && !y.contains(x) && hit(rx, ry)) fail(`${label}: ${tag(x)} runs into ${tag(y)}`);
+        }
+      }
+    };
+    const hud = () => ({ map: q('.drive-minimap'), menu: q('#menu-btn'), col: q('.drive-side .btn'), pedals: q('.drive-pedal, .drive-horn'), stick: q('.drive-joy .joy-base'), pills: q('.drive-top > *') });
+
+    scenes.step(3);
+    // portrait: the rotate card
+    const card = document.querySelector<HTMLElement>('.v3-rotate');
+    const wantCard = W <= 500 && H > W;
+    const cardUp = !!card && getComputedStyle(card).display !== 'none';
+    if (cardUp !== wantCard) fail(`rotate card is ${cardUp ? 'up' : 'missing'} but should be ${wantCard ? 'up' : 'hidden'} at ${W}x${H}`);
+    notes.push(`rotate ${cardUp ? 'up' : 'off'}`);
+    if (cardUp) {
+      // the card covers the island: nothing else is on show, so there is nothing more to measure
+      const r = card!.getBoundingClientRect();
+      if (r.width < W - 1 || r.height < H - 1) fail(`rotate card does not cover the screen (${Math.round(r.width)}x${Math.round(r.height)})`);
+      keys.forEach((k, i) => (saved[i] ? root.style.setProperty(k, saved[i]) : root.style.removeProperty(k)));
+      d.controls.showTouch(prevShow);
+      return { name: 'phoneLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join(', ')}${problems.length ? ' | ' + problems.join('; ') : ''}` };
+    }
+
+    // the permanent HUD (+ a job pill)
+    d.top.job.show('🛍️', 'Drop Mia at the Mall', 'dropoff', 0.4);   // (measured right away: a frame would let the job manager hide it again)
+    {
+      const h = hud();
+      const all = [...h.map, ...h.menu, ...h.col, ...h.pedals, ...h.stick, ...h.pills];
+      inside('hud', all);
+      taps('hud', [...h.col, ...h.menu]);
+      apart('hud', h.pills, [...h.map, ...h.menu, ...h.col, ...h.pedals, ...h.stick]);
+      apart('hud', h.map, [...h.col, ...h.menu]);
+      apart('hud', h.menu, [...h.stick]);
+      apart('hud', h.col, [...h.pedals, ...h.stick]);
+      notes.push(`pills ${h.pills.length}`);
+    }
+
+    // prompt bubbles: Drive (ride prompt) and Zip!
+    const zip = document.querySelector<HTMLElement>('.v3-zip-prompt');
+    for (const [name, el] of [['drive', document.querySelector<HTMLElement>('.drive-prompt:not(.v3-zip-prompt)')], ['zip', zip]] as const) {
+      if (!el) continue;
+      const hid = el.classList.contains('hidden');
+      if (name === 'drive') d.prompt.show('🚗', 'Drive', () => undefined);
+      else el.classList.remove('hidden');
+      scenes.step(2);
+      const h = hud();
+      inside(name, [el]);
+      taps(name, [el]);
+      apart(name, [el], [...h.map, ...h.menu, ...h.col, ...h.pedals, ...h.stick, ...h.pills]);
+      if (name === 'drive') d.prompt.hide();
+      else if (hid) el.classList.add('hidden');
+    }
+    d.top.job.hide();
+
+    // the place card: the longest place name, with the animation parked on its last frame
+    const poiRoot = document.querySelector<HTMLElement>('.v3-poi');
+    if (poiRoot) {
+      const nameEl = poiRoot.querySelector<HTMLElement>('.v3-poi-name')!, subEl = poiRoot.querySelector<HTMLElement>('.v3-poi-sub')!;
+      const was = [nameEl.textContent, subEl.textContent, poiRoot.className];
+      const longest = ((d.mv.poi.pois as { name: string }[]) ?? []).reduce((a, p) => (p.name.length > a.length ? p.name : a), 'SPARKLE SQUARE');
+      nameEl.textContent = longest.toUpperCase();
+      subEl.textContent = 'NOW ENTERING';
+      poiRoot.classList.add('show');
+      poiRoot.style.animation = 'none';
+      poiRoot.style.opacity = '1';
+      d.top.job.show('🛍️', 'Drop Mia at the Mall', 'dropoff', 0.4);
+      const inner = poiRoot.querySelector<HTMLElement>('.v3-poi-inner')!;
+      const r = inner.getBoundingClientRect();
+      const h = hud();
+      if (r.height > H * 0.3) fail(`place card is ${Math.round(r.height)} px tall (more than 30% of the screen)`);
+      if (r.width > W - S.l - S.r + 1) fail(`place card is ${Math.round(r.width)} px wide, wider than the safe area`);
+      apart('poi', [inner], phone ? [...h.map, ...h.menu, ...h.pills] : [...h.menu, ...h.pills]);   // (it fades after 2.5 s, so it may pass over the button column or, on an iPad, the minimap)
+      notes.push(`poi ${Math.round(r.width)}x${Math.round(r.height)}`);
+      d.top.job.hide();
+      poiRoot.style.animation = '';
+      poiRoot.style.opacity = '';
+      nameEl.textContent = was[0];
+      subEl.textContent = was[1];
+      poiRoot.className = was[2] as string;
+    }
+
+    // the build bar and its panels
+    d.build3.toggle(true);
+    scenes.step(3);
+    {
+      const place = document.querySelector<HTMLElement>('.b3-place');
+      const placeWas = place?.style.display ?? '';
+      if (place) place.style.display = 'flex';   // (only shows on touch devices; show it so it is measured too)
+      const stage = (label: string) => {
+        scenes.step(2);
+        const h = hud();
+        const dock = q('.b3-dock .b3-bar, .b3-dock .b3-panel.show');
+        const btns = q('.b3-bar .b3-btn, .b3-panel.show .b3-btn, .b3-panel.show .item, .b3-panel.show .sw, .b3-panel.show .card, .b3-panel.show .cell');
+        inside(label, [...dock, ...btns, ...q('.b3-place'), ...q('.b3-edit.show')]);
+        taps(label, [...btns, ...q('.b3-place')]);
+        apart(label, [...dock, ...q('.b3-edit.show')], [...h.map, ...h.menu, ...h.pills, ...h.pedals, ...h.stick, ...h.col, ...q('.b3-place')]);
+        apart(label, q('.b3-place'), [...h.pedals, ...h.col, ...h.map, ...h.stick]);
+        const all = [...dock, ...q('.b3-edit.show')];
+        const hh = Math.max(...all.map((e) => e.getBoundingClientRect().bottom)) - Math.min(...all.map((e) => e.getBoundingClientRect().top));
+        notes.push(`${label} ${Math.round((hh / H) * 100)}%`);
+        if (hh > H * 0.62) fail(`${label}: the build UI covers ${Math.round((hh / H) * 100)}% of the screen height`);
+      };
+      stage('bar');
+      d.build3.toggleStarters();
+      stage('starters');
+      d.build3.setTool('decor');
+      stage('decor');
+      d.build3.setTool('build');
+      d.build3.openEdit({ id: 'phone-test', kind: 'wall', mat: 'wood', ix: 0, iy: 0, iz: 0, dir: 0, ownerId: 'x' });
+      stage('edit');
+      d.build3.closePanels();
+      if (place) place.style.display = placeWas;
+    }
+    d.build3.toggle(false);
+
+    // the emote wheel
+    d.emote3.show();
+    scenes.step(3);
+    {
+      const slots = q('.em3-slot'), core = q('.em3-core');
+      inside('wheel', [...slots, ...core]);
+      taps('wheel', [...slots, ...core]);
+      apart('wheel', slots, [...slots, ...core]);
+      notes.push(`wheel ${slots.length}`);
+    }
+    d.emote3.close();
+
+    // the party-bus overlay
+    d.mv.startBus();
+    scenes.step(3);
+    {
+      const parts = q('.v3-bus-title, .v3-bus .v3-jump, .v3-bus .v3-skip, .v3-bus .v3-honk');
+      inside('bus', parts);
+      taps('bus', parts.filter((e) => !e.classList.contains('v3-bus-title')));
+      apart('bus', parts, parts);
+      notes.push(`bus ${parts.length}`);
+    }
+    d.mv.cancel();
+    d.foot.reset(SPAWN.x, SPAWN.z + 3, SPAWN.heading);
+    scenes.step(5);
+
+    keys.forEach((k, i) => (saved[i] ? root.style.setProperty(k, saved[i]) : root.style.removeProperty(k)));
+    d.controls.showTouch(prevShow);
+    return { name: 'phoneLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join(', ')}${problems.length ? ' | ' + problems.join('; ') : ''}` };
+  },
+
+  /**
+   * v3 phone (lobby): run at the CURRENT window size (852x393, 844x390, 667x375, 932x430, 393x852, 375x667, 1180x820). With the notch / home-bar insets faked
+   * (landscape 59 px left and right + 21 at the bottom; portrait 59 at the top + 34 at the bottom) it checks, for 2, 4 and 6 players, both unpicked and with the
+   * first player picked, that: the name plates, the title, New player, the back / rename buttons and PLAY / LOCKER / STUDIO stay inside the safe area, are at
+   * least 44 px to tap, never overlap each other, and never cover a player's face. (The extra players are throw-away clones, swapped back before anything saves.)
+   */
+  async lobbyLayout() {
+    const { checkLayout } = await import('./layoutcheck');
+    await scenes.go('picker');
+    await sleep(250);
+    const p = cur();
+    const W = window.innerWidth, H = window.innerHeight;
+    const portrait = H > W;
+    const S = W >= 900 && H >= 600 ? { t: 0, r: 0, b: 20, l: 0 } : portrait ? { t: 59, r: 0, b: 34, l: 0 } : { t: 0, r: 59, b: 21, l: 59 }; // (a tablet only has the home bar)
+    const root = document.documentElement;
+    const keys = ['--safe-t', '--safe-r', '--safe-b', '--safe-l'];
+    const saved = keys.map((k) => root.style.getPropertyValue(k));
+    keys.forEach((k, i) => root.style.setProperty(k, `${[S.t, S.r, S.b, S.l][i]}px`));
+    window.dispatchEvent(new Event('resize'));
+    scenes.step(2);
+    const real = store.data.profiles;
+    const camera: THREE.PerspectiveCamera = p.camera;
+    const calm = document.createElement('style'); // CSS pop-in animations would be caught half way (and do not run in a hidden pane at all)
+    calm.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }';
+    document.head.appendChild(calm);
+    const problems: string[] = [];
+    const notes: string[] = [];
+    const faces = () =>
+      (p.slots as any[]).map((sl) => {
+        const c: THREE.Vector3 = sl.char.headTop().clone();
+        c.y -= 0.33;
+        camera.updateMatrixWorld(true);
+        const dist = camera.position.distanceTo(c);
+        const pxPerM = H / (2 * dist * Math.tan((camera.fov * Math.PI) / 360));
+        const v = c.clone().project(camera);
+        const x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H, hs = 0.3 * pxPerM;
+        return { name: `face:${sl.profile.name}`, x: x - hs, y: y - hs, w: hs * 2, h: hs * 2 };
+      });
+    const run = (label: string) => {
+      const t = p.ui.querySelector('.tc') as HTMLElement | null;
+      const probes = faces();
+      if (t && getComputedStyle(t).display !== 'none') {
+        const r = t.getBoundingClientRect();
+        probes.push({ name: 'title', x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+      const rep = checkLayout(p.ui, { probes });
+      notes.push(`${label}: ${rep.groups} blocks, ${rep.taps} taps${rep.tight.length ? `, ${rep.tight.length} under 52px` : ''}`);
+      for (const i of rep.issues) problems.length < 16 && problems.push(`${label}: ${i.kind} ${i.a}${i.b ? ' / ' + i.b : ''} (${i.value})`);
+    };
+    try {
+      for (const n of [2, 4, 6]) {
+        const fakes: any[] = [];
+        for (let i = real.length; i < n; i++) {
+          const c = structuredClone(real[i % real.length]);
+          c.id = `fake_${i}`;
+          c.name = ['Zoe', 'Maya', 'Nia', 'Ava', 'Kai', 'Lola'][i % 6];
+          fakes.push(c);
+        }
+        store.data.profiles = [...real.slice(0, n), ...fakes];
+        p.picked = null;
+        p.buildUi();
+        store.data.profiles = real; // back at once: nothing may save the clones
+        p.fit();
+        p.camera.position.copy(p.camGoal);
+        p.look.copy(p.lookGoal);
+        scenes.step(200);
+        run(`${n}p`);
+        p.pick(0);
+        scenes.step(260);
+        run(`${n}p picked`);
+        p.unpick();
+        scenes.step(30);
+      }
+    } finally {
+      calm.remove();
+      store.data.profiles = real;
+      keys.forEach((k, i) => (saved[i] ? root.style.setProperty(k, saved[i]) : root.style.removeProperty(k)));
+      window.dispatchEvent(new Event('resize'));
+      p.picked = null;
+      p.buildUi();
+      p.fit();
+    }
+    return { name: 'lobbyLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join('; ')}${problems.length ? ' | ' + problems.join('; ') : ''}` };
+  },
+
+  /**
+   * v3 phone (Studio): run at the CURRENT window size. Faked safe-area insets as in lobbyLayout. For Squishy, Slime and Wax (pick / coat / crack) it checks that the
+   * shape / swatch / mix-in panels, the station tabs, Exit, the menu button, the PICK / COAT / CRACK bar and the action buttons stay inside the safe area, are at
+   * least 44 px to tap, do not overlap each other, and never cover the toy (nor the wax pot or the jug).
+   */
+  async studioLayout() {
+    const { checkLayout } = await import('./layoutcheck');
+    const W = window.innerWidth, H = window.innerHeight;
+    const portrait = H > W;
+    const S = W >= 900 && H >= 600 ? { t: 0, r: 0, b: 20, l: 0 } : portrait ? { t: 59, r: 0, b: 34, l: 0 } : { t: 0, r: 59, b: 21, l: 59 }; // (a tablet only has the home bar)
+    const root = document.documentElement;
+    const keys = ['--safe-t', '--safe-r', '--safe-b', '--safe-l'];
+    const saved = keys.map((k) => root.style.getPropertyValue(k));
+    keys.forEach((k, i) => root.style.setProperty(k, `${[S.t, S.r, S.b, S.l][i]}px`));
+    const calm = document.createElement('style');
+    calm.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }';
+    document.head.appendChild(calm);
+    const problems: string[] = [];
+    const notes: string[] = [];
+    const rectOf = (name: string, obj: THREE.Object3D, cam: THREE.PerspectiveCamera) => {
+      obj.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(obj);
+      if (box.isEmpty()) return null;
+      cam.updateMatrixWorld(true);
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (let i = 0; i < 8; i++) {
+        const v = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(cam);
+        const x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+      const mx = (x1 - x0) * 0.14, my = (y1 - y0) * 0.14; // the toy's core, not its soft edge
+      return { name: name, x: x0 + mx, y: y0 + my, w: x1 - x0 - 2 * mx, h: y1 - y0 - 2 * my };
+    };
+    const check = (label: string) => {
+      const w = cur();
+      const st = w.active;
+      const probes: { name: string; x: number; y: number; w: number; h: number }[] = [];
+      const add = (nm: string, o: THREE.Object3D | undefined) => {
+        if (!o || !o.visible) return;
+        const r = rectOf(nm, o, w.camera);
+        if (r) probes.push(r);
+      };
+      add('toy', st.body?.root ?? st.blob ?? st.holder);
+      add('pot', st.pot);
+      add('jug', st.jug);
+      // the 3D things must be on screen (not cut off by the edge), and clear of the ☰ menu button
+      for (const pr of probes) if (pr.x < 0 || pr.y < 0 || pr.x + pr.w > W || pr.y + pr.h > H) problems.length < 16 && problems.push(`${label}: offscreen ${pr.name} (${Math.round(pr.x)},${Math.round(pr.y)} ${Math.round(pr.w)}x${Math.round(pr.h)})`);
+      const mb = document.getElementById('menu-btn');
+      if (mb && getComputedStyle(mb).display !== 'none') {
+        const r = mb.getBoundingClientRect();
+        probes.push({ name: 'menu', x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+      const rep = checkLayout(w.ui, { probes });
+      notes.push(`${label}: ${rep.groups} blocks, ${rep.taps} taps${rep.tight.length ? `, ${rep.tight.length} under 52px` : ''}`);
+      for (const i of rep.issues) problems.length < 16 && problems.push(`${label}: ${i.kind} ${i.a}${i.b ? ' / ' + i.b : ''} (${i.value})`);
+    };
+    try {
+      for (const id of ['squishy', 'slime', 'wax']) {
+        await scenes.go('workshop', { station: id });
+        await sleep(260);
+        window.dispatchEvent(new Event('resize'));
+        scenes.step(240);
+        check(id);
+        if (id === 'wax') {
+          const w: any = cur();
+          const st = w.active;
+          st.coating.clear();
+          const l = st.coating.beginLayer('#ff2e88', 'dip');
+          st.coating.dipTo(l, 2);
+          l.final = true;
+          st.setStep('coat', true);
+          scenes.step(200);
+          check('wax coat');
+          st.setStep('crack', true);
+          scenes.step(200);
+          check('wax crack');
+          st.setStep('pick', true);
+          st.coating.clear();
+          scenes.step(20);
+        }
+      }
+    } finally {
+      calm.remove();
+      keys.forEach((k, i) => (saved[i] ? root.style.setProperty(k, saved[i]) : root.style.removeProperty(k)));
+      window.dispatchEvent(new Event('resize'));
+    }
+    return { name: 'studioLayout', pass: problems.length === 0, detail: `${W}x${H}: ${notes.join('; ')}${problems.length ? ' | ' + problems.join('; ') : ''}` };
+  },
+
   /** Draw calls in town (spawn view) within the iPad budget. */
+  /** v3 phone (W2): the Locker at the CURRENT window size (faked notch insets): every slot tab has no overlaps, nothing off-screen, taps >= 44 px, room for the player; and the reveal card fits. */
+  async lockerLayout() {
+    const { lockerLayoutAt } = await import('../ui/layoutcheck');
+    const r = await lockerLayoutAt();
+    return { name: 'lockerLayout', pass: r.pass, detail: r.detail };
+  },
+
+  /** v3 phone (W2): the ☰ menu sheet at the CURRENT window size: 6 cards, no overlap, on screen, close button reachable, taps >= 44 px. */
+  async menuLayout() {
+    const { menuLayoutAt } = await import('../ui/layoutcheck');
+    const r = await menuLayoutAt();
+    return { name: 'menuLayout', pass: r.pass, detail: r.detail };
+  },
+
   async drawCallsTown() {
     await scenes.go('town');
     await sleep(300);

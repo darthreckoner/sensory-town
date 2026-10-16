@@ -9,6 +9,7 @@ import { exportTown, pickTownFile, applyImportedTown } from '../core/share';
 import { el, button, sheet, confirmDialog, toast, bindTap } from './ui';
 import { charmCount, charmTotal } from '../core/unlocks';
 import { initReveal } from './reveal';
+import { initLayoutChecks } from './layoutcheck';
 
 let menuBtn: HTMLButtonElement;
 
@@ -22,6 +23,7 @@ export function initMenu(): void {
     menuBtn.style.display = s.showMenuButton ? '' : 'none';
   });
   initReveal(); // v3 locker: the unlock reveal card
+  if (import.meta.env.DEV) initLayoutChecks(); // window.__layout (phone layout checks)
 }
 
 // ── v3 locker ── the ☰ menu: six big cards (Island · Locker · Build · Studio · Audio · Island swap), Fortnite-style.

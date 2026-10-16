@@ -1095,9 +1095,9 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
 .rv-card {
   position: relative; width: min(440px, calc(100vw - 40px)); padding: 16px 18px 20px; border-radius: 20px; border: 5px solid #fff; text-align: center; color: #fff;
   background: linear-gradient(170deg, #0a1066 0%, var(--rd) 55%, var(--rc) 190%);
-  box-shadow: 0 0 0 4px var(--rc), 0 0 70px var(--rc), 0 14px 0 rgba(4, 6, 40, 0.6); transform: scale(0.3) translateY(60px); opacity: 0;
+  box-shadow: 0 0 0 4px var(--rc), 0 0 70px var(--rc), 0 14px 0 rgba(4, 6, 40, 0.6);
 }
-.rv-root.on .rv-card { animation: rvpop 0.55s cubic-bezier(0.2, 1.5, 0.35, 1) forwards; }
+.rv-root.on .rv-card { animation: rvpop 0.55s cubic-bezier(0.2, 1.5, 0.35, 1) backwards; }
 @keyframes rvpop { 0% { transform: scale(0.3) translateY(60px) rotate(-6deg); opacity: 0; } 70% { transform: scale(1.06) translateY(-4px) rotate(1deg); opacity: 1; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
 .rv-root.out .rv-card { animation: rvout 0.28s ease-in forwards; }
 @keyframes rvout { to { transform: scale(0.85) translateY(40px); opacity: 0; } }
@@ -1220,4 +1220,467 @@ input[type=range].slider::-moz-range-thumb { width: 32px; height: 32px; border-r
   .drive-hud { --hud-ctrl: 88px !important; --hud-btn: 52px; --hud-gap: 8px; --drive-map: 96px !important; }
   .drive-controls { --drive-ctrl: 88px !important; }
   .drive-minimap { width: var(--drive-map) !important; height: var(--drive-map) !important; }
+}
+
+/* ── v3 phone (W5): the in-world UI on a phone ─────────────────────────────────────────────────────────────────────────────
+   1. Held upright (short side <= 500 px) the island shows a "turn your phone sideways" card (DriveScene adds .v3-rotate to the HUD); an iPad stays playable.
+   2. On its side (height <= 520 px) everything shrinks to fit between the notch insets (--safe-*), stays >= 44 px to tap, and keeps clear of the stick, the pedals,
+      the minimap and the menu button: a narrower pill stack, a smaller Drive / Zip! bubble and place card, and the build bar moves to the top centre
+      (the pills and the button column step aside while building) with the starter / decor / edit panels hanging under it. */
+.v3-rotate { display: none; }
+@media (max-width: 500px) and (orientation: portrait) {
+  .v3-rotate {
+    position: absolute; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center;
+    padding: calc(24px + var(--safe-t)) calc(24px + var(--safe-r)) calc(24px + var(--safe-b)) calc(24px + var(--safe-l));
+    background: radial-gradient(circle at 50% 45%, rgba(46, 26, 140, 0.86), rgba(4, 6, 40, 0.95)); touch-action: none; -webkit-user-select: none; user-select: none;
+  }
+  .v3-rotate .ico { font-size: 88px; line-height: 1; animation: v3turn 2.4s ease-in-out infinite; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5)); }
+  .v3-rotate .ttl {
+    font: 900 italic 38px/1.05 var(--font); text-transform: uppercase; letter-spacing: 1px; color: #fff; max-width: 10em;
+    text-shadow: 3px 3px 0 var(--accent-2, #7c4dff), 6px 6px 0 rgba(255, 46, 136, 0.55), 0 0 26px rgba(0, 212, 255, 0.5);
+  }
+  .v3-rotate .sub { font: 800 italic 16px/1.3 var(--font); color: var(--text-dim, rgba(224, 230, 255, 0.8)); }
+}
+@keyframes v3turn { 0%, 18% { transform: rotate(0deg); } 58%, 100% { transform: rotate(-90deg); } }
+/* long pill text (a job to somewhere with a long name) is cut short instead of running under the minimap */
+.drive-chip, .drive-bubble { max-width: 100%; box-sizing: border-box; }
+.drive-chip .next, .drive-bubble .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* building: the bar's ✓ Done is the way out, so the button column steps aside; the place button sits above JUMP (in the gap the column left), and the bar leaves room for SLIDE */
+.drive-hud:has(.b3.on) .drive-side { display: none; }
+.b3-place { right: calc(var(--safe-r) + 14px + (var(--hud-ctrl) - 96px) / 2); bottom: calc(var(--safe-b) + 14px + var(--hud-ctrl) + 16px); }
+.drive-hud:has(.b3-edit.show) .b3-bar, .drive-hud:has(.b3-edit.show) .drive-top { display: none; }
+.b3-edit { right: auto; left: 50%; top: calc(10px + var(--safe-t)); bottom: auto; transform: translateX(-50%); width: auto; }
+.b3-edit.show { display: flex; align-items: center; gap: 12px; }
+.b3-edit .ttl { display: none; }
+.b3-edit .grid3 { grid-template-columns: repeat(3, var(--b3cell, 62px)); gap: 6px; }
+.b3-edit .cell { height: var(--b3cell, 62px); font-size: 28px; }
+.b3-edit .presets { margin-top: 0; display: grid; grid-template-columns: repeat(2, var(--b3b, 64px)); gap: 6px; }
+.b3-edit .presets .b3-btn { min-width: var(--b3b, 64px); height: var(--b3b, 64px); }
+.b3-edit .b3-btn.wide { width: var(--b3b, 64px); min-width: var(--b3b, 64px); height: var(--b3b, 64px); margin: 0; }
+@media (orientation: landscape) { .b3-dock { width: min(780px, calc(100vw - 560px)); } }
+.b3-decor .sw { width: 44px; height: 44px; }
+.v3-poi-name { font-size: clamp(34px, 6.4vw, 96px); }
+.v3-poi { top: calc(max(17%, 124px) + var(--safe-t)); }   /* (under the pill stack, which starts below the status bar) */
+
+@media (max-height: 520px) and (orientation: landscape) {
+  /* the pill stack stays between the menu button and the minimap */
+  .drive-top { max-width: calc(100% - 2 * (max(var(--safe-l), var(--safe-r)) + 118px)); gap: 6px; }
+  .drive-chip { padding: 4px 12px; max-width: 100%; box-sizing: border-box; }
+  .drive-chip .gem, .drive-chip .n { font-size: 17px; }
+  .drive-chip .next { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .drive-bubble { font-size: 17px; padding: 4px 16px 4px 8px; gap: 8px; max-width: 100%; box-sizing: border-box; }
+  .drive-bubble .arr { width: 30px; height: 30px; }
+  .drive-bubble .ico { font-size: 26px; }
+  .drive-bubble .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* Drive / Zip!: a smaller bubble in the gap between the stick and the pedals */
+  .drive-prompt { bottom: calc(14px + var(--safe-b)); left: calc(50% - 10px); font-size: 22px; padding: 8px 20px 8px 12px; gap: 8px; box-shadow: var(--shadow), 0 0 0 3px rgba(255, 255, 255, 0.85); }
+  .drive-prompt .ico { font-size: 30px; }
+  /* the place card: smaller, lower (under the pills), never half the screen */
+  .v3-poi { top: 32%; }
+  .v3-poi-inner { padding: 2px 34px 10px 26px; }
+  .v3-poi-sub { font-size: 15px; min-height: 15px; letter-spacing: 2px; }
+  .v3-poi-name { font-size: clamp(24px, 5vw, 44px); }
+  .v3-poi-bar { left: 20px; right: 28px; height: 6px; }
+  /* the party bus: JUMP! in the middle, honk and Skip in the corners, none of them touching */
+  .v3-bus-title { font-size: 17px; padding: 4px 16px; letter-spacing: 2px; }
+  .v3-bus .v3-jump { width: min(250px, 42vw); min-height: 64px; font-size: 30px; letter-spacing: 2px; bottom: calc(14px + var(--safe-b)); }
+  .v3-bus .v3-jump .ico { font-size: 32px; }
+  .v3-bus .v3-skip { min-height: 48px; }
+  .v3-bus .v3-honk { width: 64px; height: 64px; bottom: calc(14px + var(--safe-b)); right: calc(14px + var(--safe-r)); }
+  .v3-bus .v3-honk .ico { font-size: 30px; }
+}
+
+/* the build UI on a phone on its side AND on an iPad held upright (the full-width bar used to sit over the stick and the pedals): the bar goes to the top centre,
+   two rows of icon buttons between the menu button and the minimap, with the starter / decor / edit panels hanging under it; the pills and the button column
+   step aside, the place button sits above JUMP, the hint and info pills sit in the gap between the stick and the pedals. */
+@media (max-height: 520px) and (orientation: landscape), (orientation: portrait) {
+
+  .drive-hud:has(.b3.on) .drive-top { display: none; }
+  .b3 {
+    --b3w: calc(100vw - var(--safe-l) - var(--safe-r) - 92px - var(--drive-map, 160px) - 22px);   /* from the menu button to the minimap */
+    --b3b: clamp(44px, calc((var(--b3w) - 8px - 18px) / 7), var(--b3max, 48px));
+    --b3cell: 44px;
+    --b3p: 72px;
+  }
+  .b3-dock {
+    left: calc(var(--safe-l) + 92px); transform: none; top: calc(4px + var(--safe-t)); bottom: auto; width: var(--b3w); max-width: 560px; min-width: 0;
+    flex-direction: column; gap: 3px;
+  }
+  .b3-bar { padding: 3px; gap: 3px; border-radius: 16px; border-width: 1px; }
+  .b3-bar > .b3-row { display: contents; }
+  .b3-btn { min-width: var(--b3b); width: var(--b3b); height: var(--b3b); padding: 0; border-radius: 12px; }
+  .b3-btn .lbl, .b3-btn .key { display: none; }
+  .b3-btn .ico { font-size: 22px; }
+  .b3-panel { padding: 3px; border-radius: 16px; border-width: 1px; }
+  .b3-starter .ttl { display: none; }
+  .b3-starter .cards { flex-wrap: nowrap; gap: 4px; }
+  .b3-starter .card { flex: 1 1 0; min-width: 0; min-height: 52px; padding: 4px 6px; gap: 0 6px; flex-wrap: nowrap; }
+  .b3-starter .card .ico { font-size: 28px; }
+  .b3-starter .card .nm { font-size: 12px; line-height: 1.1; min-width: 0; }
+  .b3-starter .card .bl { display: none; }
+  .b3-decor.show { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .b3-decor .list { flex: 1 1 100%; gap: 4px; padding-bottom: 2px; scrollbar-width: none; }
+  .b3-decor .list::-webkit-scrollbar, .b3-decor .swatches::-webkit-scrollbar { display: none; }
+  .b3-decor .item { width: 52px; height: 46px; border-radius: 10px; flex: 0 0 auto; }
+  .b3-decor .item .lbl { display: none; }
+  .b3-decor .item .ico { font-size: 24px; }
+  .b3-decor .cat { font-size: 10px; padding: 2px 8px; }
+  .b3-decor .ctl { flex: 1 1 0; min-width: 0; margin-top: 0; gap: 4px; flex-wrap: nowrap; }
+  .b3-decor .swatches { flex-wrap: nowrap; overflow-x: auto; gap: 4px; min-width: 0; padding: 2px; scrollbar-width: none; }
+  .b3-decor .sw { flex: 0 0 auto; width: 44px; height: 44px; }
+  .b3-sel.show { margin-top: 0; flex: 0 0 auto; gap: 4px; }
+  .b3-sel .lbl { display: none; }
+  .b3-edit { left: calc(var(--safe-l) + 92px + var(--b3w) / 2); top: calc(4px + var(--safe-t)); }
+  .b3-edit.show { gap: 8px; }
+  .b3-edit .grid3 { gap: 4px; }
+  .b3-edit .cell { border-radius: 10px; font-size: 22px; }
+  .b3-edit .presets { gap: 4px; }
+  .b3-info { top: auto; left: calc(50% - 10px); transform: translateX(-50%); bottom: calc(14px + var(--safe-b)); max-width: 180px; box-sizing: border-box; padding: 4px 10px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .b3-hint { top: auto; left: calc(50% - 10px); bottom: calc(48px + var(--safe-b)); max-width: 180px; border-radius: 14px; padding: 6px 10px; font-size: 12px; line-height: 1.25; }
+  .b3-place { width: var(--b3p); height: var(--b3p); font-size: calc(var(--b3p) * 0.42); right: calc(var(--safe-r) + 14px + (var(--hud-ctrl) - var(--b3p)) / 2); bottom: calc(var(--safe-b) + 14px + var(--hud-ctrl) + 16px); }
+}
+@media (orientation: portrait) { .b3 { --b3max: 56px; --b3cell: 56px; --b3p: 88px; } }
+
+/* ═══ v3 phone (lobby): title, name plates, New player, back / rename, PLAY / LOCKER / STUDIO on phones ═══════════════
+   PickerScene fits the lineup between the title band and the bottom and shifts the picked player beside (landscape) or above (portrait) the buttons
+   (camera view offset), so these rules only size and place the DOM pieces. Short landscape = (max-height: 520px); narrow portrait = (max-width: 560px) in portrait. */
+.lb-title { font-size: 54px; white-space: nowrap; letter-spacing: 2px; }
+.lb-tags { position: absolute; inset: 0; pointer-events: none; }
+.lb-plate .lb-name { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.lb-plate .lb-pencil { width: 50px; height: 50px; flex: 0 0 auto; }
+.lb-compact .lb-plate .lb-pencil { display: none; }
+.lb-compact .lb-plate .lb-name { min-width: 0; max-width: 104px; padding: 0 12px; font-size: 17px; min-height: 52px; }
+.lb-edit { position: absolute; top: calc(16px + var(--safe-t)); left: calc(16px + var(--safe-l) + 64px + 12px); }
+@media (max-height: 520px) {
+  .lb-tw { top: calc(6px + var(--safe-t)); }
+  .lb-title { font-size: 32px; letter-spacing: 1px; -webkit-text-stroke: 3px #0b1262; text-shadow: 0 3px 0 #0b1262, 0 6px 16px rgba(122, 53, 255, 0.55); }
+  .btn.lb-add { top: calc(6px + var(--safe-t)); right: calc(8px + var(--safe-r)); bottom: auto; min-height: 50px; padding: 0 16px; font-size: 16px; }
+  .btn.lb-add .ico { font-size: 20px; }
+  .lb-back { top: calc(6px + var(--safe-t)); left: calc(8px + var(--safe-l)); width: 52px; height: 52px; }
+  .lb-edit { top: calc(6px + var(--safe-t)); left: calc(8px + var(--safe-l) + 52px + 10px); width: 52px; height: 52px; }
+  .lb-plate .lb-name { min-height: 52px; min-width: 96px; font-size: 18px; padding: 0 16px; }
+  .lb-plate .lb-pencil { width: 48px; height: 48px; }
+  .lb-actions { right: calc(10px + var(--safe-r)); bottom: calc(10px + var(--safe-b)); flex-direction: row; align-items: flex-end; gap: 10px; }
+  .lb-sub-col { gap: 8px; }
+  .btn.lb-mini { min-height: 52px; min-width: 128px; font-size: 17px; padding: 0 14px; }
+  .btn.lb-play { min-width: 190px; min-height: 112px; font-size: 40px; padding: 0 22px; }
+}
+@media (max-width: 560px) and (max-aspect-ratio: 1/1) {
+  .lb-tw { top: calc(14px + var(--safe-t)); }
+  .lb-title { font-size: min(44px, 10.2vw); letter-spacing: 1px; -webkit-text-stroke: 4px #0b1262; }
+  .lb-sub { display: none; }
+  .btn.lb-add { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(14px + var(--safe-b)); min-height: 52px; padding: 0 22px; font-size: 18px; }
+  .lb-back { top: calc(12px + var(--safe-t)); left: calc(12px + var(--safe-l)); width: 52px; height: 52px; }
+  .lb-edit { top: calc(12px + var(--safe-t)); left: calc(12px + var(--safe-l) + 52px + 10px); width: 52px; height: 52px; }
+  .lb-plate .lb-name { min-height: 52px; min-width: 88px; font-size: 18px; padding: 0 14px; }
+  .lb-plate .lb-pencil { width: 48px; height: 48px; }
+  .lb-actions { left: calc(12px + var(--safe-l)); right: calc(12px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); flex-direction: column; align-items: stretch; gap: 10px; }
+  .lb-sub-col { flex-direction: row; gap: 10px; align-items: stretch; }
+  .btn.lb-mini { flex: 1 1 0; min-width: 0; min-height: 56px; justify-content: center; font-size: 18px; padding: 0 10px; }
+  .btn.lb-play { min-width: 0; width: 100%; min-height: 84px; font-size: 38px; padding: 0 20px; }
+}
+/* v3 phone (lobby): the narrowest landscape phones (667 wide + the notch insets): a smaller title and an icon-only New player button */
+@media (max-height: 520px) and (max-width: 760px) {
+  .lb-title { font-size: 27px; -webkit-text-stroke: 2.5px #0b1262; }
+  .btn.lb-add { min-width: 52px; width: 52px; padding: 0; gap: 0; }
+  .btn.lb-add .lbl { display: none; }
+  .btn.lb-add .ico { font-size: 28px; }
+  .lb-compact .lb-plate .lb-name { font-size: 15px; padding: 0 8px; max-width: 88px; }
+}
+/* v3 phone (lobby, portrait): with a player picked the title steps aside for the back / rename buttons */
+@media (max-width: 560px) and (max-aspect-ratio: 1/1) { .lb-picked .lb-tw { display: none; } }
+
+
+/* ═══ v3 phone (W2): the Locker, the ☰ menu, the reveal card, toasts + sheets on a phone ════════════════════════════════
+   Two phone layouts for the Locker:
+   · landscape phone (844×390, 852×393, 667×375): the slot rail is a compact icon strip on top of the right column, the item grid
+     (3 columns, scrolls) under it, the preview in the middle, SURPRISE / EMOTE / PHOTO as icon buttons under the player, LET'S PLAY! under the grid.
+   · portrait phone (393×852, 375×667): the preview on top, the slot strip as a tab bar, the grid as a sheet below, then the icon bar + LET'S PLAY!.
+   Every control is ≥ 44 px (most 52) and sits inside the safe areas. */
+@media (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  :root { --lk-pw: clamp(330px, 50vw, 420px); }
+  .lk-title { top: calc(8px + var(--safe-t)); }
+  .lk-title .title { font-size: 28px; -webkit-text-stroke: 3px #0b1262; letter-spacing: 1px; }
+  .lk-title .label { display: none; }
+  .lk-charms { top: calc(46px + var(--safe-t)); padding: 3px 10px 3px 8px; gap: 6px; border-width: 2px; border-radius: 9px; }
+  .lk-charms .gem, .lk-charms b { font-size: 15px; }
+  .lk-charms .nx { display: none; }
+  .lk-slots {
+    flex-direction: row; left: auto; right: calc(8px + var(--safe-r)); top: calc(6px + var(--safe-t)); width: var(--lk-pw); max-height: none; gap: 4px; padding: 2px 2px 4px;
+    overflow-x: auto; overflow-y: hidden; touch-action: pan-x;
+  }
+  .lk-slot { width: 44px; height: 52px; border-width: 2px; border-radius: 9px; touch-action: pan-x; }
+  .lk-slot .ico { font-size: 25px; }
+  .lk-slot .lbl { display: none; }
+  .lk-slot .bar { height: 6px; }
+  .lk-slot.on { transform: translateY(-2px); }
+  .lk-panel {
+    top: calc(64px + var(--safe-t)); bottom: calc(66px + var(--safe-b)); right: calc(8px + var(--safe-r)); left: auto; width: var(--lk-pw); max-height: none;
+    padding: 8px 8px 10px; gap: 8px; border-width: 3px; border-radius: 14px;
+  }
+  .lk-head { display: none; }
+  .lk-info { padding: 5px 10px; border-width: 2px; }
+  .lk-info-name { font-size: 18px; }
+  .lk-info-row { margin-top: 3px; gap: 8px; }
+  .lk-rar { font-size: 10px; padding: 1px 8px; }
+  .lk-state { font-size: 11px; }
+  .lk-grid { grid-template-columns: repeat(3, 1fr); gap: 7px; padding: 2px 3px 6px 2px; }
+  .lk-grid.tall { grid-template-columns: repeat(3, 1fr); }
+  .lk-grid.parts { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .lk-card { border-width: 2px; }
+  .lk-name { font-size: 9.5px; min-height: 25px; }
+  .lk-ico { font-size: 34px; }
+  .lk-need { font-size: 8px; }
+  .lk-wheel { width: min(100%, 250px); }
+  .lk-wslot .ico { font-size: 26px; }
+  .lk-wslot .nm { display: none; }
+  .lk-styles { gap: 6px; }
+  .lk-style { min-width: 84px; padding: 6px 8px; }
+  .lk-subtabs { gap: 5px; }
+  .lk-subtab { min-width: 52px; min-height: 52px; }
+  .lk-fin { min-height: 48px; padding: 4px 10px; font-size: 12px; }
+  .dr-bar { left: calc(50% - var(--dr-shift, 0px)); bottom: calc(6px + var(--safe-b)); gap: 8px; transform: translateX(-50%); }
+  .dr-bar .btn, .dr-bar .btn.big { min-width: 52px; width: 52px; min-height: 52px; height: 52px; padding: 0; gap: 0; border-width: 2px; }
+  .dr-bar .btn .lbl { display: none; }
+  .dr-bar .btn .ico { font-size: 25px; }
+  .dr-bar > .btn:first-child, .dr-bar > .btn:last-child { display: none; } /* −/+ zoom: pinch instead */
+  .btn.dr-go { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(6px + var(--safe-b)); width: var(--lk-pw); min-height: 52px; height: 52px; font-size: 20px; padding: 0 12px; }
+  .dr-vf { display: none; }
+}
+
+/* the narrowest landscape phones (667 wide + notch insets): a slimmer column and no 📸 button, so the player keeps room */
+@media (max-height: 520px) and (max-width: 760px) and (min-aspect-ratio: 1/1) {
+  :root { --lk-pw: clamp(300px, 46vw, 420px); }
+  .dr-bar > .btn:nth-child(5) { display: none; }
+}
+
+/* portrait phones */
+@media (max-width: 700px) and (max-aspect-ratio: 1/1) {
+  :root { --lk-ph: clamp(180px, 31vh, 340px); --lk-bot: calc(68px + var(--safe-b)); }
+  .lk-title { display: none; } /* the ☰ button and the charm chip share the top row instead */
+  .lk-charms { left: calc(68px + var(--safe-l)); transform: none; top: calc(14px + var(--safe-t)); padding: 3px 10px 3px 8px; gap: 6px; border-width: 2px; border-radius: 9px; max-width: calc(100vw - 84px - var(--safe-l) - var(--safe-r)); }
+  .lk-charms .gem, .lk-charms b { font-size: 15px; }
+  .lk-charms .nx { display: none; }
+  .lk-panel { left: calc(8px + var(--safe-l)); right: calc(8px + var(--safe-r)); width: auto; top: auto; bottom: var(--lk-bot); height: var(--lk-ph); max-height: none; padding: 8px 8px 10px; gap: 8px; border-width: 3px; }
+  .lk-head { display: none; }
+  .lk-info { padding: 5px 10px; border-width: 2px; }
+  .lk-info-name { font-size: 18px; }
+  .lk-info-row { margin-top: 3px; }
+  .lk-rar { font-size: 10px; padding: 1px 8px; }
+  .lk-state { font-size: 11px; }
+  .lk-slots {
+    left: calc(8px + var(--safe-l)); right: calc(8px + var(--safe-r)); top: auto; bottom: calc(var(--lk-bot) + var(--lk-ph) + 6px); flex-direction: row; max-height: none; gap: 4px; padding: 2px 2px 4px;
+    overflow-x: auto; overflow-y: hidden; touch-action: pan-x; justify-content: center;
+  }
+  .lk-slot { width: 46px; height: 52px; border-width: 2px; border-radius: 9px; touch-action: pan-x; }
+  .lk-slot .ico { font-size: 25px; }
+  .lk-slot .lbl { display: none; }
+  .lk-slot .bar { height: 6px; }
+  .lk-slot.on { transform: translateY(-3px); }
+  .lk-grid, .lk-grid.tall { grid-template-columns: repeat(4, 1fr); gap: 7px; }
+  .lk-grid.parts { grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .lk-card { border-width: 2px; }
+  .lk-name { font-size: 9px; min-height: 24px; }
+  .lk-ico { font-size: 30px; }
+  .lk-need { font-size: 7.5px; }
+  .lk-wheel { width: min(100%, 230px); }
+  .lk-wslot .nm { display: none; }
+  .lk-subtab { min-width: 50px; min-height: 50px; }
+  .lk-fin { min-height: 46px; padding: 4px 10px; font-size: 12px; }
+  /* one bottom row: the four icon buttons on the left, LET'S PLAY! filling the rest */
+  .dr-bar { left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); gap: 6px; transform: none; }
+  .dr-bar .btn, .dr-bar .btn.big { min-width: 48px; width: 48px; min-height: 52px; height: 52px; padding: 0; gap: 0; border-width: 2px; }
+  .dr-bar .btn .lbl { display: none; }
+  .dr-bar .btn .ico { font-size: 24px; }
+  .dr-bar > .btn:first-child, .dr-bar > .btn:last-child { display: none; } /* −/+ zoom: pinch instead */
+  .btn.dr-go { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(8px + var(--safe-b)); width: calc(100vw - 16px - var(--safe-l) - var(--safe-r) - 4 * 48px - 4 * 6px); min-width: 108px; min-height: 52px; height: 52px; font-size: 16px; padding: 0 6px; letter-spacing: 0; }
+  .dr-vf { display: none; }
+}
+
+/* ── the unlock reveal card on a short or narrow screen ── */
+@media (max-height: 520px) {
+  .rv-card { width: min(380px, calc(100vw - 24px)); padding: 8px 12px 12px; border-width: 4px; max-height: calc(100vh - 12px); overflow: hidden; }
+  .rv-new { font-size: 12px; padding: 0 12px; letter-spacing: 2px; }
+  .rv-stage { height: 112px; margin: 2px 0; }
+  .rv-glow { width: 120px; height: 120px; }
+  .rv-item { height: 108px; width: 108px; }
+  .rv-item .big { font-size: 64px; }
+  .rv-name { font-size: 22px; }
+  .rv-rar { font-size: 12px; margin: 4px 0 0; padding: 1px 12px; }
+  .rv-where { font-size: 10px; margin-top: 2px; }
+  .rv-btns { margin-top: 8px; gap: 8px; }
+  .rv-btns .btn, .rv-btns .btn.big { min-height: 52px; font-size: 17px; padding: 0 16px; }
+}
+@media (max-width: 700px) and (max-aspect-ratio: 1/1) {
+  .rv-card { width: calc(100vw - 24px); padding: 12px 14px 16px; }
+  .rv-stage { height: 170px; }
+  .rv-item { height: 160px; width: 160px; }
+  .rv-name { font-size: 28px; }
+}
+
+/* ── ☰ menu, sheets, dialogs, toasts on a phone ── */
+@media (max-height: 520px) {
+  .sheet { padding: 12px 14px; max-height: calc(100vh - 12px - var(--safe-t) - var(--safe-b)); max-width: min(900px, calc(100vw - 16px - var(--safe-l) - var(--safe-r))); border-width: 3px; border-radius: 16px; }
+  .sheet h2 { font-size: 22px; margin-bottom: 6px; }
+  .grid-nav { gap: 8px; }
+  .navcard { min-height: 74px; padding: 4px 4px; gap: 0; font-size: 17px; border-width: 3px; border-radius: 12px; box-shadow: 0 4px 0 rgba(4, 6, 40, 0.55), inset 0 3px 0 rgba(255, 255, 255, 0.28); }
+  .navcard .ico { font-size: 28px; line-height: 1; }
+  .sheet > .row:first-child { margin-bottom: 6px !important; }
+  .sheet > .row.wrap { margin-top: 8px !important; }
+  .sheet .label { font-size: 11px; }
+  .navcard .sub { font-size: 9px; letter-spacing: 0.4px; }
+  .sheet .row .btn.round { width: 52px; height: 52px; flex: 0 0 auto; }
+  .sheet .btn { min-height: 52px; }
+  .sheet .btn.big { min-height: 56px; }
+  .toast { top: calc(58px + var(--safe-t)); padding: 8px 18px; font-size: 15px; max-width: calc(100vw - 100px); white-space: normal; text-align: center; border-width: 2px; }
+}
+@media (max-width: 700px) and (max-aspect-ratio: 1/1) {
+  .sheet { padding: 16px; max-width: calc(100vw - 16px); border-width: 3px; }
+  .sheet h2 { font-size: 24px; }
+  .grid-nav { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .navcard { min-height: 92px; font-size: 19px; gap: 1px; }
+  .navcard .ico { font-size: 34px; line-height: 1.05; }
+  .toast { top: calc(64px + var(--safe-t)); max-width: calc(100vw - 24px); white-space: normal; text-align: center; font-size: 16px; padding: 10px 18px; }
+  .sheet .btn { min-height: 52px; }
+}
+/* a sheet that has to scroll on a phone keeps its title row (and the ✕ close button) pinned to the top */
+@media (max-width: 700px) and (max-aspect-ratio: 1/1), (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  .sheet > .row:first-child { position: sticky; top: -12px; z-index: 3; background: linear-gradient(#2a46d8, #2848d9); padding-top: 4px; padding-bottom: 4px; margin-top: -4px; }
+}
+/* the ☰ button itself: 52 px, tucked into the corner, on every phone-sized screen */
+@media (max-width: 700px) and (max-aspect-ratio: 1/1), (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  #menu-btn.tl { width: 52px; height: 52px; top: calc(8px + var(--safe-t)); left: calc(8px + var(--safe-l)); }
+  #menu-btn.tl .ico { font-size: 24px; }
+}
+
+/* ═══ v3 phone (studio): the Studio on a phone — compact strips beside the toy (landscape) / a drawer under it (portrait) ═══════
+   WorkshopScene puts `ws` on its ui root and `data-st="squishy|slime|wax"` for the active station, and shifts the camera so the toy sits in
+   the free area between the panels (measured from the DOM). Short landscape = (max-height: 520px); narrow portrait = (max-width: 560px) in portrait. */
+@media (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  /* top row: the menu button | station tabs | Exit */
+  .ws > .tabs.tc { top: calc(6px + var(--safe-t)); padding: 4px; gap: 4px; border-radius: 14px; border-width: 2px; }
+  .ws > .tabs.tc .tab { min-height: 48px; min-width: 52px; padding: 0 12px; font-size: 15px; gap: 6px; }
+  .ws > .tabs.tc .tab .ico { font-size: 22px; }
+  .ws > .tr { top: calc(8px + var(--safe-t)); right: calc(8px + var(--safe-r)); min-width: 52px; min-height: 52px; padding: 0 14px; font-size: 16px; gap: 6px; }
+  .ws > .tr .ico { font-size: 22px; }
+  /* side strips: columns of 48 px tiles (names hidden), scrolling when there are more */
+  .ws .lc, .ws .rc { top: calc(66px + var(--safe-t)); bottom: auto; transform: none; max-height: calc(100% - 74px - var(--safe-t) - var(--safe-b)); overflow-x: hidden; overflow-y: auto; padding: 6px; gap: 6px !important; border-width: 2px; border-radius: 14px; touch-action: pan-y; scrollbar-width: none; }
+  .ws .lc::-webkit-scrollbar, .ws .rc::-webkit-scrollbar { display: none; }
+  .ws .lc { left: calc(8px + var(--safe-l)); }
+  .ws .rc { right: calc(8px + var(--safe-r)); }
+  .ws[data-st="wax"] .rc { max-height: calc(100% - 142px - var(--safe-t) - var(--safe-b)); }
+  .ws[data-st="wax"] .lc { max-height: calc(100% - 138px - var(--safe-t) - var(--safe-b)); }
+  .ws .lc .items, .ws .rc .items { grid-template-columns: repeat(2, 48px) !important; gap: 6px; }
+  .ws .lc .item, .ws .rc .item { width: 48px !important; height: 48px !important; border-width: 2px; border-radius: 10px; touch-action: pan-y; }
+  .ws .lc .item .ico, .ws .rc .item .ico { font-size: 24px !important; }
+  .ws .lc .item > span:not(.ico):not(.lock-badge) { display: none; }
+  .ws .item .lock-badge { top: -5px; right: -5px; font-size: 9px; padding: 1px 4px; }
+  .ws .lc .btn { min-height: 48px; padding: 0 8px; font-size: 14px; gap: 6px; }
+  .ws .lc .btn .ico { font-size: 22px; }
+  .ws .lc .btn.round { width: 48px; height: 48px; align-self: center; }
+  .ws .lc .label, .ws .rc .label { font-size: 11px; line-height: 1.1; }
+  .ws .swatches, .ws .swatches.wide, .ws .wax-swatches { grid-template-columns: repeat(3, 44px) !important; gap: 8px 6px; padding: 3px; }
+  .ws .swatch { width: 44px; height: 44px; border-width: 2px; }
+  .ws .wax-chip { width: 52px; height: 14px; }
+  /* Save / reset: under the toy, bottom centre */
+  .ws .br.row { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(8px + var(--safe-b)); gap: 8px; }
+  .ws .br.row .btn { min-height: 52px; }
+  .ws .br.row .btn.round { width: 52px; height: 52px; }
+  .ws .br.row .btn.big { padding: 0 22px; font-size: 18px; }
+  /* slime: types (2 columns) on the left, mix-ins + colors on the right */
+  .ws .slime-left { top: calc(66px + var(--safe-t)); left: calc(8px + var(--safe-l)); max-height: calc(100% - 74px - var(--safe-t) - var(--safe-b)); display: grid; grid-template-columns: repeat(2, 60px); gap: 6px; padding: 6px; border-width: 2px; border-radius: 14px; align-content: start; }
+  .ws .slime-type { width: 60px; height: 50px; touch-action: pan-y; }
+  .ws .slime-type .ico { font-size: 20px; }
+  .ws .slime-type .nm, .ws .slime-add .nm { font-size: 10px; }
+  .ws .slime-right { top: calc(66px + var(--safe-t)); right: calc(8px + var(--safe-r)); bottom: calc(8px + var(--safe-b)); width: 168px; gap: 6px; }
+  .ws .slime-adds { gap: 6px; padding: 6px; border-width: 2px; border-radius: 14px; }
+  .ws .slime-add { height: 48px; }
+  .ws .slime-colors { padding: 6px; border-width: 2px; border-radius: 14px; }
+  .ws .slime-sw { grid-template-columns: repeat(3, 44px) !important; gap: 8px 6px; }
+  .ws .slime-sw .swatch { width: 44px; height: 44px; }
+  /* wax: step bar bottom centre, the three action slots become a row bottom right, New bottom left */
+  .ws .wax-steps { bottom: calc(8px + var(--safe-b)); padding: 4px; gap: 4px; border-width: 2px; border-radius: 14px; }
+  .ws .wax-steps .tab { min-width: 52px; min-height: 48px; padding: 0 10px; font-size: 14px; gap: 5px; }
+  .ws .wax-steps .tab .ico { font-size: 22px; }
+  .ws .wax-actions { right: calc(8px + var(--safe-r)); bottom: calc(8px + var(--safe-b)) !important; display: flex !important; flex-direction: row; gap: 8px; align-items: center; }
+  .ws .wax-actions .slot-empty { display: none; }
+  .ws .wax-actions .btn { min-height: 52px; min-width: 52px; padding: 0 14px; font-size: 16px; gap: 6px; }
+  .ws .wax-actions .btn .ico { font-size: 22px; }
+  .ws .wax-actions .btn:not(:last-child) .lbl, .ws .wax-steps .tab > span:not(.ico) { display: none; } /* icon-only: Again / Cool and the PICK / COAT / CRACK bar (the primary button keeps its label) */
+  .ws .wax-actions .btn:not(:last-child) { padding: 0; }
+  .ws .wax-steps .tab { min-width: 52px; padding: 0 8px; }
+  .ws .btn.hold.wax-reset { left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); min-height: 52px; padding: 0 14px; font-size: 16px; gap: 6px; }
+  .ws .btn.hold.wax-reset .ico { font-size: 22px; }
+  .ws .wax-hint { top: calc(70px + var(--safe-t)); font-size: 14px; padding: 5px 14px; max-width: 44vw; white-space: normal; text-align: center; }
+}
+/* the narrowest landscape phones: icon-only tabs and step buttons */
+@media (max-height: 520px) and (max-width: 760px) and (min-aspect-ratio: 1/1) {
+  .ws > .tabs.tc .tab > span:not(.ico), .ws .wax-steps .tab > span:not(.ico) { display: none; }
+  .ws > .tabs.tc .tab, .ws .wax-steps .tab { min-width: 52px; padding: 0 8px; }
+  .ws .wax-actions .btn:not(:last-child) .lbl { display: none; }
+  .ws .wax-actions .btn:not(:last-child) { padding: 0; }
+  /* (667 wide + notch insets: the step bar sits next to New instead of in the middle, Save is a little narrower, the hint stays between the strips) */
+  .ws .wax-steps { left: calc(var(--safe-l) + 72px); transform: none; }
+  .ws .btn.hold.wax-reset { padding: 0; min-width: 52px; }
+  .ws .btn.hold.wax-reset .lbl { display: none; }
+  .ws .wax-actions .btn { padding: 0 12px; }
+  .ws .br.row .btn.big { padding: 0 14px; font-size: 16px; }
+  .ws .wax-hint { max-width: calc(100vw - var(--safe-l) - var(--safe-r) - 360px); }
+}
+@media (max-width: 560px) and (max-aspect-ratio: 1/1) {
+  .ws > .tabs.tc { top: calc(8px + var(--safe-t)); padding: 4px; gap: 4px; border-radius: 14px; border-width: 2px; }
+  .ws > .tabs.tc .tab { min-height: 48px; min-width: 52px; padding: 0 10px; }
+  .ws > .tr { top: calc(8px + var(--safe-t)); right: calc(8px + var(--safe-r)); min-width: 52px; min-height: 52px; padding: 0; }
+  .ws > .tr .lbl { display: none; }
+  /* under the toy: scrolling strips, one row each, then the buttons */
+  .ws .lc, .ws .rc { position: absolute; left: calc(8px + var(--safe-l)); right: calc(8px + var(--safe-r)); top: auto; transform: none; display: flex; flex-direction: row; align-items: center; gap: 8px !important; padding: 6px; overflow-x: auto; overflow-y: hidden; touch-action: pan-x; scrollbar-width: none; border-width: 2px; border-radius: 14px; }
+  .ws .lc::-webkit-scrollbar, .ws .rc::-webkit-scrollbar { display: none; }
+  .ws .lc .items, .ws .rc .items { display: flex; gap: 6px; flex: 0 0 auto; }
+  .ws .lc .item, .ws .rc .item { width: 52px !important; height: 52px !important; flex: 0 0 auto; border-width: 2px; border-radius: 10px; touch-action: pan-x; }
+  .ws .lc .item .ico, .ws .rc .item .ico { font-size: 26px !important; }
+  .ws .lc .item > span:not(.ico):not(.lock-badge) { display: none; }
+  .ws .item .lock-badge { top: -5px; right: -5px; font-size: 9px; padding: 1px 4px; }
+  .ws .lc .btn { flex: 0 0 auto; min-height: 52px; padding: 0 12px; font-size: 15px; gap: 6px; }
+  .ws .lc .btn.round { width: 52px; height: 52px; }
+  .ws .lc .label, .ws .rc .label { flex: 0 0 auto; font-size: 11px; }
+  .ws .swatches, .ws .swatches.wide, .ws .wax-swatches { display: flex !important; flex-wrap: nowrap; gap: 8px; padding: 3px 4px; flex: 0 0 auto; }
+  .ws .swatch { flex: 0 0 auto; width: 44px; height: 44px; border-width: 2px; }
+  .ws .wax-chips { flex-direction: row; flex: 0 0 auto; }
+  .ws .wax-chip { width: 34px; height: 16px; }
+  .ws[data-st="squishy"] .rc { bottom: calc(72px + var(--safe-b)); }
+  .ws[data-st="squishy"] .lc { bottom: calc(140px + var(--safe-b)); }
+  .ws[data-st="wax"] .rc { bottom: calc(144px + var(--safe-b)); }
+  .ws[data-st="wax"] .lc { bottom: calc(216px + var(--safe-b)); }
+  .ws .br.row { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(8px + var(--safe-b)); gap: 8px; }
+  .ws .br.row .btn { min-height: 52px; }
+  .ws .br.row .btn.round { width: 52px; height: 52px; }
+  .ws .br.row .btn.big { padding: 0 28px; font-size: 18px; }
+  /* slime: the existing three scrolling rows, a little tighter, above the buttons */
+  .ws .slime-dock { bottom: calc(72px + var(--safe-b)); gap: 6px; }
+  .ws .slime-left, .ws .slime-adds, .ws .slime-colors { padding: 6px 8px; border-width: 2px; border-radius: 14px; }
+  .ws .slime-type { width: 76px; height: 52px; }
+  .ws .slime-add { width: 100px; height: 52px; }
+  .ws .slime-sw .swatch { width: 44px; height: 44px; }
+  /* wax: step bar at the bottom, then the New + action row, then the strips */
+  .ws .wax-steps { bottom: calc(8px + var(--safe-b)); padding: 4px; gap: 4px; border-width: 2px; border-radius: 14px; }
+  .ws .wax-steps .tab { min-width: 52px; min-height: 48px; padding: 0 12px; }
+  .ws .wax-actions { right: calc(8px + var(--safe-r)); bottom: calc(76px + var(--safe-b)) !important; display: flex !important; flex-direction: row; gap: 8px; align-items: center; }
+  .ws .wax-actions .slot-empty { display: none; }
+  .ws .wax-actions .btn { min-height: 52px; min-width: 52px; padding: 0 14px; font-size: 16px; gap: 6px; }
+  .ws .wax-actions .btn:not(:last-child) .lbl { display: none; }
+  .ws .wax-actions .btn:not(:last-child) { padding: 0; }
+  .ws .btn.hold.wax-reset { left: calc(8px + var(--safe-l)); bottom: calc(76px + var(--safe-b)); min-height: 52px; padding: 0 14px; font-size: 16px; gap: 6px; }
+  .ws .wax-hint { top: calc(74px + var(--safe-t)); font-size: 15px; padding: 6px 14px; max-width: calc(100vw - 32px); }
+}
+/* the narrowest portrait phones (375 and below, e.g. iPhone SE): icon-only step bar, icon-only New */
+@media (max-width: 400px) and (max-aspect-ratio: 1/1) {
+  .ws .wax-steps .tab > span:not(.ico) { display: none; }
+  .ws .wax-steps .tab { padding: 0 14px; }
+  .ws .btn.hold.wax-reset { padding: 0; min-width: 52px; }
+  .ws .btn.hold.wax-reset .lbl { display: none; }
+}
+/* v3 phone (studio): tablets in landscape (iPad): the wax color / finish panel sits above the action column instead of running behind it */
+@media (min-height: 521px) and (min-width: 700px) and (min-aspect-ratio: 1/1) {
+  .ws[data-st="wax"] .rc { top: calc(88px + var(--safe-t)); transform: none; max-height: calc(100% - 340px - var(--safe-t) - var(--safe-b)); overflow-y: auto; scrollbar-width: none; touch-action: pan-y; }
+  .ws[data-st="wax"] .rc .item { touch-action: pan-y; }
 }

@@ -43,6 +43,31 @@ const ENGINE_VOICES: Record<string, EngineVoice> = {
   boat: { osc: 'sawtooth', sub: 'sawtooth', base: 0.9, top: 0.95, lp: 520, lfo: 26, lfoDepth: 0.42, rumble: 0.55, rumbleLp: 750, whine: 0.1, vol: 1 },
 };
 
+/** 1 s of 8-bit 8 kHz silence as a WAV blob URL (made in code: no asset file). */
+function silentWavUrl(): string {
+  const n = 8000;
+  const buf = new ArrayBuffer(44 + n);
+  const v = new DataView(buf);
+  const str = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + n, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true); // PCM chunk size
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, 8000, true); // sample rate
+  v.setUint32(28, 8000, true); // byte rate
+  v.setUint16(32, 1, true); // block align
+  v.setUint16(34, 8, true); // bits per sample
+  str(36, 'data');
+  v.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128); // 8-bit silence is the midpoint
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
 class AudioEngine {
   ctx: AudioContext | null = null;
   master!: GainNode;
@@ -66,6 +91,7 @@ class AudioEngine {
 
   /** Create + resume the AudioContext. Must be called from a user gesture on iOS. */
   unlock(): void {
+    this.iosPlayback();
     if (!this.ctx) this.build();
     const ctx = this.ctx!;
     if (ctx.state !== 'running') void ctx.resume();
@@ -86,6 +112,36 @@ class AudioEngine {
       };
       tryStart();
     }
+  }
+
+  /**
+   * iPhone/iPad: the ring/silent switch MUTES Web Audio unless the page's audio
+   * session is "playback" (the designer got no sound on an iPhone). Safari 17+
+   * exposes navigator.audioSession; older iOS switches the session when an
+   * <audio> element starts playing inside a gesture, so we loop a silent one.
+   * The volume buttons and the in-game Audio settings still control loudness.
+   */
+  private silentEl: HTMLAudioElement | null = null;
+  private iosPlayback(): void {
+    try {
+      const s = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+      if (s && s.type !== 'playback') s.type = 'playback';
+    } catch {
+      /* not supported */
+    }
+    // the <audio> trick only on iPhone/iPad (elsewhere a looping element can show a "playing" media notification)
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!ios) return;
+    if (!this.silentEl) {
+      const a = new Audio(silentWavUrl());
+      a.loop = true;
+      a.setAttribute('playsinline', '');
+      this.silentEl = a;
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) a.pause();
+      });
+    }
+    if (this.silentEl.paused) void this.silentEl.play().catch(() => undefined);
   }
 
   private build(): void {

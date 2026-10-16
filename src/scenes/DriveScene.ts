@@ -303,6 +303,11 @@ export class DriveScene extends GameScene {
     });
     this.emoteBtn = button(side, { icon: '😀', cls: 'round drive-emote' }, () => this.emote3.toggle());
     this.emoteBtn.title = 'Emotes (Q)';
+    // ── v3 phone ── held upright, a phone gets a friendly "turn it sideways" card over the island (style.css `v3 phone` shows it only then; an iPad never sees it)
+    const rot = el('div', 'v3-rotate interactive', hud);
+    el('div', 'ico', rot, '🔄');
+    el('div', 'ttl', rot, 'Turn your phone sideways');
+    el('div', 'sub', rot, 'The island plays best wide!');
     this.controls = new DriveControls(hud, { onHorn: () => this.honk(), onToggleMode: () => this.toggleMode(), onConfirm: () => this.confirmPrompt(), onCallCar: () => this.callCar() });
 
     // ── v3 movement ── the on-foot movement hub (camera, sprint, mantle, glide, launch pads, bus drop, POI cards): drive/movement.ts
@@ -474,6 +479,16 @@ export class DriveScene extends GameScene {
 
     this.listen(window, 'keydown', (e) => this.controls.onKeyDown(e));
     this.listen(window, 'keyup', (e) => this.controls.onKeyUp(e));
+    // ── v3 phone ── the card above blocks every touch; let go of the stick / drag / wheel the moment the phone goes upright
+    const upright = window.matchMedia('(max-width: 500px) and (orientation: portrait)');
+    const onUpright = (): void => {
+      if (!upright.matches) return;
+      this.controls.releaseAll();
+      this.emote3.reset();
+    };
+    upright.addEventListener?.('change', onUpright);
+    this.onExit(() => upright.removeEventListener?.('change', onUpright));
+    onUpright();
     this.listen(window, 'keydown', this.emote3.onKey, { capture: true });   // v3 emote: Q opens the wheel (before the camera-turn keys see it)
     this.listen(window, 'blur', () => this.controls.releaseAll());
     this.listen(
@@ -496,6 +511,15 @@ export class DriveScene extends GameScene {
     this.onExit(bus.on('uiOpen', () => { this.openSheets++; this.controls.suspended = true; }));
     this.onExit(bus.on('uiClose', () => { this.openSheets = Math.max(0, this.openSheets - 1); this.controls.suspended = this.openSheets > 0; }));
     this.onExit(bus.on('buildToggle', (e) => this.build3.toggle(e.on)));   // v3 build: ☰ menu → Build
+    // v3 locker: EQUIP! on an unlock reveal out on the island re-dresses the live character right away
+    // (skin → outfit, back bling; glider / contrail / ride are read when they're next used)
+    this.onExit(bus.on('lockerEquipped', () => {
+      const p = store.profile;
+      if (!p) return;
+      this.walker.setOutfit(p.outfit);
+      this.driver.setOutfit(p.outfit);
+      attachBackBling(this.walker);
+    }));
     this.onExit(bus.on('charmCollected', () => this.top.setCharms(this.charms.collected, this.charms.total, nextReward())));
 
     if (this.mode === 'car') bus.emit('driveStart', { kind: this.car.kind });

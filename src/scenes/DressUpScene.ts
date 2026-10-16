@@ -122,6 +122,8 @@ export class DressUpScene extends GameScene {
   private idle = 0;
   private spinSoundT = 0;
   private viewShift = 0;
+  /** phone layouts: the camera backs off so the whole player fits the small preview area */
+  private fitScale = 1;
 
   // pointer state
   private pointers = new Map<number, { x: number; y: number }>();
@@ -1692,10 +1694,11 @@ export class DressUpScene extends GameScene {
     // camera: glide to the target distance + height
     const k = 1 - Math.exp(-D.zoomSmooth * dt);
     this.dist += (this.targetDist - this.dist) * k;
+    const dEff = this.dist * this.fitScale;
     const close = smooth((D.zoomMax - this.dist) / (D.zoomMax - D.zoomMin));
     const want = this.focusLook ?? lerp(D.lookYWide, D.lookYClose, close);
     this.lookY += (want - this.lookY) * k;
-    this.camera.position.set(0, this.lookY + (LK.slotElev[this.slot] ?? 0.22) + this.dist * 0.075, this.dist);
+    this.camera.position.set(0, this.lookY + (LK.slotElev[this.slot] ?? 0.22) + dEff * 0.075, dEff);
     this.camera.lookAt(0, this.lookY, 0);
 
     // living stage: glow follows the rarity colour, rays turn, sparkles drift
@@ -1724,12 +1727,35 @@ export class DressUpScene extends GameScene {
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
     // keep the player in the free space between the slot column and the option panel
+    const phoneLand = h <= 520 && w > h; // a phone on its side: the right column holds rail + grid + PLAY
+    const phonePort = w <= 700 && w < h; // a phone held upright: preview on top, the grid below
     const wide = w >= 900 && w / h > 1.1;
     const panelW = this.panel?.offsetWidth ?? 440;
-    this.viewShift = wide ? Math.round((panelW + 30 - 110) / 2) : 0;
-    if (this.viewShift) this.camera.setViewOffset(w, h, this.viewShift, 0, w, h);
+    let sx = 0;
+    let sy = 0;
+    this.fitScale = 1;
+    const rect = (sel: string): DOMRect | null => (this.ui.querySelector(sel) as HTMLElement | null)?.getBoundingClientRect() ?? null;
+    if (phoneLand) {
+      // free room = between the ☰ button and the right column, under the title / charm chip, above the icon bar
+      const menu = document.getElementById('menu-btn')?.getBoundingClientRect();
+      const left = (menu && menu.width ? menu.right : 60) + 8;
+      const right = (rect('.lk-panel')?.left ?? w - panelW - 16) - 8;
+      const top = (rect('.lk-charms')?.bottom ?? 56) + 4;
+      const bottom = (rect('.dr-bar')?.top ?? h - 66) - 4;
+      sx = Math.round(w / 2 - (left + right) / 2);
+      this.fitScale = clamp(0.677 / ((bottom - top) / h), 0.9, 1.8);
+    } else if (phonePort) {
+      // preview on top: under the title / charm chip, above the slot strip
+      const top = (rect('.lk-charms')?.bottom ?? 84) + 6;
+      const bottom = (rect('.lk-slots')?.top ?? h * 0.5) - 6;
+      const previewH = Math.max(120, bottom - top);
+      sy = Math.round(h / 2 - (top + bottom) / 2);
+      this.fitScale = clamp(0.677 / (previewH / h), 1, 3.4);
+    } else if (wide) sx = Math.round((panelW + 30 - 110) / 2);
+    this.viewShift = sx;
+    if (sx || sy) this.camera.setViewOffset(w, h, sx, sy, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
-    this.ui.style.setProperty('--dr-shift', `${this.viewShift}px`);
+    this.ui.style.setProperty('--dr-shift', `${sx}px`);
   }
 }

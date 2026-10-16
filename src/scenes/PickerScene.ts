@@ -32,6 +32,8 @@ interface Slot {
   emoteIn: number;
   emoteLeft: number;
   lastEmote: string;
+  /** measured plate width in px (0 until measured) */
+  pw?: number;
 }
 
 /** Emotes used in the lobby when a wheel has fewer than three valid ones. */
@@ -81,6 +83,18 @@ export class PickerScene extends GameScene {
   private lookGoal = new THREE.Vector3(0, 1.45, 0);
   private look = new THREE.Vector3(0, 1.45, 0);
   private baseCam = new THREE.Vector3(0, 2.3, 9);
+  // ── v3 phone ── screen-space framing: the lineup is fitted between the title band and the bottom, the picked player sits beside the buttons
+  private safe = { t: 0, r: 0, b: 0, l: 0 };
+  private readonly scratch = new THREE.PerspectiveCamera();
+  /** how far the picture is shifted on screen (CSS px, +x right, +y down) now / wanted (camera.setViewOffset does it, so projection and picking stay right) */
+  private shiftX = 0;
+  private shiftY = 0;
+  private wantX = 0;
+  private wantY = 0;
+  private plateW = 170;
+  private editBtn: HTMLButtonElement | null = null;
+  /** what the last fit() settled on (debugging / selftests) */
+  fitInfo: Record<string, number | boolean> = {};
 
   init(): void {
     // bright day: sky gradient, sun, sky reflections; a hazy fog so the island sits in the distance
@@ -358,33 +372,38 @@ export class PickerScene extends GameScene {
   enter(): void {
     this.picked = null;
     this.leaving = false;
+    this.shiftX = this.shiftY = this.wantX = this.wantY = 0;
+    this.camera.clearViewOffset();
     this.buildUi();
     this.listen(scenes.canvas, 'pointerdown', (e) => this.onTap(e));
     this.camera.position.copy(this.baseCam);
     this.fit();
     this.camera.position.copy(this.camGoal);
     this.look.copy(this.lookGoal);
+    this.shiftX = this.wantX;
+    this.shiftY = this.wantY;
+    this.applyShift();
   }
 
   exit(): void {
     this.clearSlots();
     this.actions = null;
     this.back = null;
+    this.editBtn = null;
+    this.camera.clearViewOffset();
+    this.camera.updateProjectionMatrix();
   }
 
   /** (Re)build the DOM overlay and the lineup. */
   private buildUi(): void {
     this.ui.innerHTML = '';
-    const titleWrap = el('div', 'tc', this.ui);
-    const title = el('div', 'title', titleWrap, 'SENSORY <span class="hl">TOWN</span>');
-    title.style.fontSize = '54px';
-    title.style.whiteSpace = 'nowrap';
-    title.style.letterSpacing = '2px';
+    const titleWrap = el('div', 'tc lb-tw', this.ui);
+    el('div', 'title lb-title', titleWrap, 'SENSORY <span class="hl">TOWN</span>');
     this.subtitle = el('div', 'label lb-sub', this.ui, 'Tap your player') as HTMLDivElement;
-    this.tagLayer = el('div', '', this.ui) as HTMLDivElement;
+    this.tagLayer = el('div', 'lb-tags', this.ui) as HTMLDivElement;
     this.addBtn = null;
     if (store.data.profiles.length < tuning.app.maxProfiles) {
-      this.addBtn = button(this.ui, { icon: '＋', label: 'New player', cls: 'br big' }, () => this.addPlayer());
+      this.addBtn = button(this.ui, { icon: '＋', label: 'New player', cls: 'br big lb-add' }, () => this.addPlayer());
     }
     this.buildSlots();
   }
@@ -403,8 +422,10 @@ export class PickerScene extends GameScene {
     this.slots = [];
     this.actions?.remove();
     this.back?.remove();
+    this.editBtn?.remove();
     this.actions = null;
     this.back = null;
+    this.editBtn = null;
   }
 
   /** The emotes a player may show in the lobby: their wheel's valid ids, padded so it is never boring. */
@@ -459,7 +480,6 @@ export class PickerScene extends GameScene {
       // name plate above the head: the name (tap = pick) and a pencil (rename)
       const tag = el('div', 'interactive lb-plate', this.tagLayer) as HTMLDivElement;
       const nameBtn = button(tag, { label: p.name, cls: 'big lb-name', tap: 'big' }, () => this.pick(i));
-      nameBtn.style.minWidth = '130px';
       button(tag, { icon: '✏️', cls: 'round ghost lb-pencil' }, () => this.rename(p));
       this.slots.push({ profile: p, root, char, tag, ring, ringMat, beam, glow, bling, color, emoteIn: 2.5 + i * 1.7 + Math.random() * 3, emoteLeft: -1, lastEmote: '' });
     });
@@ -475,20 +495,28 @@ export class PickerScene extends GameScene {
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
     let halfW = 0, zFront = 0;
     this.slots.forEach((s, i) => {
-      let x: number, z: number;
+      let x: number, z: number, backRow = false;
       if (aspect >= 1.15 || n <= 2) {
         const gap = n <= 2 ? 3.4 : n <= 4 ? 2.7 : 2.25;
         const mid = i - (n - 1) / 2;
         x = mid * gap;
         z = -mid * mid * 0.09; // a gentle arc away from the camera
+      } else if (n >= 5 && window.innerWidth < 560) {
+        // portrait phones, 5 or 6 players: two columns, three deep rows (the faces stay big enough to see and the name plates have room)
+        const rows = Math.ceil(n / 2), r = Math.floor(i / 2);
+        const single = n % 2 === 1 && r === rows - 1;
+        x = single ? 0 : (i % 2 ? 1 : -1) * (1.05 + r * 0.2); // (a little wider each row back: perspective narrows the far rows)
+        z = 1.6 - r * 3.8;
+        backRow = r > 0; // (the width fit follows the front row; fit() checks the rest)
       } else {
         const cols = Math.ceil(n / 2);
         const row = i % 2, col = Math.floor(i / 2);
         x = (col - (cols - 1) / 2) * 2.2 + (row ? 1.1 : -0.0) - (cols > 1 || n > 2 ? 0.55 : 0);
-        z = row ? -1.4 : 0.9;
+        const deep = window.innerWidth < 560; // portrait phones: the rows are further apart so the name plates of the back row clear the front row
+        z = row ? (deep ? -2.4 : -1.4) : deep ? 1.4 : 0.9;
       }
       s.root.position.set(x, 0, z);
-      halfW = Math.max(halfW, Math.abs(x));
+      if (!backRow) halfW = Math.max(halfW, Math.abs(x));
       zFront = Math.max(zFront, z);
     });
     return { halfW: halfW + 1.15, zFront };
@@ -525,18 +553,16 @@ export class PickerScene extends GameScene {
     s.char.playEmote('cheer');
     s.emoteLeft = -1;
     s.emoteIn = 4;
-    this.reframe();
     this.showActions(s);
+    this.reframe();
   }
 
   /** Camera framing: all players, or pushed in on the picked one. */
   private reframe(): void {
     const s = this.picked !== null ? this.slots[this.picked] : null;
-    if (s) {
-      const p = s.root.position;
-      this.camGoal.set(p.x * 0.7, 2.0, p.z + this.pushDist());
-      this.lookGoal.set(p.x, 1.5, p.z);
-    } else this.fit();
+    this.ui.classList.toggle('lb-picked', s !== null);
+    if (s) this.framePicked(s);
+    else this.fit();
     this.subtitle.textContent = s ? `${s.profile.name} — ready?` : 'Tap your player';
     this.slots.forEach((o, k) => {
       const sel = this.picked === null || this.picked === k;
@@ -548,13 +574,10 @@ export class PickerScene extends GameScene {
     this.addBtn?.classList.toggle('lb-hide', this.picked !== null);
   }
 
-  private pushDist(): number {
-    return window.innerWidth / window.innerHeight < 1.1 ? 5.6 : 4.3;
-  }
-
   private showActions(s: Slot): void {
     this.actions?.remove();
     this.back?.remove();
+    this.editBtn?.remove();
     // bottom-right, Fortnite-style: LOCKER and STUDIO stacked above a big slanted yellow PLAY
     const wrap = el('div', 'lb-actions interactive', this.ui) as HTMLDivElement;
     this.actions = wrap;
@@ -564,6 +587,7 @@ export class PickerScene extends GameScene {
     const play = button(wrap, { label: 'PLAY', cls: 'big primary lb-play', tap: 'big' }, () => this.go('town', { intro: 'bus' }));
     play.setAttribute('aria-label', `Play as ${s.profile.name}`);
     this.back = button(this.ui, { icon: '‹', cls: 'round ghost lb-back' }, () => this.unpick());
+    this.editBtn = button(this.ui, { icon: '✏️', cls: 'round ghost lb-edit' }, () => this.rename(s.profile));
   }
 
   private unpick(): void {
@@ -573,8 +597,10 @@ export class PickerScene extends GameScene {
     this.picked = null;
     this.actions?.remove();
     this.back?.remove();
+    this.editBtn?.remove();
     this.actions = null;
     this.back = null;
+    this.editBtn = null;
     this.reframe();
   }
 
@@ -597,7 +623,11 @@ export class PickerScene extends GameScene {
         const v = input.value.trim().slice(0, 14);
         if (v) store.update(() => (p.name = v));
         close();
+        const keep = this.picked;
+        this.picked = null;
         this.buildUi();
+        this.fit();
+        if (keep !== null && this.slots[keep]) this.pick(keep);
       });
       setTimeout(() => input.focus(), 50);
     });
@@ -640,9 +670,11 @@ export class PickerScene extends GameScene {
       // name plate above the head
       v.copy(s.char.headTop());
       v.project(this.camera);
-      s.tag.style.left = `${(v.x * 0.5 + 0.5) * w}px`;
+      const half = (s.pw || this.plateW) / 2;
+      s.tag.style.left = `${Math.min(Math.max((v.x * 0.5 + 0.5) * w, this.safe.l + half + 2), w - this.safe.r - half - 2)}px`;
       s.tag.style.top = `${(-v.y * 0.5 + 0.5) * h - 4}px`;
     });
+    this.tickShift(dt);
     this.updateBackdrop(dt, t);
     // camera glides to its goal (all players, or pushed in on the picked one)
     const k = 1 - Math.exp(-dt * 3.2);
@@ -708,20 +740,189 @@ export class PickerScene extends GameScene {
   }
 
   // ── layout ─────────────────────────────────────────────────────────────────
-  /** Camera distance so every player fits (wider lineups and portrait screens pull back). */
+  /** The notch / home-bar insets in CSS px (the --safe-* tokens are env() values: read them through a probe element). */
+  private readSafe(): void {
+    const sp = document.createElement('div');
+    sp.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;padding:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l)';
+    document.body.appendChild(sp);
+    const st = getComputedStyle(sp);
+    this.safe = { t: parseFloat(st.paddingTop) || 0, r: parseFloat(st.paddingRight) || 0, b: parseFloat(st.paddingBottom) || 0, l: parseFloat(st.paddingLeft) || 0 };
+    sp.remove();
+  }
+
+  /** Where a world point lands on screen (CSS px) for a camera at `cam` looking at `look`, ignoring any view offset. */
+  private screenOf(cam: THREE.Vector3, look: THREE.Vector3, pt: THREE.Vector3, out: { x: number; y: number }): void {
+    const c = this.scratch;
+    c.fov = this.camera.fov;
+    c.aspect = this.camera.aspect;
+    c.near = this.camera.near;
+    c.far = this.camera.far;
+    c.position.copy(cam);
+    c.lookAt(look);
+    c.updateProjectionMatrix();
+    c.updateMatrixWorld(true);
+    const v = pt.clone().project(c);
+    out.x = (v.x * 0.5 + 0.5) * window.innerWidth;
+    out.y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+  }
+
+  /** The height of the band at the top that belongs to the title (and the corner buttons). */
+  private titleBand(): number {
+    const H = window.innerHeight, W = window.innerWidth;
+    if (this.picked !== null && W < 560 && H > W) return this.safe.t + 12 + 52 + 6; // (the title is hidden then: back / rename buttons only)
+    return this.safe.t + (H < 520 ? 8 + 50 : W < 560 ? 14 + 44 : 16 + 70);
+  }
+
+  private tickShift(dt: number): void {
+    const k = 1 - Math.exp(-dt * 5);
+    this.shiftX += (this.wantX - this.shiftX) * k;
+    this.shiftY += (this.wantY - this.shiftY) * k;
+    if (Math.abs(this.wantX - this.shiftX) < 0.05) this.shiftX = this.wantX;
+    if (Math.abs(this.wantY - this.shiftY) < 0.05) this.shiftY = this.wantY;
+    this.applyShift();
+  }
+
+  private applyShift(): void {
+    const w = window.innerWidth, h = window.innerHeight;
+    const c = this.camera;
+    if (this.shiftX === 0 && this.shiftY === 0) {
+      if (c.view?.enabled) {
+        c.clearViewOffset();
+        c.updateProjectionMatrix();
+      }
+      return;
+    }
+    const v = c.view;
+    if (v && v.enabled && v.offsetX === -this.shiftX && v.offsetY === -this.shiftY && v.fullWidth === w && v.fullHeight === h) return;
+    c.setViewOffset(w, h, -this.shiftX, -this.shiftY, w, h);
+  }
+
+  /** Camera for the lineup: every player fits, heads (plus their plates) clear the title band, pads clear the bottom. */
   private fit(): void {
+    this.readSafe();
     const { halfW, zFront } = this.applyLayout();
-    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+    const W = window.innerWidth, H = Math.max(1, window.innerHeight);
+    const aspect = W / H;
     const tv = Math.tan((this.camera.fov * Math.PI) / 360);
-    const dist = Math.max(halfW / (tv * aspect), 5.2) + zFront;
-    this.camGoal.set(0, 2.3 + dist * 0.025, dist);
+    const dist0 = Math.max(halfW / (tv * aspect), 5.2) + zFront;
+    const sf = this.safe;
+    const short = H < 520;
+    const top = this.titleBand() + 4;
+    const bottom = H - sf.b - (short ? 6 : 14) - (W < 560 && H > W && this.addBtn ? 66 : 0); // (portrait phones: New player sits at the bottom centre)
+    const plateH = (short ? 46 : 54) + 8;
+    // how wide each compact plate really is (the name, capped by the CSS): measured, not guessed
+    let wC: number[] = this.slots.map(() => 104);
+    if (this.tagLayer && this.slots.length > 2) {
+      const had = this.tagLayer.classList.contains('lb-compact');
+      this.tagLayer.classList.add('lb-compact');
+      wC = this.slots.map((sl) => (sl.tag.offsetWidth > 0 ? Math.min(104, sl.tag.offsetWidth) : 104));
+      if (!had) this.tagLayer.classList.remove('lb-compact');
+    }
+    const head = new THREE.Vector3(), foot = new THREE.Vector3(), sp = { x: 0, y: 0 };
+    type Cand = { s: number; dy: number; compact: boolean; ok: boolean; elev: number; bad: number; room: number };
+    let best: Cand = { s: 1, dy: 0, compact: false, ok: false, elev: 0.025, bad: 1e9, room: 0 };
+    const narrow = W < 560 && H > W && this.slots.length > 2;
+    const elevs = narrow ? [0.025, 0.1, 0.18, 0.26, 0.34, 0.42, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0] : [0.025];
+    for (const elev of elevs) {
+      for (let k = 0; k <= 60; k++) {
+        const sc = 1 + k * 0.04;
+        const dist = dist0 * sc;
+        const cam = new THREE.Vector3(0, 2.3 + dist * elev, dist);
+        const look = new THREE.Vector3(0, 1.4 + dist * 0.01, 0);
+        let headMin = 1e9, footMax = -1e9;
+        const hs: { x: number; y: number; m: number }[] = [];
+        for (const sl of this.slots) {
+          const p = sl.root.position;
+          this.screenOf(cam, look, head.set(p.x, 2.5, p.z), sp);
+          headMin = Math.min(headMin, sp.y);
+          hs.push({ x: sp.x, y: sp.y, m: H / (2 * tv * cam.distanceTo(head)) }); // m = pixels per metre at this player
+          this.screenOf(cam, look, foot.set(p.x, 0, p.z + 1.05), sp);
+          footMax = Math.max(footMax, sp.y);
+        }
+        const xs = hs.map((h) => h.x).sort((a, b) => a - b);
+        let pitch = 1e9;
+        for (let i = 1; i < xs.length; i++) pitch = Math.min(pitch, xs[i] - xs[i - 1]);
+        const compact = this.slots.length > 2 && (narrow || pitch < 196);
+        const pws = hs.map((_, i) => (compact ? wC[i] : 176));
+        const dy = Math.max(0, top + plateH - headMin);
+        const xok = hs.every((h, i) => h.x >= sf.l + pws[i] / 2 - 2 && h.x <= W - sf.r - pws[i] / 2 + 2);
+        // plates of neighbouring players must not run into each other
+        // (and a plate must not cover another player's face: the face is the first 0.7 m below the head top)
+        let clash = 0;
+        for (let i = 0; i < hs.length; i++)
+          for (let j = 0; j < hs.length; j++) {
+            if (i === j) continue;
+            const a = hs[i], b = hs[j];
+            if (j > i && Math.abs(a.x - b.x) < (pws[i] + pws[j]) / 2 + 4 && Math.abs(a.y - b.y) < plateH) clash++;
+            const fx = 0.32 * b.m;
+            if (Math.abs(a.x - b.x) < pws[i] / 2 + fx && a.y - plateH < b.y + 0.7 * b.m && a.y > b.y) clash++;
+          }
+        const over = Math.max(0, footMax + dy - bottom);
+        const ok = over === 0 && xok && clash === 0;
+        const bad = clash * 400 + over + (xok ? 0 : 200);
+        // narrow portrait: the lineup sits in the middle of the free band, not stuck under the title
+        const yT = headMin - plateH + dy, yB = footMax + dy;
+        const room = narrow ? Math.min(bottom - yB, Math.max(top - yT, top + (bottom - top - (yB - yT)) / 2 - yT)) : 0;
+        // the biggest picture (smallest scale) that satisfies everything; when nothing does, the least bad one
+        if (ok ? !best.ok || sc < best.s - 1e-6 : !best.ok && bad < best.bad) best = { s: sc, dy, compact, ok, elev, bad, room };
+        if (ok) break; // (a larger scale at this elevation only gets smaller)
+      }
+    }
+    this.fitInfo = { ...best, dist0, top, bottom, plateH };
+    const dist = dist0 * best.s;
+    this.camGoal.set(0, 2.3 + dist * best.elev, dist);
     this.lookGoal.set(0, 1.4 + dist * 0.01, 0);
     this.baseCam.copy(this.camGoal);
+    this.wantX = 0;
+    this.wantY = best.dy + best.room;
+    this.tagLayer?.classList.toggle('lb-compact', best.compact);
+    this.measurePlates(best.compact);
+  }
+
+  private measurePlates(compact: boolean): void {
+    const t = this.slots[0]?.tag;
+    this.plateW = t && t.offsetWidth > 0 ? t.offsetWidth : compact ? 104 : 176;
+    for (const sl of this.slots) sl.pw = sl.tag.offsetWidth > 0 ? sl.tag.offsetWidth : this.plateW;
+  }
+
+  /** Camera for a picked player: as large as fits beside (or above) the buttons, centred in the free area. */
+  private framePicked(s: Slot): void {
+    this.readSafe();
+    const W = window.innerWidth, H = Math.max(1, window.innerHeight);
+    const sf = this.safe;
+    const reg = { l: sf.l + 8, r: W - sf.r - 8, t: this.titleBand() + 2, b: H - sf.b - 8 };
+    const act = this.actions?.getBoundingClientRect();
+    if (act && act.width > 0) {
+      if (act.left > W * 0.4 && act.width < W * 0.62) reg.r = act.left - 14; // buttons on the right: the player stands left of them
+      else reg.b = act.top - 8; // buttons across the bottom: the player stands above them
+    }
+    const p = s.root.position;
+    const head = new THREE.Vector3(), foot = new THREE.Vector3(), side = new THREE.Vector3(), sp = { x: 0, y: 0 };
+    const base = W / H < 1.1 ? 5.6 : 4.3;
+    let pick = { d: base, cx: W / 2, cy: H / 2 };
+    for (let k = 0; k <= 50; k++) {
+      const d = base * (0.72 + k * 0.045);
+      const cam = new THREE.Vector3(p.x * 0.7, 2.0, p.z + d), look = new THREE.Vector3(p.x, 1.5, p.z);
+      this.screenOf(cam, look, head.set(p.x, 2.5, p.z), sp);
+      const hy = sp.y, hx = sp.x;
+      this.screenOf(cam, look, foot.set(p.x, 0, p.z + 0.8), sp);
+      const fy = sp.y;
+      this.screenOf(cam, look, side.set(p.x + 0.85, 1.2, p.z), sp);
+      const halfPx = Math.abs(sp.x - hx);
+      pick = { d, cx: hx, cy: (hy + fy) / 2 };
+      if (fy - hy <= reg.b - reg.t && halfPx * 2 <= reg.r - reg.l) break;
+    }
+    this.camGoal.set(p.x * 0.7, 2.0, p.z + pick.d);
+    this.lookGoal.set(p.x, 1.5, p.z);
+    this.wantX = (reg.l + reg.r) / 2 - pick.cx;
+    this.wantY = (reg.t + reg.b) / 2 - pick.cy;
   }
 
   resize(w: number, h: number): void {
     super.resize(w, h);
+    this.readSafe();
     if (this.picked !== null) this.reframe();
     else this.fit();
+    this.applyShift();
   }
 }

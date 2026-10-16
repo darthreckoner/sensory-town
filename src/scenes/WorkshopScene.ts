@@ -67,6 +67,8 @@ export class WorkshopScene extends GameScene {
     (this.ui.lastElementChild as HTMLElement).classList.add('tc');
     button(this.ui, { icon: '🚪', label: 'Exit', cls: 'tr' }, () => void scenes.go('town', { from: 'workshop' }));
     this.stationUi = el('div', '', this.ui) as HTMLDivElement;
+    this.ui.classList.add('ws'); // v3 phone: scopes the Studio's compact strips / drawer in style.css
+    this.ui.dataset.st = this.activeId;
   }
 
   private buildRoom(): void {
@@ -305,6 +307,9 @@ export class WorkshopScene extends GameScene {
       this.active.root.visible = false;
     }
     this.activeId = id;
+    this.ui.dataset.st = id;
+    this.freeT = 0; // re-measure the free area right away
+    this.zoomK = 1;
     const s = this.stations.get(id)!;
     this.active = s;
     s.root.visible = true;
@@ -319,6 +324,152 @@ export class WorkshopScene extends GameScene {
     this.active?.update(dt, t);
     if (this.recScreen) this.recScreen.visible = Math.sin(t * 4) > -0.6;
     this.updateCamera(dt);
+    this.tickFree(dt);
+  }
+
+  // ── v3 phone: keep the toy in the free area between the side strips / above the bottom drawer ──────────
+  private shiftX = 0;
+  private shiftY = 0;
+  private wantX = 0;
+  private wantY = 0;
+  private freeT = 0;
+  private zoomK = 1;
+  private scratch = new THREE.PerspectiveCamera();
+  private safe = { t: 0, r: 0, b: 0, l: 0 };
+
+  /** Phone (and tablet) sizes get the measured framing; big desktop windows keep the station's own view. */
+  private isPhone(): { land: boolean; phone: boolean } | null {
+    const W = window.innerWidth, H = window.innerHeight;
+    if (H < 520 && W > H) return { land: true, phone: true };
+    if (W < 560 && H > W) return { land: false, phone: true };
+    if (W <= 1400 && H <= 1200) return { land: W > H, phone: false }; // tablets (iPad 1180x820, 820x1180, ...): panels stay at the sides
+    return null;
+  }
+
+  /** The safe-area insets in CSS px (the tokens are env() values: read them through a probe element). */
+  private readSafe(): void {
+    const sp = document.createElement('div');
+    sp.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;padding:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l)';
+    document.body.appendChild(sp);
+    const st = getComputedStyle(sp);
+    this.safe = { t: parseFloat(st.paddingTop) || 0, r: parseFloat(st.paddingRight) || 0, b: parseFloat(st.paddingBottom) || 0, l: parseFloat(st.paddingLeft) || 0 };
+    sp.remove();
+  }
+
+  /** Measure what the panels leave free (from the DOM) and ease the picture toward the middle of it. */
+  private tickFree(dt: number): void {
+    this.freeT -= dt;
+    if (this.freeT <= 0) {
+      this.freeT = 0.12;
+      this.measureFree();
+    }
+    const k = 1 - Math.exp(-dt * 6);
+    this.shiftX += (this.wantX - this.shiftX) * k;
+    this.shiftY += (this.wantY - this.shiftY) * k;
+    if (Math.abs(this.wantX - this.shiftX) < 0.05) this.shiftX = this.wantX;
+    if (Math.abs(this.wantY - this.shiftY) < 0.05) this.shiftY = this.wantY;
+    this.applyShift();
+  }
+
+  private measureFree(): void {
+    const ph = this.isPhone();
+    if (!ph) {
+      this.wantX = this.wantY = 0;
+      this.zoomK = 1;
+      return;
+    }
+    this.readSafe();
+    const W = window.innerWidth, H = window.innerHeight;
+    let l = this.safe.l + 8, r = W - this.safe.r - 8, t = this.safe.t + 8, b = H - this.safe.b - 8;
+    const q = (e: Element) => {
+      const rc = e.getBoundingClientRect();
+      if (rc.width < 2 || rc.height < 2) return null;
+      for (let n: Element | null = e; n && n !== this.ui.parentElement; n = n.parentElement) {
+        const st = getComputedStyle(n);
+        if (st.display === 'none' || st.visibility === 'hidden') return null;
+      }
+      return rc;
+    };
+    const blocks = this.ui.querySelectorAll('.panel, .tr, .br, .bc, .tc, .wax-actions, .wax-reset, .slime-left, .slime-adds, .slime-colors, .wax-hint');
+    blocks.forEach((e) => {
+      if (e.parentElement?.closest('.panel') && !e.classList.contains('panel')) return;
+      const rc = q(e);
+      if (!rc) return;
+      const cx = (rc.left + rc.right) / 2, cy = (rc.top + rc.bottom) / 2;
+      if ((!ph.land && ph.phone) || rc.width > W * 0.5) {
+        if (cy < H * 0.5) t = Math.max(t, rc.bottom + 6);
+        else b = Math.min(b, rc.top - 6);
+      } else if (cx < W * 0.34) l = Math.max(l, rc.right + 6);
+      else if (cx > W * 0.66) r = Math.min(r, rc.left - 6);
+      else if (cy < H * 0.5) t = Math.max(t, rc.bottom + 6);
+      else b = Math.min(b, rc.top - 6);
+    });
+    const cx = (l + r) / 2, cy = (t + b) / 2;
+    const sub = this.subjectRect();
+    if (sub) {
+      // zoom out until the toy fits the free area (never in past the station's own framing), then centre it there
+      const need = Math.max(sub.h / Math.max(40, (b - t) * 0.94), sub.w / Math.max(40, (r - l) * 0.94));
+      if (need > 1.03) this.zoomK = Math.min(2.2, this.zoomK * need);
+      else if (need < 0.82 && this.zoomK > 1) this.zoomK = Math.max(1, this.zoomK * (need / 0.9));
+      this.wantX = Math.max(-W * 0.35, Math.min(W * 0.35, cx - sub.cx));
+      this.wantY = Math.max(-H * 0.35, Math.min(H * 0.35, cy - sub.cy));
+    } else {
+      this.wantX = Math.max(-W * 0.3, Math.min(W * 0.3, cx - W / 2));
+      this.wantY = Math.max(-H * 0.3, Math.min(H * 0.3, cy - H / 2));
+    }
+  }
+
+  /** Where the toy (plus the wax pot and jug while they show) is on screen right now, ignoring the view offset. */
+  private subjectRect(): { cx: number; cy: number; w: number; h: number } | null {
+    const st = this.active as any;
+    if (!st) return null;
+    const box = new THREE.Box3();
+    let any = false;
+    for (const o of [st.body?.root ?? st.blob ?? st.holder, st.pot, st.jug] as (THREE.Object3D | undefined)[]) {
+      if (!o || !o.visible) continue;
+      const b = new THREE.Box3().setFromObject(o);
+      if (!b.isEmpty()) {
+        box.union(b);
+        any = true;
+      }
+    }
+    if (!any) return null;
+    const c = this.scratch;
+    c.fov = this.camera.fov;
+    c.aspect = this.camera.aspect;
+    c.near = this.camera.near;
+    c.far = this.camera.far;
+    c.position.copy(this.camera.position);
+    c.quaternion.copy(this.camera.quaternion);
+    c.updateProjectionMatrix();
+    c.updateMatrixWorld(true);
+    const W = window.innerWidth, H = window.innerHeight;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(c);
+      const x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    // (the box corners overshoot the soft shape: use ~86% of it)
+    const w = (x1 - x0) * 0.86, h = (y1 - y0) * 0.86;
+    return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w, h };
+  }
+
+  /** Camera view offset: +shift moves the picture right / down (projection and picking stay consistent). */
+  private applyShift(): void {
+    const w = window.innerWidth, h = window.innerHeight;
+    const c = this.camera;
+    if (this.shiftX === 0 && this.shiftY === 0) {
+      if (c.view?.enabled) {
+        c.clearViewOffset();
+        c.updateProjectionMatrix();
+      }
+      return;
+    }
+    const v = c.view;
+    if (v && v.enabled && v.offsetX === -this.shiftX && v.offsetY === -this.shiftY && v.fullWidth === w && v.fullHeight === h) return;
+    c.setViewOffset(w, h, -this.shiftX, -this.shiftY, w, h);
   }
 
   /** Ease the camera toward the active station's framing (or the default). */
@@ -327,12 +478,15 @@ export class WorkshopScene extends GameScene {
     let aspect = window.innerWidth / Math.max(1, window.innerHeight);
     if (!Number.isFinite(aspect) || aspect <= 0) aspect = 1.44; // 0×0 during rotation / hidden webviews
     // keep the same table width in view on narrower screens (portrait iPad = ~0.7)
-    const fit = Math.pow(Math.max(1, 1.44 / aspect), 0.9);
+    // (phones in portrait only need the toy, not the whole table: a gentler pull-back keeps it big)
+    const fit = Math.pow(Math.max(1, 1.44 / aspect), window.innerWidth < 560 && aspect < 1 ? 0.55 : 0.9);
+    // phones: zoomK pulls the camera back until the toy (and the pot + jug) fit the free area between the panels (see solveFree)
+    const want = v.dist * fit * this.zoomK;
     const k = snap ? 1 : 1 - Math.exp(-4 * dt);
     this.camLookY += (v.lookY - this.camLookY) * k;
-    this.camDist += (v.dist * fit - this.camDist) * k;
+    this.camDist += (want - this.camDist) * k;
     if (!Number.isFinite(this.camDist) || !Number.isFinite(this.camLookY)) {
-      this.camDist = v.dist * fit;
+      this.camDist = want;
       this.camLookY = v.lookY;
     }
     const d = this.camDist;
@@ -343,6 +497,16 @@ export class WorkshopScene extends GameScene {
   resize(w: number, h: number): void {
     super.resize(w, h);
     this.updateCamera(0, true);
+    // settle the phone framing at once (a few passes: zoom, then centre)
+    for (let i = 0; i < 4; i++) {
+      this.measureFree();
+      this.updateCamera(0, true);
+      this.camera.updateMatrixWorld(true);
+    }
+    this.freeT = 0.12;
+    this.shiftX = this.wantX;
+    this.shiftY = this.wantY;
+    this.applyShift();
   }
 
   resetStation(): void {
