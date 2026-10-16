@@ -1,25 +1,40 @@
-// "Style" — a dark photo-studio / runway. A glossy black stage with a light ring,
-// two colored spotlights, LED edge glow, a big mirror, a creator ring light on a
-// tripod and a neon sign with the player's name. Pick hair / top / bottom / shoes /
-// extras / skin on the left, options + colors on the right, spin the character with a
-// drag, pinch or wheel to zoom. Every change pops with sparkles + a pose and autosaves.
-// Extras: Random look, Undo, 4 saved Looks, and a Pose button that ends in a camera flash.
+// The LOCKER (was the Style studio) — Fortnite-STYLE cosmetics, all original.
+//
+// A big turntable preview on a lobby stage (blue → purple backdrop, light rays, a platform whose ring
+// glows in the rarity colour of whatever you just equipped, a warm face light so the face is always the
+// best-lit thing on screen). Left: the slot tiles — Outfit, Back Bling, Glider, Contrail, Emotes,
+// Ride Wrap and Custom. Right: rarity-framed item cards (common grey · uncommon green · rare blue ·
+// epic purple · legendary orange-gold), locked ones show a padlock + "Find N more charms" and can be
+// tried on before they're yours. Equipping animates the character (emote), sparkles in the rarity colour
+// and autosaves. Drag the preview to spin it; pinch / wheel to zoom.
 import * as THREE from 'three';
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { GameScene, scenes } from '../core/scene';
 import { store } from '../core/store';
 import { bus, v3, type OutfitSlot } from '../core/events';
 import { tuning } from '../tuning';
 import { Character, MIN_ACCENT_GAP, OUTFIT_CATALOG, POSE_ORDER, colorGap, contrastColor, type CatalogSlot } from '../art/character';
-import { studioLights } from '../art/env';
-import { toyMat, mesh, roundedBox } from '../art/materials';
-import { isUnlocked, lockedToast, rewardFor } from '../core/unlocks';
-import { el, button, bindTap, swatches, tabs, toast } from '../ui/ui';
-import type { Outfit } from '../core/model';
+import { gradientTexture, studioEnv } from '../art/env';
+import { charmCount, charmTotal, charmsNeeded, nextReward, rewardFor } from '../core/unlocks';
+import { el, button, bindTap, swatches, toast } from '../ui/ui';
+import { InfoBanner, blingThumb, escapeHtml, gliderThumb, lockerCard, outfitThumb, rarityVars, rideThumb } from '../ui/lockerUI';
+import type { Outfit, VehicleKind } from '../core/model';
+import {
+  BACK_BLINGS, CONTRAILS, EMOTES, EMOTE_SLOTS, GLIDERS, RARITY, RARITY_ORDER, RIDES, SKINS, WRAP_FINISHES,
+  rarityRank, skinById, styleRarity, styleReward, type GearItem, type LockerSlot, type Rarity, type SkinDef,
+} from '../art/gear/catalog';
+import {
+  clearEmote, equipMyStyle, equipSkin, getLocker, itemOwned, markCustom, owns, partRarity, resolveSkinOutfit, setBackBling, setContrail,
+  setEmote, setGlider, setRide, setWrap, skinOwned, styleOwned, wrapOf,
+} from '../art/gear/lockerState';
+import { makeBackBling } from '../art/gear/backBling';
+import { makeGlider } from '../art/gear/gliders';
+import { makeContrail, type Contrail } from '../art/gear/contrails';
+import { makeRidePreview } from '../art/gear/rides';
+import { disposeGear } from '../art/gear/gearKit';
+import { thumbs } from '../art/gear/thumbs';
 
-type Category = CatalogSlot | 'skin' | 'looks';
-
-const CATEGORIES: { id: Category; icon: string; label: string }[] = [
+type CustomCat = CatalogSlot | 'skin' | 'looks';
+const CUSTOM_CATS: { id: CustomCat; icon: string; label: string }[] = [
   { id: 'hair', icon: '💇', label: 'Hair' },
   { id: 'top', icon: '👕', label: 'Top' },
   { id: 'bottom', icon: '👖', label: 'Bottom' },
@@ -28,7 +43,17 @@ const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'skin', icon: '🙂', label: 'Skin' },
   { id: 'looks', icon: '💾', label: 'Looks' },
 ];
-const SLOTS: CatalogSlot[] = ['hair', 'top', 'bottom', 'shoes', 'accessory'];
+const PART_SLOTS: CatalogSlot[] = ['hair', 'top', 'bottom', 'shoes', 'accessory'];
+
+const SLOT_TABS: { id: LockerSlot; icon: string; label: string }[] = [
+  { id: 'outfit', icon: '🧥', label: 'Outfit' },
+  { id: 'backBling', icon: '🎒', label: 'Back Bling' },
+  { id: 'glider', icon: '🪂', label: 'Glider' },
+  { id: 'contrail', icon: '✨', label: 'Contrail' },
+  { id: 'emote', icon: '💃', label: 'Emotes' },
+  { id: 'wrap', icon: '🏎️', label: 'Ride Wrap' },
+  { id: 'custom', icon: '🎨', label: 'Custom' },
+];
 
 const TAU = Math.PI * 2;
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
@@ -37,26 +62,57 @@ const smooth = (x: number) => {
   const t = clamp(x, 0, 1);
   return t * t * (3 - 2 * t);
 };
+const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+
+/** An undo snapshot: what was worn + which preset it came from. */
+interface Snap {
+  outfit: Outfit;
+  skin: string;
+  style: number;
+  custom?: Outfit;
+}
 
 export class DressUpScene extends GameScene {
   readonly name = 'dressup' as const;
 
   private char: Character | null = null;
-  private stage = new THREE.Group();
-  private mirror = new THREE.Group(); // reflection of the character in the glossy floor
+  private stage = new THREE.Group(); // the static set
+  private turn = new THREE.Group(); // everything that spins with the drag (player, showroom items)
   private ray = new THREE.Raycaster();
-  private ledMats: THREE.MeshBasicMaterial[] = [];
-  private recDot!: THREE.MeshBasicMaterial;
-  private neonCanvas!: HTMLCanvasElement;
-  private neonTex!: THREE.CanvasTexture;
+
+  // lobby look
+  private ringMat!: THREE.MeshBasicMaterial;
+  private ring2Mat!: THREE.MeshBasicMaterial;
+  private glowMat!: THREE.MeshBasicMaterial;
+  private rayMat!: THREE.MeshBasicMaterial;
+  private rays = new THREE.Group();
+  private sparkles!: THREE.Points;
+  private sparkleSeed!: Float32Array;
+  private faceLight!: THREE.SpotLight;
+  private rarityNow = new THREE.Color(RARITY.common.color);
+  private rarityTarget = new THREE.Color(RARITY.common.color);
+  private pulse = 0;
+
+  // gear shown on the stage
+  private blingObj: THREE.Group | null = null;
+  private blingId: string | null | undefined = undefined;
+  private gliderObj: THREE.Group | null = null;
+  private gliderId: string | null = null;
+  private contrail: Contrail | null = null;
+  private contrailId: string | null = null;
+  private orbit = 0;
+  private rideObj: THREE.Group | null = null;
+  private rideKey = '';
+  private wasContrail = false;
 
   // view state
   private rot = 0;
+  private rotGoal: number | null = null;
   private spinVel = 0;
   private dist = tuning.dressup.zoomDefault;
   private targetDist = tuning.dressup.zoomDefault;
   private lookY = tuning.dressup.lookYWide;
-  private focusLook: number | null = null; // category focus height (null = follow the zoom)
+  private focusLook: number | null = null;
   private idle = 0;
   private spinSoundT = 0;
   private viewShift = 0;
@@ -70,308 +126,214 @@ export class DressUpScene extends GameScene {
   private lastMoveT = 0;
 
   // ui state
-  private cat: Category = 'hair';
+  private slot: LockerSlot = 'outfit';
+  private customCat: CustomCat = 'hair';
+  private slotTiles = new Map<LockerSlot, HTMLElement>();
   private panel!: HTMLDivElement;
-  private setSwatch: ((c: string) => void) | null = null; // highlights a color in the current swatch row
-  private tabSet: ((id: string) => void) | null = null;
+  private setSwatch: ((c: string) => void) | null = null;
   private undoBtn: HTMLButtonElement | null = null;
   private flashEl: HTMLDivElement | null = null;
   private vfEl: HTMLDivElement | null = null;
-  private history: Outfit[] = [];
+  private chipEl: HTMLElement | null = null;
+  private info: InfoBanner | null = null;
+  private history: Snap[] = [];
   private timers: number[] = [];
   private poseIdx = 0;
   private poseLock = 0;
   private lookSel = 0;
   private nextOverwrite = 0;
+  private emoteSlot = 0;
+  private emoteIdx = 0;
+  private wrapKind: VehicleKind = 'sports';
+  /** a locked item the player is trying on (preview only, never saved) */
+  private tryOn: { slot: LockerSlot; id: string; style?: number } | null = null;
 
   // ── Stage ────────────────────────────────────────────────────────────────
   init(): void {
     this.fxScale = 1.2;
     this.camera.fov = tuning.dressup.fov;
     this.camera.near = 0.1;
-    this.camera.far = 80;
-    this.buildStudio();
+    this.camera.far = 90;
+    this.buildLobby();
     this.scene.add(this.stage);
+    this.stage.add(this.turn);
   }
 
-  private led(color: string, hdr = 1.8): THREE.MeshBasicMaterial {
-    const m = new THREE.MeshBasicMaterial({ color, toneMapped: false });
-    m.color.multiplyScalar(hdr);
-    return m;
-  }
-
-  private buildStudio(): void {
-    const S = this.scene;
-    const st = this.stage;
-    studioLights(S, { shadowSize: 3.4 });
-    // soft front fill so faces always read, plus two colored spotlights on the stage
-    const fill = new THREE.DirectionalLight('#dfe6ff', 0.9);
-    fill.position.set(-2, 2.6, 8);
-    S.add(fill);
-    const spotL = new THREE.SpotLight('#ffd6ec', 70, 16, 0.55, 0.85);
-    spotL.position.set(-3.4, 5.6, 3.4);
-    spotL.target.position.set(0, 1.0, 0);
-    const spotR = new THREE.SpotLight('#cdeeff', 70, 16, 0.55, 0.85);
-    spotR.position.set(3.4, 5.6, 3.4);
-    spotR.target.position.set(0, 1.0, 0);
-    S.add(spotL, spotR, spotL.target, spotR.target);
-
-    // ── glossy black floor (the reflection is a mirrored copy of the character underneath) ──
-    const floorTex = this.canvasTex(256, 256, (g) => {
-      const gr = g.createRadialGradient(128, 128, 6, 128, 128, 128);
-      gr.addColorStop(0, '#2c2938');
-      gr.addColorStop(0.5, '#15131d');
-      gr.addColorStop(1, '#0b0a10');
-      g.fillStyle = gr;
-      g.fillRect(0, 0, 256, 256);
-    });
-    const floor = mesh(
-      new THREE.CircleGeometry(11, 72),
-      new THREE.MeshPhysicalMaterial({
-        map: floorTex, color: '#ffffff', roughness: 0.2, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1,
-        transparent: true, opacity: tuning.dressup.studio.floorOpacity, envMapIntensity: 1.3,
-      }),
-      false,
-      true,
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.renderOrder = 1;
-    st.add(floor);
-    this.mirror.scale.y = -1;
-    st.add(this.mirror);
-
-    // light ring around the stage + a drifting LED edge + a colored light pool
-    const ring1 = this.led('#ff2e88', 2.2);
-    const ring2 = this.led('#00d4ff', 1.8);
-    this.ledMats.push(ring1, ring2);
-    const r1 = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.03, 8, 96), ring1);
-    r1.rotation.x = Math.PI / 2;
-    r1.position.y = 0.012;
-    const r2 = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.022, 8, 120), ring2);
-    r2.rotation.x = Math.PI / 2;
-    r2.position.y = 0.01;
-    st.add(r1, r2);
-    const poolTex = this.canvasTex(128, 128, (g) => {
-      const gr = g.createRadialGradient(64, 64, 2, 64, 64, 64);
-      gr.addColorStop(0, 'rgba(255,255,255,0.55)');
-      gr.addColorStop(0.5, 'rgba(255,255,255,0.12)');
-      gr.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = gr;
-      g.fillRect(0, 0, 128, 128);
-    });
-    const pool = new THREE.Mesh(
-      new THREE.CircleGeometry(2.2, 48),
-      new THREE.MeshBasicMaterial({ map: poolTex, color: '#ff5fa8', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, opacity: 0.55 }),
-    );
-    pool.rotation.x = -Math.PI / 2;
-    pool.position.y = 0.006;
-    pool.renderOrder = 2;
-    st.add(pool);
-
-    // ── curved dark backdrop with vertical LED strips ──
-    const arc = 2.3;
-    const wall = mesh(
-      new THREE.CylinderGeometry(7.4, 7.4, 9, 64, 1, true, Math.PI - arc / 2, arc),
-      new THREE.MeshStandardMaterial({ color: '#13111a', roughness: 0.85, side: THREE.BackSide }),
-      false,
-      true,
-    );
-    wall.position.y = 4.5;
-    st.add(wall);
-    const stripA = this.led('#ff2e88', 2);
-    const stripB = this.led('#00d4ff', 2);
-    this.ledMats.push(stripA, stripB);
-    [[-0.95, stripA], [-0.62, stripB], [0.62, stripA], [0.95, stripB]].forEach(([a, m]) => {
-      const th = Math.PI + (a as number);
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 6.2, 0.07), m as THREE.Material);
-      strip.position.set(Math.sin(th) * 7.2, 3.3, Math.cos(th) * 7.2);
-      st.add(strip);
-    });
-
-    // ── big mirror (back right) with a glowing frame ──
-    this.buildMirror(2.1, -5.5);
-    // ── neon sign with the player's name ──
-    this.neonCanvas = document.createElement('canvas');
-    this.neonCanvas.width = 1024;
-    this.neonCanvas.height = 256;
-    this.neonTex = new THREE.CanvasTexture(this.neonCanvas);
-    this.neonTex.colorSpace = THREE.SRGBColorSpace;
-    const sign = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.6, 0.9),
-      new THREE.MeshBasicMaterial({ map: this.neonTex, transparent: true, depthWrite: false, toneMapped: false }),
-    );
-    sign.position.set(-1.7, 3.5, -5.7);
-    sign.rotation.y = 0.12;
-    st.add(sign);
-    // ── creator ring light on a tripod, with a phone "recording" ──
-    this.buildRingLight(-2.9, -1.5);
-    // ── two crossing spotlight beams ──
-    for (const [x, col] of [[-3.4, '#ff8cc6'], [3.4, '#8fdcff']] as [number, string][]) st.add(this.beam(x, col));
-  }
-
-  private beam(x: number, color: string): THREE.Mesh {
-    const g = new THREE.CylinderGeometry(0.15, 1.5, 6.4, 32, 1, true);
-    g.translate(0, -3.2, 0);
-    const p = g.attributes.position;
-    const c = new THREE.Color(color);
-    const cols = new Float32Array(p.count * 3);
-    for (let i = 0; i < p.count; i++) {
-      const k = clamp(1 + p.getY(i) / 6.4, 0, 1); // 1 at the lamp → 0 at the floor
-      const v = tuning.dressup.studio.beamAlpha * k * k;
-      cols[i * 3] = c.r * v;
-      cols[i * 3 + 1] = c.g * v;
-      cols[i * 3 + 2] = c.b * v;
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
-    m.position.set(x, 5.6, 3.4);
-    m.lookAt(0, 1.0, 0);
-    m.rotateX(-Math.PI / 2); // the cone extends along -y: point it down the lookAt axis
-    m.renderOrder = 5;
-    return m;
-  }
-
-  /** Small helper: a canvas texture painted by `draw`. */
-  private canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+  private glow(): THREE.Texture {
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    draw(c.getContext('2d')!);
+    c.width = c.height = 128;
+    const g = c.getContext('2d')!;
+    const gr = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 128, 128);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
 
-  private buildMirror(x: number, z: number): void {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.rotation.y = -0.18;
-    const w = 2.0, h = 3.5;
-    // dark glass that reflects the studio environment (ring light, LED strips)
-    const glass = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, h),
-      new THREE.MeshStandardMaterial({ color: '#c9cde0', metalness: 1, roughness: 0.04, envMapIntensity: 1.6 }),
+  private buildLobby(): void {
+    const S = this.scene;
+    const st = this.stage;
+    const L = tuning.locker;
+    // deep blue → purple backdrop with the lobby glow behind the player
+    S.background = gradientTexture('#0a1480', '#8a3dff', '#3524cc');
+    S.environment = studioEnv();
+    S.environmentIntensity = 0.7;
+    S.fog = null;
+    S.add(new THREE.HemisphereLight('#aab8ff', '#4a2aa8', 0.85));
+    const key = new THREE.DirectionalLight('#fff4ea', 2.0);
+    key.position.set(2.6, 7, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.left = -3;
+    key.shadow.camera.right = 3;
+    key.shadow.camera.top = 3;
+    key.shadow.camera.bottom = -3;
+    key.shadow.camera.near = 1;
+    key.shadow.camera.far = 20;
+    key.shadow.bias = -0.0005;
+    key.shadow.normalBias = 0.03;
+    const rimC = new THREE.DirectionalLight('#35d6ff', 1.3);
+    rimC.position.set(-5, 3, -4);
+    const rimP = new THREE.DirectionalLight('#c27cff', 1.2);
+    rimP.position.set(5, 3, -4);
+    S.add(key, key.target, rimC, rimP);
+    // warm face fill (aimed at the head) + a soft hair rim from behind: the face is the best-lit thing on screen
+    const F = L.faceLight;
+    // (the character agent's spec: warm key at the camera side, cool rim from behind, both aimed at the head, no shadows;
+    //  the face fill is the brightest light on the head — brighter than the coloured rims)
+    this.faceLight = new THREE.SpotLight(F.color, F.intensity, F.range, F.angle, F.penumbra, 2);
+    this.faceLight.position.set(F.x, F.y, F.z);
+    this.faceLight.target.position.set(0, 1.62, 0);
+    const R = L.coolRim;
+    const coolRim = new THREE.SpotLight(R.color, R.intensity, 10, 0.45, 0.9, 2);
+    coolRim.position.set(R.x, R.y, R.z);
+    coolRim.target.position.set(0, 1.62, 0);
+    const hairRim = new THREE.DirectionalLight('#ffe9d2', F.rim);
+    hairRim.position.set(-1.5, 3.2, -3);
+    S.add(this.faceLight, this.faceLight.target, coolRim, coolRim.target, hairRim);
+
+    // soft stage floor that fades into the backdrop + a shadow catcher
+    const floorTex = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 256;
+      const g = c.getContext('2d')!;
+      const gr = g.createRadialGradient(128, 128, 4, 128, 128, 128);
+      gr.addColorStop(0, 'rgba(18,24,150,0.95)');
+      gr.addColorStop(0.55, 'rgba(14,16,110,0.7)');
+      gr.addColorStop(1, 'rgba(10,10,80,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 256, 256);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 64), new THREE.MeshBasicMaterial({ map: floorTex, transparent: true, depthWrite: false }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.004;
+    st.add(floor);
+    const catcher = new THREE.Mesh(new THREE.CircleGeometry(4, 40), new THREE.ShadowMaterial({ opacity: 0.38 }));
+    catcher.rotation.x = -Math.PI / 2;
+    catcher.position.y = 0.002;
+    catcher.receiveShadow = true;
+    st.add(catcher);
+
+    // the platform: dark glossy disc, a ring that glows in the rarity colour, a glow decal
+    const plat = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.7, 1.8, 0.16, 72),
+      new THREE.MeshPhysicalMaterial({ color: '#0b1470', roughness: 0.28, metalness: 0.45, clearcoat: 1, clearcoatRoughness: 0.15 }),
     );
-    glass.position.y = 0.4 + h / 2;
-    g.add(glass);
-    const frame = toyMat('#0f0e17', 'satin');
-    const mk = (fw: number, fh: number, px: number, py: number) => {
-      const m = mesh(roundedBox(fw, fh, 0.08, 0.02), frame, false, false);
-      m.position.set(px, py, -0.02);
-      g.add(m);
-    };
-    mk(w + 0.16, 0.08, 0, 0.4 + h + 0.04);
-    mk(w + 0.16, 0.08, 0, 0.36);
-    mk(0.08, h + 0.1, -w / 2 - 0.04, 0.4 + h / 2);
-    mk(0.08, h + 0.1, w / 2 + 0.04, 0.4 + h / 2);
-    const edge = this.led('#ff2e88', 2.2);
-    this.ledMats.push(edge);
-    for (const sx of [-1, 1]) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.03, h, 0.03), edge);
-      bar.position.set(sx * (w / 2 + 0.01), 0.4 + h / 2, 0.01);
-      g.add(bar);
+    plat.position.y = -0.08;
+    plat.receiveShadow = true;
+    st.add(plat);
+    this.ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.66, 0.04, 10, 96), this.ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.004;
+    st.add(ring);
+    this.ring2Mat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false, transparent: true, opacity: 0.55 });
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.022, 8, 120), this.ring2Mat);
+    ring2.rotation.x = Math.PI / 2;
+    ring2.position.y = 0.003;
+    st.add(ring2);
+    this.glowMat = new THREE.MeshBasicMaterial({ map: this.glow(), color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, opacity: 0.7 });
+    const pool = new THREE.Mesh(new THREE.CircleGeometry(2.8, 48), this.glowMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.y = 0.006;
+    pool.renderOrder = 2;
+    st.add(pool);
+
+    // light rays fanning out from behind the player
+    const rc = document.createElement('canvas');
+    rc.width = 32;
+    rc.height = 256;
+    const rg = rc.getContext('2d')!;
+    const lin = rg.createLinearGradient(0, 256, 0, 0);
+    lin.addColorStop(0, 'rgba(255,255,255,0.9)');
+    lin.addColorStop(1, 'rgba(255,255,255,0)');
+    rg.fillStyle = lin;
+    rg.fillRect(0, 0, 32, 256);
+    const side = rg.createLinearGradient(0, 0, 32, 0);
+    side.addColorStop(0, 'rgba(0,0,0,1)');
+    side.addColorStop(0.5, 'rgba(0,0,0,0)');
+    side.addColorStop(1, 'rgba(0,0,0,1)');
+    rg.globalCompositeOperation = 'destination-out';
+    rg.fillStyle = side;
+    rg.fillRect(0, 0, 32, 256);
+    const rayTex = new THREE.CanvasTexture(rc);
+    rayTex.colorSpace = THREE.SRGBColorSpace;
+    this.rayMat = new THREE.MeshBasicMaterial({ map: rayTex, color: '#ffffff', transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    this.rays.position.set(0, 1.4, -4);
+    for (let i = 0; i < L.rayCount; i++) {
+      const piv = new THREE.Group();
+      piv.rotation.z = (i / L.rayCount) * TAU + (i % 2) * 0.08;
+      const w = 0.7 + ((i * 37) % 10) * 0.12;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, 22), this.rayMat);
+      m.position.y = 11;
+      piv.add(m);
+      this.rays.add(piv);
     }
-    this.stage.add(g);
+    st.add(this.rays);
+
+    // floating sparkle dust
+    const n = L.sparkleCount;
+    this.sparkleSeed = new Float32Array(n * 4);
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      this.sparkleSeed[i * 4] = Math.random() * TAU;
+      this.sparkleSeed[i * 4 + 1] = 1.2 + Math.random() * 3.2;
+      this.sparkleSeed[i * 4 + 2] = 0.1 + Math.random() * 0.3;
+      this.sparkleSeed[i * 4 + 3] = Math.random();
+      pos[i * 3] = Math.cos(this.sparkleSeed[i * 4]) * this.sparkleSeed[i * 4 + 1];
+      pos[i * 3 + 1] = this.sparkleSeed[i * 4 + 3] * 5;
+      pos[i * 3 + 2] = Math.sin(this.sparkleSeed[i * 4]) * this.sparkleSeed[i * 4 + 1] - 0.5;
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.sparkles = new THREE.Points(sg, new THREE.PointsMaterial({ map: this.glow(), color: '#ffffff', size: 0.22, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    this.sparkles.frustumCulled = false;
+    st.add(this.sparkles);
   }
 
-  private buildRingLight(x: number, z: number): void {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.rotation.y = 0.75;
-    const metal = toyMat('#1d1b26', 'metal');
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * TAU;
-      const leg = mesh(new THREE.CapsuleGeometry(0.018, 1.0, 4, 8), metal, true, false);
-      leg.position.set(Math.sin(a) * 0.3, 0.5, Math.cos(a) * 0.3);
-      leg.rotation.set(Math.cos(a) * 0.3, 0, -Math.sin(a) * 0.3);
-      g.add(leg);
-    }
-    const pole = mesh(new THREE.CapsuleGeometry(0.014, 0.7, 4, 8), metal, true, false);
-    pole.position.y = 1.35;
-    g.add(pole);
-    const ringMat = this.led('#fff4ea', 2.4);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.038, 10, 48), ringMat);
-    ring.position.y = 1.75;
-    g.add(ring);
-    // phone in the middle, red REC dot
-    const phone = mesh(roundedBox(0.1, 0.2, 0.012, 0.02), toyMat('#0f0e17', 'gloss'), false, false);
-    phone.position.set(0, 1.75, -0.02);
-    g.add(phone);
-    this.recDot = new THREE.MeshBasicMaterial({ color: '#ff2020', toneMapped: false });
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), this.recDot);
-    dot.position.set(0.034, 1.835, 0.005);
-    g.add(dot);
-    this.stage.add(g);
-  }
-
-  /** Draw the player's name as a neon sign. */
-  private drawNeon(name: string): void {
-    const c = this.neonCanvas;
-    const g = c.getContext('2d')!;
-    g.clearRect(0, 0, c.width, c.height);
-    const text = name.toUpperCase().slice(0, 14);
-    let size = 170;
-    g.font = `900 ${size}px ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif`;
-    const w = g.measureText(text).width;
-    if (w > 900) {
-      size = Math.floor((size * 900) / w);
-      g.font = `900 ${size}px ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif`;
-    }
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    for (const [blur, col] of [[60, '#ff2e88'], [30, '#ff2e88'], [12, '#ff6fb1']] as [number, string][]) {
-      g.shadowColor = col;
-      g.shadowBlur = blur;
-      g.fillStyle = col;
-      g.fillText(text, 512, 118);
-    }
-    g.shadowBlur = 8;
-    g.shadowColor = '#ffffff';
-    g.fillStyle = '#ffe9f4';
-    g.fillText(text, 512, 118);
-    g.shadowColor = '#00d4ff';
-    g.shadowBlur = 24;
-    g.fillStyle = '#00d4ff';
-    g.fillRect(512 - 120, 226, 240, 8);
-    this.neonTex.needsUpdate = true;
-  }
-
-  /** Keep the mirrored copy in step with the real character (and rebuild it after outfit changes). */
-  private rebuildMirror(): void {
-    if (!this.char) return;
-    this.mirror.clear();
-    // skinned characters need their skeleton re-bound on the copy (SkeletonUtils does that)
-    const copy = cloneSkinned(this.char.group);
-    copy.traverse((o) => {
-      o.castShadow = false;
-      o.receiveShadow = false;
-    });
-    this.mirror.add(copy);
-  }
-  private syncMirror(): void {
-    const src = this.char?.group;
-    const dst = this.mirror.children[0];
-    if (!src || !dst) return;
-    const walk = (a: THREE.Object3D, b: THREE.Object3D) => {
-      b.position.copy(a.position);
-      b.quaternion.copy(a.quaternion);
-      b.scale.copy(a.scale);
-      b.visible = a.visible;
-      const n = Math.min(a.children.length, b.children.length);
-      for (let i = 0; i < n; i++) walk(a.children[i], b.children[i]);
-    };
-    walk(src, dst);
+  /** Make the stage glow in a rarity colour (it eases there). `bump` flashes the ring. */
+  private setGlow(r: Rarity, bump = false): void {
+    this.rarityTarget.set(RARITY[r].color);
+    if (bump) this.pulse = 1;
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────────────
   enter(): void {
     this.ui.innerHTML = '';
     this.timers = [];
+    this.tryOn = null;
     const prof = store.profile;
-    // wrap styles from older saves into the new catalog
+    // wrap styles from older saves into the catalog
     const o = prof.outfit;
     let fixed = false;
-    for (const s of SLOTS) {
+    for (const s of PART_SLOTS) {
       const n = OUTFIT_CATALOG[s].length;
       const st = ((Math.floor(o[s].style) % n) + n) % n;
       if (st !== o[s].style) {
@@ -380,33 +342,48 @@ export class DressUpScene extends GameScene {
       }
     }
     if (fixed) store.update(() => undefined);
+    const L = getLocker();
     if (!this.char) {
       this.char = new Character(o);
-      this.stage.add(this.char.group);
+      this.turn.add(this.char.group);
     } else {
       this.char.setOutfit(o);
     }
-    this.rebuildMirror();
-    this.drawNeon(prof.name);
+    this.char.setGliding(false);
+    this.char.setMove(0, true);
+    this.blingId = undefined;
     this.history = [];
     this.rot = 0;
+    this.rotGoal = null;
     this.spinVel = 0;
     this.idle = 0;
-    this.dist = this.targetDist = tuning.dressup.zoomDefault;
-    this.lookY = tuning.dressup.lookYWide;
-    this.focusLook = null;
-    this.cat = 'hair';
+    this.slot = 'outfit';
+    this.customCat = 'hair';
     this.lookSel = 0;
+    this.emoteSlot = 0;
+    this.wrapKind = L.ride;
     this.pointers.clear();
+    this.dist = this.targetDist = tuning.locker.slotDist.outfit;
+    this.lookY = tuning.locker.slotLookY.outfit;
+    this.focusLook = null;
+    this.setGlow(this.currentRarity('outfit'));
+    this.rarityNow.copy(this.rarityTarget);
+    this.syncStage();
     this.buildUI();
     this.listenInput();
     this.onExit(() => {
       for (const t of this.timers) clearTimeout(t);
       this.timers = [];
       this.pointers.clear();
+      this.char?.stopEmote();
+      this.char?.setGliding(false);
+      this.clearContrail();
+      thumbs.dropQueued();
     });
     this.resize(window.innerWidth, window.innerHeight);
-    this.later(420, () => this.char?.wave());
+    this.later(420, () => {
+      if (this.slot === 'outfit' || this.slot === 'custom') this.char?.playEmote('wave') || this.char?.wave();
+    });
   }
 
   private later(ms: number, fn: () => void): void {
@@ -415,37 +392,152 @@ export class DressUpScene extends GameScene {
 
   resetStation(): void {
     this.rot = 0;
+    this.rotGoal = null;
     this.spinVel = 0;
-    this.targetDist = tuning.dressup.zoomDefault;
-    this.focusLook = null;
+    this.focusSlot();
   }
 
   debugInfo(): Record<string, string | number> {
-    return { styleCat: this.cat, camDist: +this.dist.toFixed(2), rot: +this.rot.toFixed(2) };
+    return { lockerSlot: this.slot, camDist: +this.dist.toFixed(2), rot: +this.rot.toFixed(2), charms: `${charmCount()}/${charmTotal()}` };
+  }
+
+  // ── What's on the stage ──────────────────────────────────────────────────
+  /** Rarity of what is currently equipped in a slot (drives the tile + stage glow). */
+  private currentRarity(slot: LockerSlot): Rarity {
+    const L = getLocker();
+    switch (slot) {
+      case 'outfit': {
+        const s = L.skin === 'custom' ? null : skinById(L.skin);
+        return s ? styleRarity(s, L.skinStyle) : 'common';
+      }
+      case 'backBling': return BACK_BLINGS.find((i) => i.id === L.backBling)?.rarity ?? 'common';
+      case 'glider': return GLIDERS.find((i) => i.id === L.glider)?.rarity ?? 'common';
+      case 'contrail': return CONTRAILS.find((i) => i.id === L.contrail)?.rarity ?? 'common';
+      case 'emote': return EMOTES.find((i) => i.id === L.emotes[0])?.rarity ?? 'common';
+      case 'wrap': return RIDES.find((i) => i.id === L.ride)?.rarity ?? 'common';
+      default: return 'common';
+    }
+  }
+
+  /** Put the right gear on the stage for the current slot (+ any try-on). Cheap when nothing changed. */
+  private syncStage(): void {
+    const char = this.char;
+    if (!char) return;
+    const L = getLocker();
+    const t = this.tryOn;
+    this.setBling(t?.slot === 'backBling' ? t.id : L.backBling);
+    const showGlider = this.slot === 'glider';
+    char.setGliding(showGlider);
+    this.setGlider(showGlider ? (t?.slot === 'glider' ? t.id : L.glider) : null);
+    this.setContrail(this.slot === 'contrail' ? (t?.slot === 'contrail' ? t.id : L.contrail) : null);
+    const showRide = this.slot === 'wrap';
+    char.group.visible = !showRide;
+    if (showRide) this.setRide(this.wrapKind);
+    else this.clearRide();
+    if (this.slot !== 'contrail' && this.wasContrail) {
+      char.setMove(0, true);
+      char.group.position.set(0, 0, 0);
+      char.group.rotation.y = 0;
+      this.wasContrail = false;
+    }
+  }
+
+  private setBling(id: string | null): void {
+    if (this.blingId === id || !this.char) return;
+    this.blingId = id;
+    this.char.setBackBling(null);
+    if (this.blingObj) disposeGear(this.blingObj);
+    this.blingObj = null;
+    if (id) {
+      this.blingObj = makeBackBling(id);
+      this.char.setBackBling(this.blingObj);
+    }
+  }
+  private setGlider(id: string | null): void {
+    if (this.gliderId === id || !this.char) return;
+    this.gliderId = id;
+    if (this.gliderObj) {
+      this.gliderObj.parent?.remove(this.gliderObj);
+      disposeGear(this.gliderObj);
+      this.gliderObj = null;
+    }
+    if (id) {
+      this.gliderObj = makeGlider(id);
+      this.char.gliderAnchor.add(this.gliderObj);
+    }
+  }
+  private setContrail(id: string | null): void {
+    if (this.contrailId === id) return;
+    this.clearContrail();
+    this.contrailId = id;
+    if (id) {
+      this.contrail = makeContrail(id);
+      this.scene.add(this.contrail.object);
+    }
+  }
+  private clearContrail(): void {
+    if (this.contrail) {
+      this.scene.remove(this.contrail.object);
+      this.contrail.dispose();
+      this.contrail = null;
+    }
+    this.contrailId = null;
+  }
+  private setRide(kind: VehicleKind): void {
+    const w = wrapOf(kind);
+    const key = `${kind}|${w.color}|${w.finish}`;
+    if (key === this.rideKey && this.rideObj) return;
+    this.clearRide();
+    this.rideKey = key;
+    this.rideObj = makeRidePreview(kind, w);
+    this.rideObj.scale.setScalar(1);
+    this.turn.add(this.rideObj);
+  }
+  private clearRide(): void {
+    if (!this.rideObj) return;
+    this.turn.remove(this.rideObj);
+    disposeGear(this.rideObj);
+    this.rideObj = null;
+    this.rideKey = '';
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────
   private buildUI(): void {
     const ui = this.ui;
-    const head = el('div', 'tc dr-title', ui);
-    el('div', 'title', head, '<span class="hl">STYLE</span>');
+    const head = el('div', 'tc lk-title', ui);
+    el('div', 'title', head, 'LOCK<span class="hl">ER</span>');
     el('div', 'label', head, escapeHtml(store.profile.name));
     head.style.pointerEvents = 'none';
+    this.chipEl = el('div', 'lk-charms', ui);
+    this.updateChip();
 
-    // category tabs (left, below the 🏠 button)
-    this.tabSet = tabs(ui, CATEGORIES, this.cat, (id) => this.setCategory(id as Category));
-    (ui.lastElementChild as HTMLElement).classList.add('dr-tabs');
+    // slot tiles (left, under the ☰ button)
+    const col = el('div', 'lk-slots', ui);
+    this.slotTiles.clear();
+    for (const t of SLOT_TABS) {
+      const b = el('button', 'lk-slot', col);
+      el('span', 'ico', b, t.icon);
+      el('span', 'lbl', b, t.label);
+      el('i', 'bar', b);
+      bindTap(b, () => {
+        bus.emit('uiTap', { kind: 'tab' });
+        this.setSlot(t.id);
+      });
+      this.slotTiles.set(t.id, b);
+    }
+    this.refreshTiles();
 
     // option panel (right)
-    this.panel = el('div', 'panel dr-panel', ui) as HTMLDivElement;
+    this.panel = el('div', 'lk-panel', ui) as HTMLDivElement;
     this.renderPanel();
 
-    // bottom bar: zoom out · undo · random · pose · zoom in
+    // bottom bar: zoom out · undo · random · emote · photo · zoom in
     const bar = el('div', 'dr-bar', ui);
     button(bar, { icon: '➖', cls: 'round ghost' }, () => this.zoomBy(tuning.dressup.zoomButtonStep));
     this.undoBtn = button(bar, { icon: '↩️', cls: 'round ghost', tap: 'back' }, () => this.undo());
-    button(bar, { icon: '🎲', label: 'Random', cls: 'big', tap: 'big' }, () => this.randomLook());
-    button(bar, { icon: '📸', label: 'Pose', cls: 'big', tap: 'big' }, () => this.doPose());
+    button(bar, { icon: '🎲', label: 'Surprise', cls: 'big blue', tap: 'big' }, () => this.randomLook());
+    button(bar, { icon: '💃', label: 'Emote', cls: 'big', tap: 'big' }, () => this.playWheelEmote());
+    button(bar, { icon: '📸', label: 'Photo', cls: 'big', tap: 'big' }, () => this.doPose());
     button(bar, { icon: '➕', cls: 'round ghost' }, () => this.zoomBy(1 / tuning.dressup.zoomButtonStep));
     this.updateUndo();
 
@@ -453,68 +545,487 @@ export class DressUpScene extends GameScene {
     this.flashEl = el('div', 'dr-flash', ui) as HTMLDivElement;
     this.vfEl = el('div', 'dr-vf', ui, '<i></i><i></i><i></i><i></i><b>● REC</b>') as HTMLDivElement;
 
-    // let's ride
-    button(ui, { label: "Let's ride 🚗", cls: 'br pink big dr-go', tap: 'big' }, () => void scenes.go('town'));
+    // let's play
+    button(ui, { label: "Let's play!", cls: 'br pink big dr-go', tap: 'big' }, () => void scenes.go('town'));
   }
 
-  private setCategory(c: Category): void {
-    this.cat = c;
-    this.tabSet?.(c);
-    this.renderPanel();
-    if (tuning.dressup.autoFocus) {
-      this.targetDist = clamp(tuning.dressup.focusDist[c] ?? tuning.dressup.zoomDefault, tuning.dressup.zoomMin, tuning.dressup.zoomMax);
-      this.focusLook = tuning.dressup.focusLookY[c] ?? null;
+  private updateChip(): void {
+    if (!this.chipEl) return;
+    const n = charmCount();
+    const nx = nextReward();
+    this.chipEl.innerHTML = `<span class="gem">💎</span><b>${n}/${charmTotal()}</b>` + (nx ? `<span class="nx">NEXT: ${nx.icon} ${escapeHtml(nx.label)} · ${nx.at - n} to go</span>` : '<span class="nx">ALL UNLOCKED! 🎉</span>');
+  }
+
+  /** The slot tiles show the rarity of what's equipped. */
+  private refreshTiles(): void {
+    for (const [id, b] of this.slotTiles) {
+      b.classList.toggle('on', id === this.slot);
+      rarityVars(b, this.currentRarity(id));
     }
   }
 
-  /** (Re)build the option grid + color swatches for the current category. */
+  private setSlot(s: LockerSlot): void {
+    if (s === this.slot) return;
+    this.char?.stopEmote();
+    this.tryOn = null;
+    this.slot = s;
+    this.rotGoal = s === 'backBling' ? this.nearest(Math.PI) : this.nearest(0);
+    this.focusSlot();
+    this.syncStage();
+    this.setGlow(this.currentRarity(s));
+    this.refreshTiles();
+    this.panel.scrollTop = 0;
+    this.renderPanel();
+    if (s === 'wrap') this.pulse = 0.6;
+  }
+
+  /** Nearest angle ≡ `a` (mod 2π) to the current rotation. */
+  private nearest(a: number): number {
+    return a + Math.round((this.rot - a) / TAU) * TAU;
+  }
+
+  private focusSlot(): void {
+    const T = tuning.locker;
+    if (this.slot === 'custom') {
+      this.targetDist = clamp(tuning.dressup.focusDist[this.customCat] ?? T.slotDist.custom, tuning.dressup.zoomMin, tuning.dressup.zoomMax + 2);
+      this.focusLook = tuning.dressup.focusLookY[this.customCat] ?? T.slotLookY.custom;
+    } else {
+      this.targetDist = T.slotDist[this.slot];
+      this.focusLook = T.slotLookY[this.slot];
+    }
+  }
+
+  /** (Re)build the right-hand panel for the current slot. */
   private renderPanel(): void {
     const p = this.panel;
+    const keep = p.scrollTop;
+    thumbs.dropQueued();
     p.innerHTML = '';
-    const outfit = store.profile.outfit;
-    const cat = CATEGORIES.find((c) => c.id === this.cat)!;
-    el('div', 'dr-head', p, `${cat.icon} ${cat.label}`);
-    if (this.cat === 'skin') {
-      swatches(p, tuning.art.skinTones, outfit.skin, (c) => this.pickSkin(c), 'dr-skin');
+    const tab = SLOT_TABS.find((t) => t.id === this.slot)!;
+    const head = el('div', 'lk-head', p);
+    el('span', 'lk-head-ico', head, tab.icon);
+    el('span', 'lk-head-t', head, tab.label);
+    this.setSwatch = null;
+    this.info = null;
+    switch (this.slot) {
+      case 'outfit': this.renderOutfit(p); break;
+      case 'backBling': this.renderGearGrid(p, 'backBling', BACK_BLINGS, true); break;
+      case 'glider': this.renderGearGrid(p, 'glider', GLIDERS, false); break;
+      case 'contrail': this.renderGearGrid(p, 'contrail', CONTRAILS, true); break;
+      case 'emote': this.renderEmotes(p); break;
+      case 'wrap': this.renderWrap(p); break;
+      case 'custom': this.renderCustom(p); break;
+    }
+    p.scrollTop = keep;
+    this.refreshTiles();
+    this.updateChip();
+  }
+
+  /** Show an item in the banner. */
+  private showInfo(item: GearItem | { name: string; rarity: Rarity }, state: 'equipped' | 'owned' | 'locked' | 'info', need = 0, extra = ''): void {
+    this.info?.set(item.name, item.rarity, state, need, extra);
+  }
+
+  // ── Outfit (skins + styles) ──────────────────────────────────────────────
+  private renderOutfit(p: HTMLElement): void {
+    const L = getLocker();
+    const tone = store.profile.outfit.skin;
+    this.info = new InfoBanner(p);
+    const t = this.tryOn?.slot === 'outfit' ? this.tryOn : null;
+    const selId = t ? t.id : L.skin;
+    const selStyle = t ? (t.style ?? 0) : L.skinStyle;
+    const sel = selId === 'custom' ? null : skinById(selId);
+
+    const grid = el('div', 'lk-grid tall', p);
+    // my style (the piece-by-piece look)
+    const mine = L.skin === 'custom' ? store.profile.outfit : L.customOutfit ?? store.profile.outfit;
+    lockerCard(grid, {
+      name: 'My Style', icon: '✨', rarity: 'common', tall: true, on: !t && L.skin === 'custom', sub: 'Custom',
+      thumbKey: `my:${JSON.stringify(mine)}`, thumb: outfitThumb(mine),
+    }, () => this.wearMyStyle());
+    for (const sk of SKINS) {
+      const owned = skinOwned(sk);
+      const need = owned ? 0 : Math.max(charmsNeeded(sk.reward ?? ''), ...(sk.needs ?? []).map((r) => charmsNeeded(r)), 1);
+      const o = resolveSkinOutfit(sk, 0, tone);
+      lockerCard(grid, {
+        name: sk.name, icon: sk.icon, rarity: sk.rarity, tall: true, need, on: !t && L.skin === sk.id,
+        thumbKey: `skin:${sk.id}:0:${tone}`, thumb: outfitThumb(o),
+      }, () => this.pickSkin(sk));
+    }
+    // styles of the selected skin
+    if (sel) {
+      el('div', 'label lk-sub-t', p, `${sel.name} · styles`);
+      const row = el('div', 'lk-styles', p);
+      sel.styles.forEach((s, n) => {
+        const r = styleRarity(sel, n);
+        const owned = styleOwned(sel, n);
+        const b = el('button', `lk-style${n === selStyle ? ' on' : ''}${owned ? '' : ' locked'}`, row);
+        rarityVars(b, r);
+        const dots = el('span', 'dots', b);
+        for (const c of [s.c[1], s.c[2], s.c[0], s.c[3]]) el('i', '', dots).style.background = c;
+        el('span', 'nm', b, escapeHtml(s.name));
+        if (!owned) el('span', 'pad', b, '🔒');
+        bindTap(b, () => this.pickStyleOfSkin(sel, n));
+      });
+      const o = resolveSkinOutfit(sel, selStyle, tone);
+      void o;
+    } else {
+      el('div', 'label lk-hint', p, 'Pick an outfit, then a style');
+    }
+    // banner
+    if (sel) {
+      const owned = skinOwned(sel);
+      const sOwned = styleOwned(sel, selStyle);
+      const need = !owned ? Math.max(charmsNeeded(sel.reward ?? ''), ...(sel.needs ?? []).map((r) => charmsNeeded(r)), 1) : charmsNeeded(styleReward(sel.id, selStyle) ?? '');
+      const equipped = !t && L.skin === sel.id;
+      this.showInfo({ name: `${sel.name}`, rarity: styleRarity(sel, selStyle) }, owned && sOwned ? (equipped ? 'equipped' : 'owned') : 'locked', need, sel.styles[selStyle]?.name ?? '');
+    } else this.showInfo({ name: 'My Style', rarity: 'common' }, L.skin === 'custom' ? 'equipped' : 'owned', 0, 'Your own mix');
+  }
+
+  private pickSkin(sk: SkinDef): void {
+    const L = getLocker();
+    if (!skinOwned(sk)) {
+      this.tryOutfit(sk, 0);
       return;
     }
-    if (this.cat === 'looks') {
+    const style = L.skin === sk.id ? L.skinStyle : 0;
+    this.wearSkin(sk, style);
+  }
+  private pickStyleOfSkin(sk: SkinDef, n: number): void {
+    if (!skinOwned(sk) || !styleOwned(sk, n)) {
+      this.tryOutfit(sk, n);
+      return;
+    }
+    this.wearSkin(sk, n);
+  }
+
+  /** Preview a skin you don't own yet (never saved). */
+  private tryOutfit(sk: SkinDef, style: number): void {
+    const char = this.char;
+    if (!char) return;
+    this.tryOn = { slot: 'outfit', id: sk.id, style };
+    const next = resolveSkinOutfit(sk, style, store.profile.outfit.skin);
+    this.visualOutfit(next);
+    this.setGlow(styleRarity(sk, style), true);
+    const need = !skinOwned(sk) ? Math.max(charmsNeeded(sk.reward ?? ''), ...(sk.needs ?? []).map((r) => charmsNeeded(r)), 1) : charmsNeeded(styleReward(sk.id, style) ?? '');
+    bus.emit('uiTap', { kind: 'soft' });
+    bus.emit('placementBlocked', {});
+    toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to wear ${sk.name}`);
+    char.pose('twirl', undefined, true);
+    this.renderPanel();
+  }
+
+  private wearSkin(sk: SkinDef, style: number): void {
+    const char = this.char;
+    if (!char) return;
+    this.pushHistory();
+    this.tryOn = null;
+    const before = structuredClone(store.profile.outfit);
+    const next = equipSkin(sk.id, style);
+    this.animateOutfit(before, next);
+    this.afterEquip('outfit', sk.id, styleRarity(sk, style), 'top');
+    this.renderPanel();
+  }
+  private wearMyStyle(): void {
+    if (!this.char) return;
+    this.pushHistory();
+    this.tryOn = null;
+    const before = structuredClone(store.profile.outfit);
+    const next = equipMyStyle();
+    this.animateOutfit(before, next);
+    this.afterEquip('outfit', 'custom', 'common', 'top');
+    this.renderPanel();
+  }
+
+  /** Set the character's look without saving (previews). */
+  private visualOutfit(o: Outfit): void {
+    this.char?.setOutfit(o);
+  }
+  /** Stagger the changed pieces in one after another (hair → top → bottom → shoes → extras) with a flourish. */
+  private animateOutfit(prev: Outfit, next: Outfit): void {
+    const char = this.char;
+    if (!char) return;
+    char.pose('twirl', undefined, true);
+    const changed: OutfitSlot[] = [];
+    if (prev.skin !== next.skin) changed.push('skin');
+    for (const s of PART_SLOTS) if (prev[s].style !== next[s].style || prev[s].color !== next[s].color) changed.push(s);
+    const shown = structuredClone(prev);
+    if (!changed.length) {
+      char.setOutfit(next);
+      return;
+    }
+    changed.forEach((s, i) => {
+      this.later(i * tuning.dressup.surpriseStaggerMs, () => {
+        if (s === 'skin') shown.skin = next.skin;
+        else shown[s] = structuredClone(next[s]);
+        char.setOutfit(shown, s);
+        this.pop(s);
+      });
+    });
+  }
+
+  // ── Back bling / glider / contrail (one grid, three slots) ───────────────
+  private renderGearGrid(p: HTMLElement, slot: 'backBling' | 'glider' | 'contrail', items: GearItem[], hasNone: boolean): void {
+    const L = getLocker();
+    this.info = new InfoBanner(p);
+    const grid = el('div', 'lk-grid', p);
+    const equippedId = slot === 'backBling' ? L.backBling : slot === 'glider' ? L.glider : L.contrail;
+    const t = this.tryOn?.slot === slot ? this.tryOn : null;
+    const sel = t ? t.id : equippedId;
+    if (hasNone) {
+      lockerCard(grid, { name: 'None', icon: '🚫', rarity: 'common', on: !t && !equippedId }, () => this.equipGear(slot, null));
+    }
+    const sorted = [...items].sort((a, b) => Number(!itemOwned(a)) - Number(!itemOwned(b)) || rarityRank(a.rarity) - rarityRank(b.rarity));
+    for (const it of sorted) {
+      const need = itemOwned(it) ? 0 : Math.max(1, charmsNeeded(it.reward ?? ''));
+      lockerCard(grid, {
+        name: it.name, icon: it.icon, rarity: it.rarity, need, on: !t && equippedId === it.id,
+        thumbKey: slot === 'backBling' ? `bling:${it.id}` : slot === 'glider' ? `glider:${it.id}` : undefined,
+        thumb: slot === 'backBling' ? blingThumb(it.id) : slot === 'glider' ? gliderThumb(it.id) : undefined,
+      }, () => this.equipGear(slot, it.id));
+    }
+    const it = items.find((i) => i.id === sel);
+    if (it) this.showInfo(it, !itemOwned(it) ? 'locked' : !t && equippedId === it.id ? 'equipped' : 'owned', charmsNeeded(it.reward ?? ''));
+    else this.showInfo({ name: 'None', rarity: 'common' }, 'equipped');
+    const owned = items.filter(itemOwned).length;
+    el('div', 'label lk-hint', p, `${owned} / ${items.length} collected`);
+  }
+
+  private equipGear(slot: 'backBling' | 'glider' | 'contrail', id: string | null): void {
+    const char = this.char;
+    if (!char) return;
+    const list = slot === 'backBling' ? BACK_BLINGS : slot === 'glider' ? GLIDERS : CONTRAILS;
+    const it = id ? list.find((i) => i.id === id) : undefined;
+    // locked → try it on (preview only)
+    if (it && !itemOwned(it)) {
+      this.tryOn = { slot, id: it.id };
+      this.syncStage();
+      this.setGlow(it.rarity, true);
+      bus.emit('uiTap', { kind: 'soft' });
+      bus.emit('placementBlocked', {});
+      const need = Math.max(1, charmsNeeded(it.reward ?? ''));
+      toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to unlock ${it.name}`);
+      this.popGear(slot);
+      this.renderPanel();
+      return;
+    }
+    this.tryOn = null;
+    if (slot === 'backBling') setBackBling(id);
+    else if (slot === 'glider') setGlider(id ?? 'starter');
+    else setContrail(id);
+    this.syncStage();
+    this.popGear(slot);
+    const r = it?.rarity ?? 'common';
+    if (slot === 'backBling') this.rotGoal = this.nearest(Math.PI);
+    char.pose(undefined, undefined, true);
+    this.afterEquip(slot, id ?? 'none', r, slot);
+    if (slot === 'glider') this.pulse = 1;
+    this.renderPanel();
+  }
+
+  private popGear(slot: 'backBling' | 'glider' | 'contrail'): void {
+    const o = slot === 'backBling' ? this.blingObj : slot === 'glider' ? this.gliderObj : null;
+    if (o) bus.emit('lockerEquipped', { slot, id: '', rarity: 'common', object: o, pos: undefined });
+  }
+
+  // ── Emotes: a wheel of 6 ─────────────────────────────────────────────────
+  private renderEmotes(p: HTMLElement): void {
+    const L = getLocker();
+    this.info = new InfoBanner(p);
+    const wheel = el('div', 'lk-wheel', p);
+    el('div', 'lk-wheel-c', wheel, '<b>EMOTE</b><span>WHEEL</span>');
+    for (let i = 0; i < EMOTE_SLOTS; i++) {
+      const a = -Math.PI / 2 + (i / EMOTE_SLOTS) * TAU;
+      const id = L.emotes[i];
+      const em = id ? EMOTES.find((e) => e.id === id) : undefined;
+      const b = el('button', `lk-wslot${i === this.emoteSlot ? ' on' : ''}${em ? '' : ' empty'}`, wheel);
+      b.style.left = `${50 + Math.cos(a) * 36}%`;
+      b.style.top = `${50 + Math.sin(a) * 36}%`;
+      rarityVars(b, em?.rarity ?? 'common');
+      el('span', 'ico', b, em ? em.icon : '＋');
+      if (em) el('span', 'nm', b, escapeHtml(em.name));
+      el('i', 'n', b, String(i + 1));
+      bindTap(b, () => {
+        bus.emit('uiTap', { kind: 'soft' });
+        this.emoteSlot = i;
+        if (em) this.playEmote(em.id);
+        this.renderPanel();
+      });
+    }
+    el('div', 'label lk-sub-t', p, `Slot ${this.emoteSlot + 1} · tap an emote to put it there`);
+    const grid = el('div', 'lk-grid', p);
+    const t = this.tryOn?.slot === 'emote' ? this.tryOn : null;
+    for (const e of EMOTES) {
+      const need = itemOwned(e) ? 0 : Math.max(1, charmsNeeded(e.reward ?? ''));
+      lockerCard(grid, { name: e.name, icon: e.icon, rarity: e.rarity, need, on: L.emotes.includes(e.id), sub: L.emotes.includes(e.id) ? `Slot ${L.emotes.indexOf(e.id) + 1}` : undefined }, () => this.pickEmote(e));
+    }
+    const hl = t ? EMOTES.find((e) => e.id === t.id) : L.emotes[this.emoteSlot] ? EMOTES.find((e) => e.id === L.emotes[this.emoteSlot]) : undefined;
+    if (hl) this.showInfo(hl, !itemOwned(hl) ? 'locked' : L.emotes.includes(hl.id) ? 'equipped' : 'owned', charmsNeeded(hl.reward ?? ''));
+    else this.showInfo({ name: 'Empty slot', rarity: 'common' }, 'info');
+    if (L.emotes[this.emoteSlot] && L.emotes.length > 1) {
+      button(p, { icon: '🗑️', label: 'Clear slot', cls: 'ghost' }, () => {
+        clearEmote(this.emoteSlot);
+        this.emoteSlot = Math.min(this.emoteSlot, getLocker().emotes.length);
+        this.renderPanel();
+      });
+    }
+  }
+  private pickEmote(e: GearItem): void {
+    if (!itemOwned(e)) {
+      this.tryOn = { slot: 'emote', id: e.id };
+      this.playEmote(e.id);
+      this.setGlow(e.rarity, true);
+      bus.emit('placementBlocked', {});
+      const need = Math.max(1, charmsNeeded(e.reward ?? ''));
+      toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to unlock ${e.name}`);
+      this.renderPanel();
+      return;
+    }
+    this.tryOn = null;
+    setEmote(this.emoteSlot, e.id);
+    const L = getLocker();
+    this.emoteSlot = Math.min(L.emotes.indexOf(e.id) + 1, EMOTE_SLOTS - 1) === this.emoteSlot ? this.emoteSlot : this.emoteSlot;
+    this.playEmote(e.id);
+    this.afterEquip('emote', e.id, e.rarity, 'top');
+    this.renderPanel();
+  }
+  private playEmote(id: string): void {
+    const char = this.char;
+    if (!char) return;
+    char.setGliding(false);
+    if (!char.playEmote(id)) char.pose(undefined, undefined, true);
+  }
+  /** 💃: play the next emote on the wheel. */
+  private playWheelEmote(): void {
+    const L = getLocker();
+    if (!L.emotes.length) return;
+    this.emoteIdx = (this.emoteIdx + 1) % L.emotes.length;
+    const id = L.emotes[this.emoteIdx];
+    if (this.slot === 'glider' || this.slot === 'contrail' || this.slot === 'wrap') this.setSlot('emote');
+    this.playEmote(id);
+    const pos = this.char!.slotAnchor('top');
+    pos.add(this.camera.position.clone().sub(pos).normalize().multiplyScalar(0.5));
+    bus.emit('optionPicked', { pos: v3(pos) });
+  }
+
+  // ── Ride wraps ───────────────────────────────────────────────────────────
+  private renderWrap(p: HTMLElement): void {
+    const L = getLocker();
+    this.info = new InfoBanner(p);
+    const kind = this.wrapKind;
+    const look = wrapOf(kind);
+    const grid = el('div', 'lk-grid', p);
+    for (const r of RIDES) {
+      const need = itemOwned(r) ? 0 : Math.max(1, charmsNeeded(r.reward ?? ''));
+      const w = wrapOf(r.id);
+      lockerCard(grid, {
+        name: r.name, icon: r.icon, rarity: r.rarity, need, on: r.id === kind, star: L.ride === r.id,
+        thumbKey: `ride:${r.id}:${w.color}:${w.finish}`, thumb: rideThumb(r.id, w),
+      }, () => this.pickRide(r.id));
+    }
+    const ride = RIDES.find((r) => r.id === kind)!;
+    this.showInfo(ride, !itemOwned(ride) ? 'locked' : L.ride === ride.id ? 'equipped' : 'owned', charmsNeeded(ride.reward ?? ''), L.ride === ride.id ? 'My ride' : '');
+    if (itemOwned(ride) && L.ride !== ride.id) {
+      button(p, { icon: '⭐', label: 'Make this my ride', cls: 'blue' }, () => {
+        setRide(ride.id);
+        this.afterEquip('ride', ride.id, ride.rarity, 'top');
+        toast(`⭐ ${ride.name} is your ride — the 🚗 button brings it`);
+        this.renderPanel();
+      });
+    }
+    el('div', 'label lk-sub-t', p, 'Wrap colour');
+    swatches(p, tuning.art.palette, look.color, (c) => this.changeWrap(kind, c, look.finish), 'lk-wrapsw');
+    el('div', 'label lk-sub-t', p, 'Finish');
+    const fin = el('div', 'lk-fins', p);
+    for (const f of WRAP_FINISHES) {
+      const owned = itemOwned(f);
+      const b = el('button', `lk-fin${f.id === look.finish ? ' on' : ''}${owned ? '' : ' locked'}`, fin);
+      rarityVars(b, f.rarity);
+      el('span', 'ico', b, f.icon);
+      el('span', 'nm', b, f.name);
+      if (!owned) el('span', 'pad', b, '🔒');
+      bindTap(b, () => {
+        if (!owned) {
+          const need = Math.max(1, charmsNeeded(f.reward ?? ''));
+          toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to unlock the ${f.name} finish`);
+          bus.emit('placementBlocked', {});
+          return;
+        }
+        this.changeWrap(kind, look.color, f.id);
+      });
+    }
+  }
+  private pickRide(kind: VehicleKind): void {
+    const r = RIDES.find((x) => x.id === kind)!;
+    this.wrapKind = kind;
+    bus.emit('uiTap', { kind: 'soft' });
+    this.setRide(kind);
+    this.setGlow(r.rarity, true);
+    if (!itemOwned(r)) {
+      bus.emit('placementBlocked', {});
+      const need = Math.max(1, charmsNeeded(r.reward ?? ''));
+      toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} to unlock ${r.name}`);
+    }
+    this.renderPanel();
+  }
+  private changeWrap(kind: VehicleKind, color: string, finish: string): void {
+    setWrap(kind, color, finish);
+    this.setRide(kind);
+    const pos = new THREE.Vector3(0, 1.3, 0).applyMatrix4(this.turn.matrixWorld);
+    const f = WRAP_FINISHES.find((x) => x.id === finish);
+    bus.emit('lockerEquipped', { slot: 'wrap', id: finish, rarity: f?.rarity ?? 'common', pos: v3(pos), object: this.rideObj ?? undefined });
+    this.pulse = 0.7;
+    this.renderPanel();
+  }
+
+  // ── Custom: piece-by-piece (hair / top / bottom / shoes / extras / skin tone / looks) ──
+  private renderCustom(p: HTMLElement): void {
+    const outfit = store.profile.outfit;
+    const sub = el('div', 'lk-subtabs', p);
+    for (const c of CUSTOM_CATS) {
+      const b = el('button', `lk-subtab${c.id === this.customCat ? ' on' : ''}`, sub);
+      el('span', 'ico', b, c.icon);
+      el('span', 'lbl', b, c.label);
+      bindTap(b, () => {
+        bus.emit('uiTap', { kind: 'tab' });
+        this.customCat = c.id;
+        this.focusSlot();
+        this.renderPanel();
+      });
+    }
+    if (this.customCat === 'skin') {
+      swatches(p, tuning.art.skinTones, outfit.skin, (c) => this.pickSkinTone(c), 'dr-skin');
+      return;
+    }
+    if (this.customCat === 'looks') {
       this.renderLooks(p);
       return;
     }
-    const slot = this.cat;
-    const grid = el('div', 'items dr-items', p);
-    const tiles: HTMLElement[] = [];
+    const slot = this.customCat;
+    const grid = el('div', 'lk-grid parts', p);
     OUTFIT_CATALOG[slot].forEach((it, i) => {
-      const b = el('button', 'item', grid);
-      el('span', 'ico', b, it.icon);
-      el('span', '', b, it.name);
-      const locked = !!it.reward && !isUnlocked(it.reward);
-      if (locked) {
-        b.classList.add('locked');
-        el('span', 'lock-badge', b, `🔒 💎${rewardFor(it.reward!)?.at ?? ''}`);
-      }
-      if (outfit[slot].style === i) b.classList.add('on');
-      bindTap(b, () => {
+      const rw = (it as { reward?: string }).reward;
+      const locked = !!rw && !owns(rw);
+      lockerCard(grid, {
+        name: it.name, icon: it.icon, rarity: partRarity(slot, i), need: locked ? Math.max(1, charmsNeeded(rw!)) : 0,
+        on: outfit[slot].style === i,
+      }, () => {
         if (locked) {
-          lockedToast(it.reward!);
+          const need = Math.max(1, charmsNeeded(rw!));
+          toast(`🔒 Find ${need} more 💎 charm${need === 1 ? '' : 's'} in town to unlock ${rewardFor(rw!)?.label ?? it.name}`);
+          bus.emit('placementBlocked', {});
           return;
         }
-        tiles.forEach((t, k) => t.classList.toggle('on', k === i));
         this.pickStyle(slot, i);
-        syncHint();
+        this.renderPanel();
       });
-      tiles.push(b);
     });
     const colorsBox = el('div', 'dr-colors', p);
     const hint = el('div', 'label dr-hint', p, 'Pick one to add color');
     this.setSwatch = swatches(colorsBox, tuning.art.palette, outfit[slot].color, (c) => this.pickColor(slot, c));
-    const syncHint = () => {
-      const none = slot === 'accessory' && store.profile.outfit.accessory.style === 0;
-      colorsBox.style.display = none ? 'none' : '';
-      hint.style.display = none ? '' : 'none';
-    };
-    syncHint();
+    const none = slot === 'accessory' && outfit.accessory.style === 0;
+    colorsBox.style.display = none ? 'none' : '';
+    hint.style.display = none ? '' : 'none';
   }
 
   // ── Looks: 4 saved outfits ───────────────────────────────────────────────
@@ -612,7 +1123,7 @@ export class DressUpScene extends GameScene {
     bus.emit('creationSaved', { kind: 'look', pos: v3(pos) });
     toast(`Saved to Look ${target + 1}`);
     char.pose('hips');
-    if (this.cat === 'looks') this.renderPanel();
+    if (this.slot === 'custom' && this.customCat === 'looks') this.renderPanel();
   }
 
   private wearLook(i: number): void {
@@ -620,10 +1131,11 @@ export class DressUpScene extends GameScene {
     if (!look) return;
     this.pushHistory();
     this.transitionTo(structuredClone(look), 'hips');
-    if (this.cat === 'looks') this.renderPanel();
+    markCustom();
+    if (this.slot === 'custom' && this.customCat === 'looks') this.renderPanel();
   }
 
-  // ── Changing the outfit ──────────────────────────────────────────────────
+  // ── Changing the outfit by hand ──────────────────────────────────────────
   private pickStyle(slot: CatalogSlot, style: number): void {
     this.change(slot, (o) => {
       const wasNone = slot === 'accessory' && o.accessory.style === 0;
@@ -661,23 +1173,25 @@ export class DressUpScene extends GameScene {
     if (note) toast(note);
     if (accChanged) this.pop('accessory');
   }
-  private pickSkin(color: string): void {
+  private pickSkinTone(color: string): void {
     this.change('skin', (o) => {
       o.skin = color;
     });
   }
 
-  /** One outfit edit: save (autosave), update the character, pose, sparkle + pop. */
+  /** One outfit edit: save (autosave), update the character, pose, sparkle + pop. The look becomes "My Style". */
   private change(slot: OutfitSlot, edit: (o: Outfit) => void): void {
     const char = this.char;
     if (!char) return;
     this.pushHistory();
     const o = store.profile.outfit;
     store.update(() => edit(o));
+    markCustom();
+    this.tryOn = null;
     char.setOutfit(o, slot);
-    this.rebuildMirror();
     char.pose();
     this.pop(slot);
+    this.refreshTiles();
   }
 
   /** Sparkle burst + squash-and-stretch of the changed part (juice reacts to the event). */
@@ -690,8 +1204,31 @@ export class DressUpScene extends GameScene {
     bus.emit('outfitChanged', { slot, pos: v3(anchor), object: char.partObject(slot) ?? undefined });
   }
 
+  /** Common equip flourish: rarity sparkles + sound (juice), the stage glows in the rarity colour, tiles update. */
+  private afterEquip(slot: string, id: string, rarity: Rarity, anchorKind: OutfitSlot | 'backBling' | 'glider' | 'contrail'): void {
+    const char = this.char;
+    if (!char) return;
+    let pos: THREE.Vector3;
+    if (anchorKind === 'backBling') pos = new THREE.Vector3(0, 1.3, -0.3);
+    else if (anchorKind === 'glider') pos = new THREE.Vector3(0, 2.4, 0.2);
+    else if (anchorKind === 'contrail') pos = new THREE.Vector3(0, 1.3, -0.2);
+    else pos = char.slotAnchor(anchorKind);
+    if (anchorKind === 'backBling' || anchorKind === 'glider' || anchorKind === 'contrail') pos.applyMatrix4(char.group.matrixWorld);
+    pos.add(this.camera.position.clone().sub(pos).normalize().multiplyScalar(0.5));
+    this.setGlow(rarity, true);
+    char.react(); // a happy face
+    bus.emit('lockerEquipped', { slot, id, rarity, pos: v3(pos) });
+    this.refreshTiles();
+    this.updateChip();
+  }
+
+  // ── Undo / random / pose ─────────────────────────────────────────────────
+  private snap(): Snap {
+    const L = getLocker();
+    return { outfit: structuredClone(store.profile.outfit), skin: L.skin, style: L.skinStyle, custom: L.customOutfit ? structuredClone(L.customOutfit) : undefined };
+  }
   private pushHistory(): void {
-    this.history.push(structuredClone(store.profile.outfit));
+    this.history.push(this.snap());
     if (this.history.length > tuning.dressup.undoMax) this.history.shift();
     this.updateUndo();
   }
@@ -705,24 +1242,30 @@ export class DressUpScene extends GameScene {
     const prev = this.history.pop();
     this.updateUndo();
     if (!char || !prev) return;
-    this.transitionTo(prev, 'hips', false);
+    const L = getLocker();
+    store.update(() => {
+      L.skin = prev.skin;
+      L.skinStyle = prev.style;
+      L.customOutfit = prev.custom;
+    });
+    this.tryOn = null;
+    this.transitionTo(prev.outfit, 'hips', false);
   }
 
-  /** Switch to a whole outfit; changed pieces pop in one after another (stagger) or all at once. */
+  /** Switch to a whole outfit (saved); changed pieces pop in one after another (stagger) or all at once. */
   private transitionTo(next: Outfit, pose: 'hips' | 'twirl' | null, stagger = true): void {
     const char = this.char;
     if (!char) return;
-    const cur = store.profile.outfit;
+    const cur = structuredClone(store.profile.outfit);
     store.update(() => {
       store.profile.outfit = next;
     });
     if (pose) char.pose(pose, undefined, true);
     const changed: OutfitSlot[] = [];
     if (cur.skin !== next.skin) changed.push('skin');
-    for (const s of SLOTS) if (cur[s].style !== next[s].style || cur[s].color !== next[s].color) changed.push(s);
+    for (const s of PART_SLOTS) if (cur[s].style !== next[s].style || cur[s].color !== next[s].color) changed.push(s);
     if (!stagger) {
       char.setOutfit(next);
-      this.rebuildMirror();
       for (const s of changed) this.pop(s);
       this.renderPanel();
       return;
@@ -733,7 +1276,6 @@ export class DressUpScene extends GameScene {
         if (s === 'skin') shown.skin = next.skin;
         else shown[s] = structuredClone(next[s]);
         char.setOutfit(shown, s);
-        this.rebuildMirror();
         this.pop(s);
         if (i === changed.length - 1) this.renderPanel();
       });
@@ -741,21 +1283,60 @@ export class DressUpScene extends GameScene {
     if (!changed.length) this.renderPanel();
   }
 
-  /** 🎲 a whole new random look (never uses locked bonus items), revealed piece by piece. */
+  /** 🎲 surprise me: a random owned item in the current slot (a whole new look in Custom). */
   private randomLook(): void {
     const char = this.char;
     if (!char) return;
+    const L = getLocker();
+    switch (this.slot) {
+      case 'outfit': {
+        const ok = SKINS.filter(skinOwned);
+        const sk = pick(ok.filter((s) => s.id !== L.skin).length ? ok.filter((s) => s.id !== L.skin) : ok);
+        const styles = sk.styles.map((_, n) => n).filter((n) => styleOwned(sk, n));
+        this.wearSkin(sk, pick(styles));
+        return;
+      }
+      case 'backBling': {
+        const ok = BACK_BLINGS.filter(itemOwned).filter((i) => i.id !== L.backBling);
+        if (ok.length) this.equipGear('backBling', pick(ok).id);
+        return;
+      }
+      case 'glider': {
+        const ok = GLIDERS.filter(itemOwned).filter((i) => i.id !== L.glider);
+        if (ok.length) this.equipGear('glider', pick(ok).id);
+        return;
+      }
+      case 'contrail': {
+        const ok = CONTRAILS.filter(itemOwned).filter((i) => i.id !== L.contrail);
+        if (ok.length) this.equipGear('contrail', pick(ok).id);
+        return;
+      }
+      case 'emote': {
+        const ok = EMOTES.filter(itemOwned);
+        this.pickEmote(pick(ok));
+        return;
+      }
+      case 'wrap': {
+        const pal = tuning.art.palette;
+        const owned = WRAP_FINISHES.filter(itemOwned);
+        this.changeWrap(this.wrapKind, pick(pal), pick(owned).id);
+        return;
+      }
+      default:
+        break;
+    }
     this.pushHistory();
     const cur = store.profile.outfit;
     const next = structuredClone(cur);
     const pal = tuning.art.palette;
     const pickColor = () => pal[Math.floor(Math.random() * pal.length)];
-    for (const s of SLOTS) {
+    for (const s of PART_SLOTS) {
       const items = OUTFIT_CATALOG[s];
       const ok: number[] = [];
       items.forEach((it, i) => {
         if (s === 'accessory' && i === 0) return;
-        if (it.reward && !isUnlocked(it.reward)) return;
+        const rw = (it as { reward?: string }).reward;
+        if (rw && !owns(rw)) return;
         if (i === cur[s].style) return;
         ok.push(i);
       });
@@ -767,7 +1348,9 @@ export class DressUpScene extends GameScene {
     // the accessory always pops against the new hair
     if (next.accessory.style > 0) next.accessory.color = contrastColor(next.hair.color, pal, next.accessory.style);
     if (next.top.color === next.bottom.color) next.bottom.color = pal[(pal.indexOf(next.top.color) + 7) % pal.length];
+    this.tryOn = null;
     this.transitionTo(next, 'twirl');
+    markCustom();
   }
 
   /** 📸 strike the next cool pose, then flash. */
@@ -775,10 +1358,15 @@ export class DressUpScene extends GameScene {
     const char = this.char;
     const now = performance.now();
     if (!char || now < this.poseLock) return;
+    if (this.slot === 'wrap' || this.slot === 'glider') {
+      // showrooms: no pose, just a flash of the stage
+      this.pulse = 1;
+    }
+    char.setGliding(this.slot === 'glider');
     const hold = tuning.dressup.poseHold;
     this.poseLock = now + hold * 1000 * 0.7;
     const kind = POSE_ORDER[this.poseIdx++ % POSE_ORDER.length];
-    char.pose(kind, hold, true);
+    if (this.slot !== 'glider' && this.slot !== 'wrap') char.pose(kind, hold, true);
     this.vfEl?.classList.add('on');
     this.later(tuning.dressup.flashDelayMs, () => {
       this.flashEl?.classList.remove('go');
@@ -815,9 +1403,9 @@ export class DressUpScene extends GameScene {
     });
   }
 
-  /** The player zooms by hand: stop following the category focus height. */
+  /** The player zooms by hand: stop following the slot focus height. */
   private manualZoom(d: number): void {
-    this.targetDist = clamp(d, tuning.dressup.zoomMin, tuning.dressup.zoomMax);
+    this.targetDist = clamp(d, tuning.dressup.zoomMin, tuning.dressup.zoomMax + 4);
     this.focusLook = null;
   }
   private zoomBy(f: number): void {
@@ -837,6 +1425,7 @@ export class DressUpScene extends GameScene {
       this.lastMoveT = this.downT;
       this.moved = 0;
       this.spinVel = 0;
+      this.rotGoal = null;
     } else if (this.pointers.size === 2) {
       this.pinchDist = this.pointerSpan();
       this.moved = 999; // not a tap
@@ -888,12 +1477,13 @@ export class DressUpScene extends GameScene {
   /** Tap the character: strike a pose with a little sparkle. */
   private onTap(e: PointerEvent): void {
     const char = this.char;
-    if (!char) return;
+    if (!char || !char.group.visible) return;
     const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
     this.ray.setFromCamera(ndc, this.camera);
     const hit = this.ray.intersectObject(char.group, true)[0];
     if (!hit) return;
-    char.pose();
+    if (this.slot === 'glider' || this.slot === 'contrail') char.pose();
+    else this.playWheelEmote();
     bus.emit('optionPicked', { pos: v3(hit.point) });
   }
 
@@ -902,21 +1492,27 @@ export class DressUpScene extends GameScene {
     const char = this.char;
     if (!char) return;
     const D = tuning.dressup;
+    const LK = tuning.locker;
+    thumbs.pump(LK.thumbBudgetMs);
 
-    // spin with inertia; drift back to facing front when left alone
-    if (!this.dragging) {
+    // spin with inertia; drift back to the home angle when left alone
+    const home = this.slot === 'backBling' ? Math.PI : 0;
+    if (this.rotGoal !== null && !this.dragging) {
+      this.rot += (this.rotGoal - this.rot) * (1 - Math.exp(-6 * dt));
+      if (Math.abs(this.rotGoal - this.rot) < 0.01) this.rotGoal = null;
+    } else if (!this.dragging) {
       this.rot += this.spinVel * dt;
       this.spinVel *= Math.pow(D.rotateInertia, dt * 60);
       if (Math.abs(this.spinVel) < 0.05) this.spinVel = 0;
     }
-    if (!this.dragging && this.pointers.size === 0 && Math.abs(this.spinVel) < 0.3 && !char.posing) {
+    if (!this.dragging && this.pointers.size === 0 && this.rotGoal === null && Math.abs(this.spinVel) < 0.3 && !char.posing && !char.emoting) {
       this.idle += dt;
       if (this.idle > D.faceFrontDelay) {
-        const target = Math.round(this.rot / TAU) * TAU;
+        const target = this.nearest(home);
         this.rot += (target - this.rot) * (1 - Math.exp(-D.faceFrontSpeed * dt));
       }
     } else this.idle = 0;
-    char.group.rotation.y = this.rot;
+    this.turn.rotation.y = this.rot;
 
     // swishy sound while spinning fast (juice maps characterSpin)
     const sp = Math.abs(this.spinVel);
@@ -928,10 +1524,33 @@ export class DressUpScene extends GameScene {
       }
     } else this.spinSoundT = D.spinSoundEvery * 0.6;
 
-    char.update(dt, t);
-    this.syncMirror();
+    // contrail showroom: the player flies a lazy circle so the trail curls behind
+    if (this.slot === 'contrail') {
+      this.wasContrail = true;
+      this.orbit += dt * 0.8;
+      const R = LK.orbitRadius;
+      char.group.position.set(Math.cos(this.orbit) * R, 0.45 + Math.sin(t * 2.2) * 0.06, Math.sin(this.orbit) * R * 0.8);
+      char.group.rotation.y = Math.PI / 2 - this.orbit - 0.15 + Math.PI; // heading along the circle
+      char.setMove(0.7, false);
+      char.group.updateWorldMatrix(true, true);
+      if (this.contrail) {
+        const em = new THREE.Vector3(0, 1.25, -0.25).applyMatrix4(char.group.matrixWorld);
+        const vel = new THREE.Vector3(Math.sin(this.orbit) * R * 0.8, 0, -Math.cos(this.orbit) * R * 0.64);
+        this.contrail.update(dt, em, true, vel);
+      }
+    }
 
-    // camera: glide to the target distance + height (focus on the part being styled)
+    char.lookAt(this.camera.position); // her eyes follow the camera
+    char.update(dt, t);
+
+    // gear animations (wings flap, balloons sway…)
+    (this.blingObj?.userData.tick as ((t: number) => void) | undefined)?.(t);
+    (this.gliderObj?.userData.tick as ((t: number) => void) | undefined)?.(t);
+    if (this.gliderObj && this.slot === 'glider') char.group.position.y = 0.25 + Math.sin(t * 1.8) * 0.05;
+    else if (this.slot !== 'contrail') char.group.position.y = 0;
+    if (this.rideObj) this.rideObj.position.y = Math.sin(t * 1.6) * 0.0; // (kept still: it is a showroom plinth)
+
+    // camera: glide to the target distance + height
     const k = 1 - Math.exp(-D.zoomSmooth * dt);
     this.dist += (this.targetDist - this.dist) * k;
     const close = smooth((D.zoomMax - this.dist) / (D.zoomMax - D.zoomMin));
@@ -940,28 +1559,38 @@ export class DressUpScene extends GameScene {
     this.camera.position.set(0, this.lookY + 0.22 + this.dist * 0.075, this.dist);
     this.camera.lookAt(0, this.lookY, 0);
 
-    // living studio: drifting LED colors, blinking REC dot
-    const sp2 = D.studio.ledSpeed;
-    this.ledMats.forEach((m, i) => {
-      const h = lerp(0.52, 0.93, 0.5 + 0.5 * Math.sin(t * sp2 * TAU + i * 1.3));
-      m.color.setHSL(h, 1, 0.55).multiplyScalar(2.0);
-    });
-    this.recDot.color.set(Math.sin(t * 3.2) > 0 ? '#ff2020' : '#3a0a0a');
+    // living stage: glow follows the rarity colour, rays turn, sparkles drift
+    this.rarityNow.lerp(this.rarityTarget, 1 - Math.exp(-LK.glowLerp * dt));
+    this.pulse = Math.max(0, this.pulse - dt * 1.6);
+    const hdr = 1.5 + this.pulse * 1.6;
+    this.ringMat.color.copy(this.rarityNow).multiplyScalar(hdr);
+    this.ring2Mat.color.copy(this.rarityNow).multiplyScalar(1.1);
+    this.glowMat.color.copy(this.rarityNow);
+    this.glowMat.opacity = 0.62 + this.pulse * 0.35;
+    this.rayMat.color.copy(this.rarityNow).lerp(new THREE.Color('#ffffff'), 0.35);
+    this.rayMat.opacity = 0.26 + this.pulse * 0.2;
+    this.rays.rotation.z += LK.raySpeed * dt;
+    const pos = this.sparkles.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const sd = this.sparkleSeed;
+      let y = pos.getY(i) + sd[i * 4 + 2] * dt;
+      if (y > 5) y = 0;
+      const a = sd[i * 4] + t * 0.05;
+      pos.setXYZ(i, Math.cos(a) * sd[i * 4 + 1], y, Math.sin(a) * sd[i * 4 + 1] - 0.5);
+    }
+    pos.needsUpdate = true;
+    (this.sparkles.material as THREE.PointsMaterial).size = 0.2 + Math.sin(t * 3) * 0.02;
   }
 
   resize(w: number, h: number): void {
     this.camera.aspect = w / h;
-    // keep the character in the free space between the tab column and the option panel
+    // keep the player in the free space between the slot column and the option panel
     const wide = w >= 900 && w / h > 1.1;
-    const panelW = this.panel?.offsetWidth ?? 400;
-    this.viewShift = wide ? Math.round((panelW + 30 - 116) / 2) : 0;
+    const panelW = this.panel?.offsetWidth ?? 440;
+    this.viewShift = wide ? Math.round((panelW + 30 - 110) / 2) : 0;
     if (this.viewShift) this.camera.setViewOffset(w, h, this.viewShift, 0, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
     this.ui.style.setProperty('--dr-shift', `${this.viewShift}px`);
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }

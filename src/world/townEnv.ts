@@ -15,6 +15,10 @@ import { buildPark } from '../drive/park';
 import { buildSkate } from '../drive/skate';
 import { buildLookout } from '../drive/lookout';
 import { buildScenery } from '../drive/scenery';
+import { buildSummit } from '../drive/summit';
+import { buildMeadow } from '../drive/meadow';
+import { buildGrove } from '../drive/grove';
+import { buildSands } from '../drive/sands';
 import type { DoorDef, Piece } from '../drive/types';
 
 export type Collider =
@@ -62,13 +66,22 @@ export function buildTownEnvironment(): TownEnv {
   add(pk);
   add(buildSkate());
   add(buildLookout());
+  // v3 world: the new places
+  const sm = buildSummit();
+  const md = buildMeadow();
+  const gv = buildGrove();
+  const sd = buildSands();
+  add(sm);
+  add(md);
+  add(gv);
+  add(sd);
 
   // scenery last, so it can keep clear of everything above
   const sc = buildScenery({
     keepouts: colliders.slice(),
-    sites: [...dt.trees, ...hh.trees, ...pk.trees],
-    palms: bc.palms,
-    rocks: bc.rocks,
+    sites: [...dt.trees, ...hh.trees, ...pk.trees, ...md.trees, ...gv.trees],
+    palms: [...bc.palms, ...sd.palms],
+    rocks: [...bc.rocks, ...sm.rocks, ...sd.rocks],
   });
   group.add(sc.build.group);
   colliders.push(...sc.veg.colliders);

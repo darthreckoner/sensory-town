@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "dev", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "--port", "5173", "--strictPort"], "port": 5173 }
+    { "name": "dev", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "--port", "5173", "--strictPort"], "port": 5173 },
+    { "name": "snap", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "C:/Dev/vs_snap", "--config", "C:/Dev/vs_snap/vite.config.ts", "--port", "5180", "--strictPort"], "port": 5180 }
   ]
 }

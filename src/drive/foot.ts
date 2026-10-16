@@ -10,6 +10,7 @@
 import { tuning } from '../tuning';
 import { BOUNDS, WATER_Y } from '../world/townLayout';
 import { groundHeight, railedAt, waveY } from '../world/heightfield';
+import { surfaceBelow } from '../world/buildSpace';   // v3 build
 import { ColliderGrid, pushOut, res } from './physics';
 import { clamp, lerpAngle } from './envUtils';
 
@@ -48,12 +49,22 @@ export class FootPhysics {
   private dryZ = 0;
   private kickT = 0;
   private stuckT = 0;
+  // ── v3 movement (W4) ── hooks for sprint / glide landings (drive/movement.ts)
+  /** multiplies the walking / running speed (sprint sets it a little above 1) */
+  speedMul = 1;
+  /** carry momentum into the walk (a glide landing, a mantle) */
+  setVelocity(vx: number, vz: number): void {
+    this.vx = vx;
+    this.vz = vz;
+    this.speed = Math.hypot(vx, vz);
+  }
 
-  reset(x: number, z: number, heading: number): void {
+  /** `y`: where the feet should land if it is on a player-built floor / ramp (stepping out of a ride parked on a deck). */
+  reset(x: number, z: number, heading: number, y?: number): void {
     const d = tuning.drive;
     this.x = x;
     this.z = z;
-    const g = groundHeight(x, z, true);
+    const g = y === undefined ? groundHeight(x, z, true) : Math.max(groundHeight(x, z, true), surfaceBelow(x, z, y + 0.3));
     const bed = groundHeight(x, z, true, true);
     // a spot in deep water (not on a deck over it) starts you swimming
     this.swimming = g - bed < 0.3 && WATER_Y - g > d.swimOn;
@@ -86,7 +97,8 @@ export class FootPhysics {
    * (the bank, the seabed); a deck within reach is something to climb onto.
    */
   private floor(x: number, z: number): number {
-    const g = groundHeight(x, z, true);
+    // ── v3 build ── a floor / ramp / roof the player built counts as ground you can step onto (one above your head is passed under)
+    const g = Math.max(groundHeight(x, z, true), surfaceBelow(x, z, this.y));
     if (g - this.y > HEAD + tuning.drive.swimReach) {
       const bed = groundHeight(x, z, true, true);
       if (bed < g) return bed;
@@ -136,6 +148,7 @@ export class FootPhysics {
     } else {
       top = mag <= 0.01 ? 0 : run ? d.runSpeed : d.walkSpeed * clamp(mag / d.runStick, 0.35, 1);
       top *= 1 - (1 - d.wadeSpeed) * (feetDepth / d.swimOn);
+      top *= this.speedMul; // v3 movement: sprint
       accel = d.footAccel * dt * 0.35;
     }
     const tvx = dirX * top, tvz = dirZ * top;

@@ -46,6 +46,10 @@ export class DriveControls {
   private joyBase!: HTMLDivElement;
   private joyKnob!: HTMLDivElement;
   private joyId: number | null = null;
+  // v3 movement: double-tap-to-sprint bookkeeping
+  private joyDownAt = 0;
+  private joyUpAt = -1e9;
+  private sprintLatch = false;
   private stickX = 0;
   private stickY = 0;
   private readonly gasPedal: Pedal;
@@ -57,6 +61,8 @@ export class DriveControls {
   private readonly keys = new Set<string>();
   private touchVisible = false;
   private mode: ControlMode = 'car';
+  /** v3 rides: the hoverboard hops on Space / the ⤒ button (the other rides use Space as the handbrake) */
+  private hopMode = false;
   /** the boost request is a latch: tap = fire (the scene owns the meter) */
   private boostEdge = false;
   // camera drag (on foot)
@@ -67,7 +73,7 @@ export class DriveControls {
   private dPitch = 0;
   /** While true (a sheet or menu is open) all input reads as zero. */
   suspended = false;
-  private readonly car: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false };
+  private readonly car: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false, hop: false };
   private readonly foot: FootInput = { dx: 0, dz: 0, mag: 0, run: false, jump: false };
 
   constructor(parent: HTMLElement, private readonly hooks: ControlHooks) {
@@ -102,6 +108,11 @@ export class DriveControls {
       p.down = false;
       p.el.classList.remove('pressed');
     }
+  }
+  /** ⤒ HOP instead of handbrake (the hoverboard). */
+  setHop(on: boolean): void {
+    this.hopMode = on;
+    this.root.classList.toggle('hop-on', on);
   }
   /** Re-read the sizes from tuning (the debug overlay can change them live). */
   applySizes(): void {
@@ -150,6 +161,8 @@ export class DriveControls {
   dragDown(e: PointerEvent): void {
     if (this.dragId !== null || this.suspended || this.mode !== 'foot') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // ── v3 movement: a finger only looks around on the right of the screen (the left thumb has the stick) ──
+    if (e.pointerType === 'touch' && e.clientX < window.innerWidth * tuning.movement3.lookZoneMinX) return;
     this.dragId = e.pointerId;
     this.dragX = e.clientX;
     this.dragY = e.clientY;
@@ -205,6 +218,7 @@ export class DriveControls {
       out.steer = out.gas = out.brake = 0;
       out.handbrake = false;
       out.boost = false;
+      out.hop = false;
       this.boostEdge = false;
       return out;
     }
@@ -224,7 +238,8 @@ export class DriveControls {
     out.steer = clamp(steer, -1, 1);
     out.gas = gas;
     out.brake = brake;
-    out.handbrake = k.has('Space');
+    out.handbrake = !this.hopMode && k.has('Space');
+    out.hop = this.hopMode && (k.has('Space') || this.jumpPedal.down);
     out.boost = this.boostEdge || this.boostPedal.down;
     this.boostEdge = false;
     return out;
@@ -265,7 +280,7 @@ export class DriveControls {
     out.dx = fx * sy + rx * sx;
     out.dz = fz * sy + rz * sx;
     out.mag = mag;
-    out.run = (keyMag > 0 && (k.has('ShiftLeft') || k.has('ShiftRight'))) || (keyMag === 0 && mag >= d.runStick);
+    out.run = (keyMag > 0 && (k.has('ShiftLeft') || k.has('ShiftRight'))) || (keyMag === 0 && (mag >= d.runStick || (this.sprintLatch && mag > 0.05)));
     out.jump = k.has('Space') || this.jumpPedal.down;
     this.boostEdge = false;
     return out;
@@ -295,6 +310,10 @@ export class DriveControls {
     };
     this.joy.addEventListener('pointerdown', (e) => {
       if (this.joyId !== null) return;
+      // ── v3 movement: double-tap the stick (second press held) to sprint ──
+      const now = performance.now();
+      this.sprintLatch = now - this.joyUpAt < tuning.movement3.doubleTapMs && this.joyUpAt - this.joyDownAt < 380;
+      this.joyDownAt = now;
       this.joyId = e.pointerId;
       try {
         this.joy.setPointerCapture(e.pointerId);
@@ -311,6 +330,8 @@ export class DriveControls {
     const end = (e: PointerEvent): void => {
       if (e.pointerId !== this.joyId) return;
       this.joyId = null;
+      this.joyUpAt = performance.now();
+      this.sprintLatch = false;
       this.stickX = this.stickY = 0;
       this.joyKnob.style.transform = 'translate(0px, 0px)';
       this.joy.classList.remove('active');

@@ -1,6 +1,7 @@
 // Lighting rigs + environments, shared so every scene reads as one style.
-//   goldenHour()   — town / build: low warm sun, cool sky fill, gradient sky, warm fog,
-//                    and a sky environment so car paint and glass catch the sunset.
+//   goldenHour()   — town / build (v3: now a BRIGHT DAY, the name is kept so nobody has to change imports):
+//                    a high warm sun, blue sky fill, gradient sky, pale blue haze, and a sky
+//                    environment so car paint and glass catch the sky.
 //   studioLights() — workshop / style: dark creator studio with a softbox key, pink +
 //                    cyan LED rims and a RING LIGHT that shows up in glossy reflections.
 //   addLights()    — the old neutral rig (kept for anything that still uses it).
@@ -30,7 +31,7 @@ function glow(color: THREE.ColorRepresentation, intensity: number): THREE.MeshBa
   return m;
 }
 
-/** Sunset sky environment for outdoor reflections. */
+/** Daylight sky environment for outdoor reflections (blue dome, green ground bounce, a hot sun). */
 export function skyEnv(): THREE.Texture {
   if (!skyEnvTex) {
     const a = tuning.art;
@@ -39,11 +40,11 @@ export function skyEnv(): THREE.Texture {
       new THREE.SphereGeometry(50, 32, 16),
       new THREE.ShaderMaterial({
         side: THREE.BackSide,
-        uniforms: { top: { value: new THREE.Color(a.skyTop) }, mid: { value: new THREE.Color(a.skyMid) }, bot: { value: new THREE.Color(a.skyBottom) }, ground: { value: new THREE.Color('#5a4c42') } },
+        uniforms: { top: { value: new THREE.Color(a.skyTop) }, mid: { value: new THREE.Color(a.skyMid) }, bot: { value: new THREE.Color(a.skyBottom) }, ground: { value: new THREE.Color('#78a85c') } },
         vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
         fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bot; uniform vec3 ground; varying vec3 vP;
           void main(){ float y = vP.y; vec3 c = y > 0.0 ? mix(mix(bot, mid, smoothstep(0.0, 0.25, y)), top, smoothstep(0.25, 0.9, y)) : mix(bot, ground, smoothstep(0.0, -0.25, y));
-          gl_FragColor = vec4(c * 1.1, 1.0); }`,
+          gl_FragColor = vec4(c * 1.05, 1.0); }`,
       }),
     );
     env.add(dome);
@@ -131,11 +132,11 @@ function shadowed(sun: THREE.DirectionalLight, size: number): void {
   sun.shadow.mapSize.set(tuning.art.shadowMapSize, tuning.art.shadowMapSize);
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
-  sun.shadow.radius = 4;
+  sun.shadow.radius = tuning.art.shadowRadius; // v3: crisp but soft
 }
 
 /**
- * Golden hour for outdoor scenes. The sun is a DirectionalLight placed along
+ * The bright-day rig for outdoor scenes (still called goldenHour). The sun is a DirectionalLight placed along
  * sunDirection() at `distance` from its target — move `rig.sun.target` (and the
  * sun with it) to keep shadows near the camera/car.
  */
@@ -143,7 +144,7 @@ export function goldenHour(scene: THREE.Scene, opts: { shadowSize?: number; shad
   const a = tuning.art;
   scene.background = gradientTexture(a.skyTop, a.skyBottom, a.skyMid);
   scene.environment = skyEnv();
-  scene.environmentIntensity = 0.75;
+  scene.environmentIntensity = a.dayEnvIntensity;
   if (opts.fog !== false) scene.fog = new THREE.Fog(a.fogColor, a.fogNear, a.fogFar);
   const hemi = new THREE.HemisphereLight(a.hemiSky, a.hemiGround, a.hemiIntensity);
   scene.add(hemi);

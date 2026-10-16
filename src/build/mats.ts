@@ -7,11 +7,14 @@ import { patternTexture, type PatternId } from './patterns';
 
 export type Fin =
   | 'paint' | 'wood' | 'fabric' | 'metal' | 'mirror' | 'gloss' | 'glass' | 'water' | 'glow' | 'rgb'
-  | 'brick' | 'panel' | 'stripe' | 'tile' | 'oak' | 'dark' | 'marble' | 'checker' | 'carpet' | 'concrete' | 'shingle';
+  | 'brick' | 'panel' | 'stripe' | 'tile' | 'oak' | 'dark' | 'marble' | 'checker' | 'carpet' | 'concrete' | 'shingle'
+  // v3 world builds: the same patterns at chunky world scale
+  | 'wplank' | 'wbrick' | 'wsteel' | 'wshingle';
 
 export const FINS: Fin[] = [
   'paint', 'wood', 'fabric', 'metal', 'mirror', 'gloss', 'glass', 'water', 'glow', 'rgb',
   'brick', 'panel', 'stripe', 'tile', 'oak', 'dark', 'marble', 'checker', 'carpet', 'concrete', 'shingle',
+  'wplank', 'wbrick', 'wsteel', 'wshingle',
 ];
 
 /** Fins that carry a pattern texture, and how many world units one texture tile covers. */
@@ -27,6 +30,10 @@ export const MAPPED: Partial<Record<Fin, { pattern: PatternId; scale: number }>>
   carpet: { pattern: 'carpet', scale: 0.5 },
   concrete: { pattern: 'concrete', scale: 1 },
   shingle: { pattern: 'shingle', scale: 1 },
+  wplank: { pattern: 'plank', scale: 2.4 },       // 8 boards per 2.4 m: a board is 0.3 m tall
+  wbrick: { pattern: 'brick', scale: 3.2 },       // courses 0.2 m, bricks 0.8 m: chunky and readable at distance
+  wsteel: { pattern: 'steel', scale: 3.2 },       // riveted 1.6 m panels
+  wshingle: { pattern: 'shingle', scale: 2.4 },
 };
 
 /** Finishes that never cast shadows. */
@@ -61,7 +68,8 @@ function make(f: Fin): THREE.Material {
     }
     default: {
       const m = MAPPED[f]!;
-      const rough = f === 'marble' ? 0.18 : f === 'tile' ? 0.3 : f === 'checker' ? 0.3 : f === 'carpet' ? 0.95 : f === 'brick' ? 0.9 : f === 'shingle' ? 0.82 : f === 'concrete' ? 0.9 : 0.58;
+      if (f === 'wsteel') return new THREE.MeshStandardMaterial({ ...vc, map: patternTexture(m.pattern), roughness: 0.42, metalness: 0.4 });
+      const rough = f === 'marble' ? 0.18 : f === 'tile' ? 0.3 : f === 'checker' ? 0.3 : f === 'carpet' ? 0.95 : f === 'brick' || f === 'wbrick' ? 0.9 : f === 'shingle' || f === 'wshingle' ? 0.82 : f === 'concrete' ? 0.9 : 0.58;
       const phys = f === 'marble' || f === 'tile' || f === 'checker';
       const opts = { ...vc, map: patternTexture(m.pattern), roughness: rough, metalness: 0 };
       if (phys) return new THREE.MeshPhysicalMaterial({ ...opts, clearcoat: f === 'marble' ? 0.6 : 0.3, clearcoatRoughness: 0.18 });

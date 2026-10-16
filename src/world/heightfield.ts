@@ -1,14 +1,16 @@
-// The ground under everything: rolling hills, the Lookout Hill cone (with its
-// road bed carved in), the beach + sea, the lake, a hilly rim around the map,
-// plus analytic overlay surfaces (stunt ramps, the bridge, the pier, stairs
-// and roof terraces). Pure maths — no three.js — so physics, scenery and the
+// The ground under everything: an island with sea on every side (beaches and some
+// cliffs), rolling countryside, the Lookout Hill cone (with its road bed carved in),
+// the lake, the new places (a snowy peak, flower hills, a mushroom grove, red dunes
+// with a lazy river), plus analytic overlay surfaces (stunt ramps, the bridge, the pier,
+// stairs and roof terraces). Pure maths, no three.js, so physics, scenery and the
 // terrain meshes all agree on the same numbers.
 //
 //   groundHeight(x, z)           what the car drives on
 //   groundHeight(x, z, true)     what a walker stands on (also stairs + roof decks)
 //   terrainHeight(x, z)          the smooth base terrain only (cached 2-unit grid)
+//   shoreDist(x, z)              metres inland from the waterline (+ land, - sea)
 import {
-  BOUNDS, BRIDGES, DECKS, GROUND, LOOKOUT, PIERS, ROAD_PATHS, SPIRAL, STAIRS, STUNTS, WATER_Y,
+  BAY, BRIDGES, DECKS, GROUND, GROVE, ISLAND_DISCS, LOOKOUT, MEADOW, PIERS, ROAD_PATHS, SANDS, SPIRAL, STAIRS, STUNTS, SUMMIT, WATER_Y,
   nearestRoad, type Stunt,
 } from './townLayout';
 
@@ -16,10 +18,8 @@ const STEP = 2;
 const N = Math.round((GROUND * 2) / STEP) + 1;
 
 export const LAKE = { x: 88, z: -100, rx: 25, rz: 19 };
-/** x of the shoreline for a given z (the sea lies to the east). */
+/** x of the shoreline of Sandcastle Bay for a given z (the sea lies to the east of it). */
 export const coastX = (z: number): number => 112 + 5 * Math.sin(z / 31) + 3 * Math.sin(z / 13 + 1);
-/** 1 along the beach / south-east where the sea lies, 0 up in the park (land all the way east). */
-const seaWeight = (z: number): number => smooth(-74, -58, z);
 
 // ── tiny noise ──────────────────────────────────────────────────────────────
 function hash(ix: number, iz: number, seed: number): number {
@@ -54,6 +54,39 @@ function flatness(x: number, z: number): number {
   );
 }
 
+// ── v3 world: the island ────────────────────────────────────────────────────
+const smax = (a: number, b: number, k: number): number => {
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.max(a, b) + h * h * k * 0.25;
+};
+
+/** Metres inland from the waterline: > 0 is land, < 0 is sea. The land is a smooth union of discs with a wiggly coast and a bay cut on the east. */
+export function shoreDist(x: number, z: number): number {
+  let s = -1e9;
+  for (let i = 0; i < ISLAND_DISCS.length; i++) {
+    const d = ISLAND_DISCS[i];
+    const v = d.r - Math.hypot(x - d.x, z - d.z);
+    s = i === 0 ? v : smax(s, v, 44);
+  }
+  s += (vnoise(x / 64 + 3, z / 64, 41) - 0.5) * 20 + (vnoise(x / 26, z / 26 + 9, 42) - 0.5) * 6;
+  // Sandcastle Bay: the old east coast, exactly as it was, fading out over BAY.fade metres at each end
+  const w = smooth(BAY.z0 - BAY.fade, BAY.z0, z) * (1 - smooth(BAY.z1, BAY.z1 + BAY.fade, z));
+  if (w > 0) s = s * (1 - w) + Math.min(s, coastX(z) - x) * w;
+  return s;
+}
+
+/** 0..1: how cliffy the coast is here (beaches around the places that want them). */
+export function cliffiness(x: number, z: number): number {
+  let c = smooth(0.5, 0.63, vnoise(x / 120 + 7, z / 120 + 3, 31));
+  const bay = smooth(-90, -60, z) * (1 - smooth(80, 110, z)) * smooth(40, 80, x);
+  const sands = 1 - smooth(100, 130, Math.hypot(x - SANDS.x, z - SANDS.z));
+  const meadow = 1 - smooth(100, 130, Math.hypot(x - MEADOW.x, z - MEADOW.z));
+  const home = 1 - smooth(70, 100, Math.hypot(x + 150, z - 5)); // the west beach below Home Hills
+  c *= 1 - Math.max(bay, sands, meadow, home);
+  c = Math.max(c, 1 - smooth(SUMMIT.z - 74, SUMMIT.z - 46, z)); // high cliffs on the far side of the peak
+  return c;
+}
+
 /** Lookout Hill: a cone whose slope IS the road's climb, plus a flat top. */
 function lookoutH(r: number): number {
   const { r0, r1, exp } = SPIRAL;
@@ -66,16 +99,79 @@ function lookoutH(r: number): number {
 const lookoutPath = ROAD_PATHS.findIndex((p) => p.id === 'lookout');
 const lookoutElev = ROAD_PATHS[lookoutPath].elev!;
 
-function rawHeight(x: number, z: number): number {
+/** Sprinkle Summit: a gentle shelf, a steep ridged peak above it, a flat pad for the ski lodge. */
+function summitH(x: number, z: number): number {
+  const dx = x - SUMMIT.x, dz = z - SUMMIT.z;
+  const r = Math.hypot(dx, dz);
+  if (r > SUMMIT.shelfR1) return 0;
+  const th = Math.atan2(dz, dx);
+  const rr = r * (1 + 0.14 * Math.sin(3 * th + 1) + 0.08 * Math.sin(5 * th + 2.3) + 0.05 * Math.sin(9 * th));
+  const shelf = SUMMIT.shelf * (1 - smooth(SUMMIT.shelfR0, SUMMIT.shelfR1, r));
+  const k = 1 - smooth(0, SUMMIT.peakR, rr);
+  const peak = SUMMIT.peak * Math.pow(k, 1.25);
+  const rocks = (vnoise(x / 26, z / 26, 71) - 0.5) * 8 * Math.sqrt(k) + (vnoise(x / 11, z / 11, 72) - 0.5) * 1.6 * k;
+  let h = shelf + peak + rocks;
+  const pd = Math.hypot(x - SUMMIT.pad.x, z - SUMMIT.pad.z);
+  const pw = 1 - smooth(SUMMIT.pad.r, SUMMIT.pad.r + 18, pd);
+  if (pw > 0) h = h * (1 - pw) + SUMMIT.pad.h * pw;
+  return h;
+}
+
+/** Bloom Meadow: soft rolling hills with a rounded crest under every windmill. */
+function meadowH(x: number, z: number): number {
+  const dist = Math.hypot(x - MEADOW.x, z - MEADOW.z);
+  const mw = 1 - smooth(MEADOW.r - 16, MEADOW.r + 26, dist);
+  if (mw <= 0) return 0;
+  let h = ((vnoise(x / 70 + 5, z / 70, 61) - 0.3) * 10 + (vnoise(x / 30, z / 30, 62) - 0.5) * 2.2) * mw;
+  for (const [wx, wz] of MEADOW.windmills) h += 3.4 * (1 - smooth(0, 22, Math.hypot(x - wx, z - wz)));
+  return h;
+}
+
+/** Sunny Sands: big smooth dunes, a flat resort, and the lazy river ring (carved below the waterline so it fills). */
+function sandsH(x: number, z: number, h: number): number {
+  const dist = Math.hypot(x - SANDS.x, z - SANDS.z);
+  const sw = 1 - smooth(SANDS.r - 6, SANDS.r + 30, dist);
+  if (sw <= 0) return h;
+  const d1 = Math.sin((x * 0.7 + z * 0.45) / 15 + vnoise(x / 40, z / 40, 91) * 4) * 0.5 + 0.5;
+  h += (1.8 + 3.4 * d1 * d1 + 2 * vnoise(x / 50, z / 50, 92)) * sw;
+  const P = SANDS.park;
+  const pd = Math.hypot(x - P.x, z - P.z);
+  const flat = 1 - smooth(P.ring + 22, P.ring + 46, pd);
+  if (flat > 0) h = h * (1 - flat) + 1.5 * flat;
+  const cw = P.w / 2;
+  const dd = Math.abs(pd - P.ring);
+  if (dd < cw + 4.5) {
+    const t = smooth(cw - 1, cw + 4.5, dd);
+    h = -1.9 * (1 - t) + h * t;
+  }
+  return h;
+}
+
+/** Glow Grove: mossy hummocks and a small pond. */
+function groveH(x: number, z: number, h: number): number {
+  const dist = Math.hypot(x - GROVE.x, z - GROVE.z);
+  const gw = 1 - smooth(GROVE.r - 14, GROVE.r + 22, dist);
+  if (gw > 0) h += (vnoise(x / 20, z / 20, 81) * 2.4 + vnoise(x / 8, z / 8, 82) * 0.5 + 0.6) * gw;
+  const P = GROVE.pond;
+  const q = Math.hypot(x - P.x, z - P.z) / P.r;
+  if (q < 1.6) {
+    const t = smooth(0.55, 1.6, q);
+    h = -1.5 * (1 - t) + h * t;
+  }
+  return h;
+}
+
+/** The countryside before the coast is applied: rolling hills, the Lookout cone, the park lake and every new place. */
+function interior(x: number, z: number): number {
   const flat = flatness(x, z);
-  // rolling countryside: always above sea level (water only where we put it)
+  // rolling countryside: always above sea level (water only where we put it); gentle, so a car never gets stuck
   let h = (vnoise(x / 46, z / 46, 1) * 2.4 + vnoise(x / 19, z / 19, 2) * 0.45) * (1 - flat);
   h *= 1 - 0.5 * softRect(x, z, 85, -104, 55, 45, 20); // the park is calmer
   const hillR = Math.hypot(x - LOOKOUT.x, z - LOOKOUT.z);
   h *= 0.2 + 0.8 * smooth(SPIRAL.r0 - 12, SPIRAL.r0 + 8, hillR); // keep the cone (and its road) clean
 
   // Lookout Hill
-  const lr = Math.hypot(x - LOOKOUT.x, z - LOOKOUT.z);
+  const lr = hillR;
   if (lr < SPIRAL.r0 + 18) {
     h += lookoutH(lr);
     if (lr < SPIRAL.r0 + 12) {
@@ -92,13 +188,12 @@ function rawHeight(x: number, z: number): number {
     }
   }
 
-  // Beach and sea (to the east)
-  const d = x - coastX(z);
-  const wb = smooth(-46, -30, d) * seaWeight(z);
-  if (wb > 0) {
-    const hb = d <= 0 ? 0.35 - 0.7 * smooth(-22, 0, d) : WATER_Y - 1.75 * smooth(0, 18, d);
-    h = h * (1 - wb) + hb * wb;
-  }
+  // the new places
+  h += summitH(x, z) * (1 - flat);
+  h += meadowH(x, z);
+  h = groveH(x, z, h);
+  h = Math.max(h, 0.25); // never flooded by accident
+  h = sandsH(x, z, h);
 
   // Lake
   const lx = (x - LAKE.x) / LAKE.rx, lz = (z - LAKE.z) / LAKE.rz;
@@ -108,11 +203,40 @@ function rawHeight(x: number, z: number): number {
     const s = smooth(0.7, 1.4, q);
     h = -1.7 * (1 - s) + h * s;
   }
+  return h;
+}
 
-  // A hilly rim beyond the edge of the map (not on the sea side)
-  const edge = Math.max(-x, Math.abs(z), x * (1 - seaWeight(z)));
-  const wr = smooth(BOUNDS - 6, BOUNDS + 50, edge);
-  if (wr > 0) h += wr * (16 + 10 * vnoise(x / 30, z / 30, 7));
+/** A little rocky islet / sandbar: raises the floor to `top` metres (absolute) inside r. */
+function islet(h: number, x: number, z: number, cx: number, cz: number, r: number, top: number): number {
+  const t = 1 - smooth(r * 0.35, r, Math.hypot(x - cx, z - cz));
+  return t > 0 ? h * (1 - t) + top * t : h;
+}
+
+/** Rocky islets in the sea (swim out to them; charms sit on a few). */
+export const ISLETS: { x: number; z: number; r: number; top: number }[] = [
+  { x: 166, z: -14, r: 11, top: 1.4 },    // the bay's rock
+  { x: 232, z: -40, r: 9, top: 1.2 },
+];
+
+function rawHeight(x: number, z: number): number {
+  const s = shoreDist(x, z);
+  const deepFloor = WATER_Y - 6.95;
+  if (s < -112) return deepFloor;
+  const c = cliffiness(x, z);
+  let h: number;
+  if (s <= 0) {
+    // the sea floor: a shallow shelf off a beach, a quick drop off a cliff, then deep water
+    const d = -s;
+    h = WATER_Y - 1.75 * smooth(0, 18, d) * (1 - c) - 4.5 * smooth(0, 10, d) * c - 5.2 * smooth(30, 110, d);
+    for (const it of ISLETS) h = islet(h, x, z, it.x, it.z, it.r, it.top);
+    return h;
+  }
+  // beach ramp, blended into the countryside between 30 and 46 m inland (the old beach, unchanged)
+  const hb = WATER_Y + 0.7 * smooth(0, 22, s);
+  const wi = smooth(30, 46, s);
+  h = hb * (1 - wi) + (wi > 0 ? interior(x, z) * wi : 0);
+  // cliffs: a raised rim that rolls off inland
+  if (c > 0) h += c * (6 + 7 * vnoise(x / 45 + 11, z / 45, 33)) * smooth(0, 8, s) * (1 - 0.8 * smooth(24, 100, s));
   return h;
 }
 
@@ -120,8 +244,9 @@ function rawHeight(x: number, z: number): number {
 let grid: Float32Array | null = null;
 function build(): Float32Array {
   const g = new Float32Array(N * N);
-  for (let iz = 0; iz < N; iz++)
-    for (let ix = 0; ix < N; ix++) g[iz * N + ix] = rawHeight(-GROUND + ix * STEP, -GROUND + iz * STEP);
+  // terrainHeight only reads the vertices the mesh draws (every 2nd sample), so only those are computed
+  for (let iz = 0; iz < N; iz += 2)
+    for (let ix = 0; ix < N; ix += 2) g[iz * N + ix] = rawHeight(-GROUND + ix * STEP, -GROUND + iz * STEP);
   return g;
 }
 

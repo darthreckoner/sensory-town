@@ -2,11 +2,15 @@
 // Build scene and anything that needs to know where things are.
 // World units; +x east, +z south; 1 unit ≈ 1 metre. Heading 0 = facing -z (north).
 //
+// v3: an ISLAND. Sea on every side (beaches, some cliffs); nothing invisible at the edge.
+//
+//                      Sprinkle Summit (N)  snowy peak + ski lodge
 //   Lookout Hill (NW)                                  Park & Lake (NE)
 //        spiral road up to a viewpoint                   lake + bridge + maze
-//   Home Hills (W)         DOWNTOWN (centre)             Beach & Pier (E)
+//   Home Hills (W)         DOWNTOWN (centre)       Sandcastle Bay (E, a bay with a pier)
 //        12 build lots       Studio · shops · mall         sea, boardwalk, lighthouse
-//                        Skate & Stunt Park (S)
+//   Glow Grove (SW)       Skate & Stunt Park (S)        Sunny Sands (SE) desert + lazy river
+//                         Bloom Meadow (far S)  windmills + a balloon
 //
 // Heights (hills, the lake, the sea, ramps, bridges) live in ./heightfield.ts,
 // which reads the data below.
@@ -21,9 +25,46 @@ export interface Charm { id: string; x: number; z: number; y?: number }
 
 export const ROAD_WIDTH = 10;  // downtown streets
 export const SIDEWALK = 2.4;   // sidewalk width beside walkable streets
-export const BOUNDS = 150;     // drivable half-size (soft wall)
-export const GROUND = 215;     // terrain mesh half-size (hills beyond the bounds)
+export const BOUNDS = 412;     // v3: half-size of the world. The island sits well inside it: the sea IS the edge (this only stops a very long swim)
+export const GROUND = 420;     // terrain mesh half-size (deep sea beyond the island, a far ocean plane beyond that)
 export const WATER_Y = -0.35;  // sea / lake surface
+
+// ── v3 island shape + new places (read by heightfield.ts, terrain.ts and the POI builders) ──
+/** The land is the smooth union of these discs (x, z, radius to the waterline), minus the bay on the east side. */
+export interface IslandDisc { x: number; z: number; r: number }
+export const ISLAND_DISCS: IslandDisc[] = [
+  { x: -40, z: -10, r: 200 },    // the main body: downtown, Home Hills, the skate park
+  { x: -95, z: -125, r: 116 },   // Lookout Hill
+  { x: 100, z: -105, r: 95 },    // Giggle Gardens
+  { x: 62, z: -250, r: 108 },    // Sprinkle Summit
+  { x: 62, z: -178, r: 104 },    // the foothills and the ski lodge's flat (a fat neck between the park and the peak)
+  { x: 150, z: 140, r: 84 },     // Sunny Sands
+  { x: 30, z: 190, r: 84 },      // Bloom Meadow
+  { x: -150, z: 125, r: 84 },    // Glow Grove
+];
+/** Sandcastle Bay: east of coastX(z) is sea for z between these (fading over `fade` metres at each end). */
+export const BAY = { z0: -52, z1: 66, fade: 14 };
+
+/** Sprinkle Summit: a steep snowy peak on a gently sloping shelf, a ski lodge on a flat pad reached by a road. */
+export const SUMMIT = {
+  x: 62, z: -262, shelf: 12, peak: 62, peakR: 92, shelfR0: 92, shelfR1: 158,
+  pad: { x: 62, z: -166, r: 30, h: 11.2 },
+  lodge: { x: 62, z: -181, w: 28, d: 15 },     // front (door) faces south
+};
+/** Bloom Meadow: rolling flower hills, windmills on the crests, a tethered hot-air balloon. */
+export const MEADOW = {
+  x: 30, z: 190, r: 84,
+  windmills: [[6, 166], [62, 210], [-18, 216]] as [number, number][],
+  balloon: { x: 44, z: 198 },
+};
+/** Glow Grove: a mossy forest with giant glowing mushrooms, fireflies and a little pond. */
+export const GROVE = { x: -150, z: 125, r: 80, pond: { x: -131, z: 144, r: 13 } };
+/** Sunny Sands: red dunes, rock arches and a lazy-river water park. */
+export const SANDS = {
+  x: 150, z: 140, r: 82,
+  park: { x: 160, z: 150, ring: 23, w: 8 },       // the lazy river: a ring canal around a resort island
+  arches: [[112, 178, 0.4], [196, 112, -0.9], [128, 112, 0.0]] as [number, number, number][],
+};
 
 // ── Road network ────────────────────────────────────────────────────────────
 export type RoadKind = 'street' | 'road' | 'drive' | 'trail' | 'boardwalk';
@@ -64,6 +105,11 @@ function spline(ctrl: [number, number][], step = 4): [number, number][] {
   }
   out.push(ctrl[ctrl.length - 1]);
   return out;
+}
+
+/** A closed loop around (cx, cz): `n` points on a circle (first point repeated at the end). */
+function loopPts(cx: number, cz: number, r: number, n = 40, a0 = 0): [number, number][] {
+  return Array.from({ length: n + 1 }, (_, i): [number, number] => [cx + Math.cos(a0 + (i / n) * Math.PI * 2) * r, cz + Math.sin(a0 + (i / n) * Math.PI * 2) * r]);
 }
 
 // Home Hills: the curvy spine street runs west from the end of Main Street.
@@ -135,6 +181,18 @@ export const ROAD_PATHS: RoadPath[] = [
   { id: 'beach_link', pts: densify([[80, 0], [92, 0]], 4), w: 5, kind: 'boardwalk' },
   // ── Skate Park ──
   { id: 'skate_in', pts: densify([[0, 82], [0, 96]], 6), w: ROAD_WIDTH - 1, kind: 'road', lines: 'center' },
+  // ── v3 world: roads out to the new places ──
+  // Sprinkle Summit: from the end of the park road north across the foothills to the ski lodge
+  { id: 'summit_rd', pts: spline([[52, -100], [46, -116], [44, -132], [52, -146], [62, -158]], 4), w: 8, kind: 'road', lines: 'center' },
+  // Bloom Meadow: south from the big loop's corner, then a loop round the windmill hills
+  { id: 'meadow_rd', pts: spline([[80, 70], [84, 92], [78, 116], [66, 140], [52, 164], [40, 184], [32, 192]], 4), w: 8, kind: 'road', lines: 'center' },
+  { id: 'meadow_loop', pts: loopPts(30, 190, 30, 40, 0.5), w: 7, kind: 'road', lines: 'dash' },
+  // Sunny Sands: south-east to the resort, which has a ring road around the lazy river
+  { id: 'sands_rd', pts: spline([[80, 70], [96, 84], [112, 100], [127, 117.5]], 4), w: 8, kind: 'road', lines: 'center' },
+  { id: 'sands_loop', pts: loopPts(160, 150, 46, 48, 0.2), w: 7, kind: 'road', lines: 'dash' },
+  // Glow Grove: west along the south edge of Home Hills, then a winding trail through the mushrooms
+  { id: 'grove_rd', pts: spline([[-58, 70], [-86, 62], [-112, 72], [-134, 92], [-148, 110]], 4), w: 8, kind: 'road', lines: 'center' },
+  { id: 'grove_trail', pts: spline([[-148, 110], [-168, 126], [-160, 148], [-136, 160], [-118, 146], [-128, 126], [-148, 110]], 3), w: 3.4, kind: 'trail' },
 ];
 
 /** Axis-aligned straight roads as rectangles (kept for older callers). */
@@ -220,6 +278,8 @@ export const PAVED: (Rect & { id: string })[] = [
   { id: 'lookout_top', x: LOOKOUT.x, z: LOOKOUT.z, w: 20, d: 20 },
   { id: 'mall_lot', x: 21, z: 31.6, w: 26, d: 6 },
   { id: 'yard_lot', x: -56, z: 28, w: 20, d: 18 },
+  // v3: the ski lodge forecourt
+  { id: 'summit_plaza', x: SUMMIT.x, z: -164, w: 36, d: 14 },
 ];
 
 // ── House plots (Home Hills) ────────────────────────────────────────────────
@@ -329,6 +389,11 @@ export const DISTRICTS: District[] = [
   { id: 'park', name: 'Park & Lake', icon: '🌳', x: 85, z: -104, radius: 55 },
   { id: 'skate', name: 'Skate Park', icon: '🛹', x: -28, z: 108, radius: 48 },
   { id: 'lookout', name: 'Lookout Hill', icon: '🔭', x: LOOKOUT.x, z: LOOKOUT.z, radius: 60 },
+  // v3
+  { id: 'summit', name: 'Sprinkle Summit', icon: '🏔️', x: SUMMIT.x, z: SUMMIT.z + 40, radius: 78 },
+  { id: 'meadow', name: 'Bloom Meadow', icon: '🌼', x: MEADOW.x, z: MEADOW.z, radius: 72 },
+  { id: 'grove', name: 'Glow Grove', icon: '🍄', x: GROVE.x, z: GROVE.z, radius: 70 },
+  { id: 'sands', name: 'Sunny Sands', icon: '🏜️', x: SANDS.x, z: SANDS.z, radius: 70 },
 ];
 
 /** The Build town view frames this (the neighbourhood where houses go). */
@@ -345,6 +410,13 @@ export const LANDMARKS: Landmark[] = [
   { id: 'maze', name: 'Hedge Maze', icon: '🌿', x: 123, z: -128, radius: 14 },
   { id: 'halfpipe', name: 'Half-pipe', icon: '🛹', x: -46, z: 124, radius: 12 },
   { id: 'lookout', name: 'Lookout', icon: '🔭', x: LOOKOUT.x, z: LOOKOUT.z, radius: 15 },
+  // v3
+  { id: 'lodge', name: 'Ski Lodge', icon: '⛷️', x: SUMMIT.lodge.x, z: SUMMIT.lodge.z, radius: 16 },
+  { id: 'windmill', name: 'Windmills', icon: '🌬️', x: MEADOW.windmills[0][0], z: MEADOW.windmills[0][1], radius: 8 },
+  { id: 'balloon', name: 'Hot-air Balloon', icon: '🎈', x: MEADOW.balloon.x, z: MEADOW.balloon.z, radius: 8 },
+  { id: 'mushrooms', name: 'Giant Mushrooms', icon: '🍄', x: GROVE.x, z: GROVE.z, radius: 14 },
+  { id: 'arch', name: 'Rock Arch', icon: '🪨', x: SANDS.arches[0][0], z: SANDS.arches[0][1], radius: 12 },
+  { id: 'lazyriver', name: 'Lazy River', icon: '🛟', x: SANDS.park.x, z: SANDS.park.z, radius: 30 },
 ];
 
 /** Pickup / drop-off spots (on or next to a road, always drivable). */
@@ -361,6 +433,11 @@ export const JOB_SPOTS: Spot[] = [
   { id: 'gazebo', name: 'Gazebo', icon: '⛲', x: 52, z: -80 },
   { id: 'skate', name: 'Skate Park', icon: '🛹', x: -6, z: 86 },
   { id: 'cafe', name: 'Diner', icon: '🍔', x: 62, z: 7 },
+  // v3
+  { id: 'lodge', name: 'Ski Lodge', icon: '⛷️', x: 62, z: -160 },
+  { id: 'meadow', name: 'Windmill Meadow', icon: '🌼', x: 52, z: 164 },
+  { id: 'sands', name: 'Water Park', icon: '🛟', x: 127, z: 117.5 },
+  { id: 'grove', name: 'Glow Grove', icon: '🍄', x: -148, z: 110 },
 ];
 
 /** The first spot of every session: Main Street, heading east, with the Studio ahead on the left. */
@@ -451,6 +528,9 @@ export const STUNTS: Stunt[] = [
 export interface Bridge { id: string; ax: number; az: number; bx: number; bz: number; w: number; peak: number; endY: number }
 export const BRIDGES: Bridge[] = [
   { id: 'lake', ax: 54, az: -100, bx: 122, bz: -100, w: 8, peak: 3.2, endY: 0.4 },
+  // v3: footbridges across the Sunny Sands lazy river (drawn by drive/sands.ts)
+  { id: 'canal_w', ax: SANDS.park.x - 31, az: SANDS.park.z, bx: SANDS.park.x - 15, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
+  { id: 'canal_e', ax: SANDS.park.x + 15, az: SANDS.park.z, bx: SANDS.park.x + 31, bz: SANDS.park.z, w: 4, peak: 3.4, endY: 1.5 },
 ];
 
 /** Piers (flat decks over the water). */
@@ -496,3 +576,73 @@ export function isReserved(x: number, z: number): boolean {
   if (Math.abs(x - y.center.x) < 11 && Math.abs(z - y.center.z) < 10) return true;
   return Math.abs(x) > BOUNDS || Math.abs(z) > BOUNDS;
 }
+
+// ── v3 world ────────────────────────────────────────────────────────────────
+// Data contracts for the rides / movement / build / locker agents (W3, W4, W5, W2).
+// Positions are final-ish: the island is being reshaped around them (see DESIGN.md v3).
+import type { VehicleKind } from '../core/model';
+
+/** Every place with a title card: the old districts plus the new POIs. `r` = metres from (x, z) that count as "in" it. */
+export interface Poi { id: string; name: string; x: number; z: number; r: number }
+export const POIS: Poi[] = [
+  { id: 'downtown', name: 'Sparkle Square', x: 0, z: 0, r: 68 },
+  { id: 'homehills', name: 'Cozy Hills', x: -100, z: 3, r: 56 },
+  { id: 'beach', name: 'Sandcastle Bay', x: 104, z: 8, r: 50 },
+  { id: 'park', name: 'Giggle Gardens', x: 90, z: -104, r: 55 },
+  { id: 'skate', name: 'Rascal Ramps', x: -28, z: 108, r: 50 },
+  { id: 'lookout', name: 'Wonder Lookout', x: -95, z: -122, r: 62 },
+  { id: 'summit', name: 'Sprinkle Summit', x: 65, z: -222, r: 78 },
+  { id: 'meadow', name: 'Bloom Meadow', x: 30, z: 190, r: 72 },
+  { id: 'grove', name: 'Glow Grove', x: -150, z: 125, r: 70 },
+  { id: 'sands', name: 'Sunny Sands', x: 150, z: 140, r: 70 },
+];
+
+/** A parked ride: `heading` follows the car convention (0 = facing -z / north, π/2 = east). Boats sit on water. */
+export interface RideSpawn { kind: VehicleKind; x: number; z: number; heading: number }
+export const RIDE_SPAWNS: RideSpawn[] = [
+  // Sparkle Square
+  { kind: 'sports', x: 11, z: -10, heading: 0 },
+  { kind: 'icecream', x: -36, z: 3.5, heading: Math.PI / 2 },
+  { kind: 'hoverboard', x: 31, z: -10, heading: 0 },
+  // Cozy Hills
+  { kind: 'golfcart', x: -82, z: 8, heading: -Math.PI / 2 },
+  { kind: 'pickup', x: -56, z: 26, heading: Math.PI },
+  // Rascal Ramps
+  { kind: 'hoverboard', x: -20, z: 86, heading: 0 },
+  { kind: 'sports', x: 3, z: 88, heading: 0 },
+  // Sandcastle Bay (boats by the pier)
+  { kind: 'golfcart', x: 90, z: 24, heading: 0 },
+  { kind: 'boat', x: 126, z: 22, heading: Math.PI / 2 },
+  { kind: 'boat', x: 126, z: 2, heading: Math.PI / 2 },
+  // Giggle Gardens
+  { kind: 'pickup', x: 50, z: -78, heading: Math.PI },
+  { kind: 'boat', x: 100, z: -92, heading: 1.2 },
+  // Wonder Lookout
+  { kind: 'sports', x: -92, z: -64, heading: -Math.PI / 2 },
+  // Sprinkle Summit
+  { kind: 'pickup', x: 62, z: -178, heading: 0 },
+  // Bloom Meadow
+  { kind: 'golfcart', x: 40, z: 160, heading: 0 },
+  { kind: 'icecream', x: 56, z: 150, heading: Math.PI },
+  // Glow Grove
+  { kind: 'hoverboard', x: -146, z: 108, heading: 0 },
+  // Sunny Sands
+  { kind: 'sports', x: 140, z: 118, heading: 0 },
+  { kind: 'boat', x: 150, z: 40, heading: 0 },
+];
+
+/** Bouncy launch pads (centre of each pad). */
+export const LAUNCH_PADS: { x: number; z: number }[] = [
+  { x: 96, z: 40 },       // beach: bounce out over the bay
+  { x: -3, z: 56 },       // south end of Center Avenue
+  { x: -20, z: 120 },     // Rascal Ramps
+  { x: 72, z: -82 },      // Giggle Gardens, by the lake
+  { x: 60, z: -182 },     // Sprinkle Lodge: bounce toward the peak
+  { x: 30, z: 160 },      // Bloom Meadow hilltop
+  { x: 150, z: 120 },     // Sunny Sands dune
+  { x: -150, z: 100 },    // Glow Grove clearing
+  { x: -112, z: -112 },   // Wonder Lookout plateau
+];
+
+/** The party bus: a straight line high across the island (y metres above sea level). */
+export const BUS_PATH = { ax: -290, az: -170, bx: 300, bz: 200, y: 80 };

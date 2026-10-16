@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 
 export type PatternId =
-  | 'brick' | 'panel' | 'stripe' | 'tile' | 'oak' | 'dark' | 'marble' | 'checker' | 'carpet' | 'concrete' | 'shingle';
+  | 'brick' | 'panel' | 'stripe' | 'tile' | 'oak' | 'dark' | 'marble' | 'checker' | 'carpet' | 'concrete' | 'shingle'
+  | 'plank' | 'steel';   // v3 world builds
 
 export const PATTERN_SIZE = 256;
 
@@ -120,6 +121,37 @@ export function makePattern(id: PatternId, size = PATTERN_SIZE): Uint8Array {
           const speck = hash(x, y, 14) > 0.96 ? -0.08 : 0;
           if (fx < 3 || fy < 3) v = 0.52;
           else v = 0.86 + 0.08 * hash(tx, ty, 19) + (fbm(X / 16, Y / 16, 16, 23) - 0.5) * 0.1 + speck;
+          break;
+        }
+        // ── v3 build: chunky world-scale wood planks and riveted steel panels ──
+        case 'plank': {
+          const rh = 32, row = Math.floor(Y / rh), fy = Y % rh;      // 8 boards per tile
+          const joint = hash(row, 0, 71) * 256;
+          const off = (((X - joint) % 256) + 256) % 256;
+          const seg = off >= 128 ? 1 : 0;
+          const tone = 0.8 + 0.2 * hash(row, seg, 73);
+          const grain = (vnoise(X * 0.03, Y * 0.7, 16, 75 + row) - 0.5) * 0.2 + (vnoise(X * 0.12, Y * 1.6, 64, 77) - 0.5) * 0.07;
+          v = tone + grain;
+          if (fy < 2.2) v = 0.36;
+          else if (fy > rh - 2.4) v *= 0.88;
+          if (off % 128 < 2.2) v = Math.min(v, 0.4);
+          const ox = off % 128;
+          for (const nx of [9, 119]) for (const ny of [9, 23]) if (Math.hypot(ox - nx, fy - ny) < 2.6) v = 0.28;   // nail heads
+          break;
+        }
+        case 'steel': {
+          const px = X % 128, py = Y % 128;                          // 2 x 2 panels per tile
+          const edge = Math.min(px, py, 127 - px, 127 - py);
+          const n = (vnoise(X * 0.02, Y * 1.2, 32, 83) - 0.5) * 0.08 + (hash(x, y, 84) - 0.5) * 0.04;
+          v = 0.9 + n;
+          if (edge < 2.6) v = 0.4;
+          else if (edge < 5.5) v = 1.0 + n * 0.5;
+          else if (edge < 9) v = 0.8 + n;
+          for (const [rx, ry] of [[16, 16], [112, 16], [16, 112], [112, 112], [64, 16], [64, 112], [16, 64], [112, 64]]) {
+            const d = Math.hypot(px - rx, py - ry);
+            if (d < 3.6) v = 0.34;
+            else if (d < 5.2) v = 1.0;
+          }
           break;
         }
         case 'shingle': {

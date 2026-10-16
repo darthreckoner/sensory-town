@@ -12,9 +12,14 @@ import * as THREE from 'three';
 import { roundedBox as roundedBoxFull } from './materials';
 /** Low-poly rounded box (one bevel segment) — plenty for small details. */
 const roundedBox = (w: number, h: number, d: number, r = 0.02) => roundedBoxFull(w, h, d, r, 1);
-import { HAIR_COUNT } from './characterHair';
+import { HAIR_COUNT, HAIR_V3_ITEMS } from './characterHair';
+import { TOP_V3 } from './wardrobeTops';
+import { BOTTOM_V3 } from './wardrobeBottoms';
+import { SHOE_V3 } from './wardrobeShoes';
+import { ACC_V3 } from './wardrobeAcc';
+import { overShoulder } from './wardrobeKit';
 import {
-  B, TAU, TY, bodyR, capsule, flare, frameQ, facePoint, GB, pieces, shell, sph, spike, torsoSpace, torus, tubeGeo, arr3,
+  B, EYE, TAU, TY, bodyR, capsule, flare, frameQ, facePoint, GB, pieces, shell, sph, spike, torsoSpace, torus, tubeGeo, arr3,
   type Piece, type PB, type V3t,
 } from './characterKit';
 
@@ -26,30 +31,36 @@ export interface CatalogItem {
   reward?: string;
 }
 
+const catItem = ({ name, icon }: { name: string; icon: string }): CatalogItem => ({ name, icon });
 export const OUTFIT_CATALOG: Record<CatalogSlot, CatalogItem[]> = {
   hair: [
     { name: 'Fade', icon: '✂️' }, { name: 'Bob', icon: '💇' }, { name: 'Pony', icon: '🎀' }, { name: 'Wolf', icon: '🐺' },
     { name: 'Waves', icon: '🌊' }, { name: 'Buns', icon: '🍡' }, { name: 'Curls', icon: '🌀' }, { name: 'Braids', icon: '🧵' },
     { name: 'Bangs', icon: '🎭' }, { name: 'Puffs', icon: '☁️' }, { name: 'Quiff', icon: '🔥' }, { name: 'Knot', icon: '🥋' },
+    ...HAIR_V3_ITEMS.map(catItem), // v3 wardrobe: styles 12+ (characterHair.ts)
   ],
   top: [
     { name: 'Tee', icon: '👕' }, { name: 'Hoodie', icon: '🧥' }, { name: 'Cami', icon: '👚' }, { name: 'Varsity', icon: '🏈' },
     { name: 'Puffer', icon: '☁️' }, { name: 'Crop', icon: '🎽' }, { name: 'Vest', icon: '🧶' }, { name: 'Track', icon: '🏃' },
     { name: 'Flannel', icon: '🍁' }, { name: 'Jersey', icon: '⚽' },
+    ...TOP_V3.map(catItem), // v3 wardrobe: styles 10+ (wardrobeTops.ts)
   ],
   bottom: [
     { name: 'Baggy', icon: '👖' }, { name: 'Biker', icon: '🩳' }, { name: 'Pleated', icon: '🎀' }, { name: 'Cargo', icon: '🎒' },
     { name: 'Joggers', icon: '🏃' }, { name: 'Flares', icon: '🪩' }, { name: 'Tennis', icon: '🎾' }, { name: 'Track', icon: '🏅' },
+    ...BOTTOM_V3.map(catItem), // v3 wardrobe: styles 8+ (wardrobeBottoms.ts)
   ],
   shoes: [
     { name: 'Chunky', icon: '👟' }, { name: 'Hi-tops', icon: '🏀' }, { name: 'Boots', icon: '🥾' }, { name: 'Slides', icon: '🩴' },
     { name: 'Skate', icon: '🛹' }, { name: 'Janes', icon: '👞' }, { name: 'LED', icon: '💡', reward: 'outfit.ledkicks' },
+    ...SHOE_V3.map(catItem), // v3 wardrobe: styles 7+ (wardrobeShoes.ts)
   ],
   accessory: [
     { name: 'None', icon: '🚫' }, { name: 'Phones', icon: '🎧' }, { name: 'Shades', icon: '🕶️' }, { name: 'Bucket', icon: '🪣' },
     { name: 'Clip', icon: '🦀' }, { name: 'Beanie', icon: '🧶' }, { name: 'Chain', icon: '⛓️' }, { name: 'Bag', icon: '👜' },
     { name: 'Tumbler', icon: '🥤' }, { name: 'Scrunchie', icon: '🍩' }, { name: 'Cap', icon: '🧢' }, { name: 'Round', icon: '👓' },
     { name: 'Wings', icon: '🪽', reward: 'outfit.wings' }, { name: 'Crown', icon: '👑', reward: 'outfit.crown' },
+    ...ACC_V3.map(catItem), // v3 wardrobe: styles 14+ (wardrobeAcc.ts)
   ],
 };
 if (OUTFIT_CATALOG.hair.length !== HAIR_COUNT) throw new Error('hair catalog out of sync');
@@ -66,7 +77,7 @@ export const BOTTOM_COUNT = OUTFIT_CATALOG.bottom.length;
 export const ACC = { none: 0, phones: 1, shades: 2, bucket: 3, clip: 4, beanie: 5, chain: 6, bag: 7, tumbler: 8, scrunchie: 9, cap: 10, round: 11, wings: 12, crown: 13 };
 export const TOP_DRESS = -1; // (no dresses in the v2 catalog)
 /** Extra radius of each top at the chest (accessories and bottoms sit outside it). */
-export const TOP_OFF = [0.014, 0.05, 0.008, 0.03, 0.05, 0.01, 0.024, 0.022, 0.032, 0.022];
+export const TOP_OFF = [0.014, 0.05, 0.008, 0.03, 0.05, 0.01, 0.024, 0.022, 0.032, 0.022, ...TOP_V3.map((t) => t.off)];
 const NECK = 1.43;
 
 // ── decals: flat shapes wrapped onto the torso surface ──────────────────────
@@ -129,6 +140,7 @@ export function getTop(style: number, side: number): TopParts {
 }
 
 function buildTopTorso(pb: PB, st: number, off: number): void {
+  if (st >= 10) return TOP_V3[st - 10].torso(pb, off); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
   const hem = (y: number, o = off, tube = 0.008, g: GB = trim) => g.ring(y, bodyR(y) + o, tube);
@@ -161,10 +173,7 @@ function buildTopTorso(pb: PB, st: number, off: number): void {
       shell(main, 0.98, 1.31, off);
       hem(0.98, off, 0.006, main);
       trim.ring(1.31, bodyR(1.31) + off, 0.009);
-      for (const s of [-1, 1]) {
-        trim.seg([0.08 * s, 1.31, front(1.31, off, 0.002) * 0.88], [0.064 * s, 1.41, 0.0], 0.0055);
-        trim.seg([0.064 * s, 1.41, 0.0], [0.085 * s, 1.31, -front(1.31, off, 0.002) * 0.88], 0.0055);
-      }
+      for (const s of [-1, 1]) overShoulder(trim, 0.1 * s, 1.3, 1.3, off, 0.0075); // straps hug the shoulder slope
       break;
     }
     case 3: { // Varsity jacket — wool body, cream leather sleeves, ribbed trims
@@ -250,6 +259,7 @@ function buildTopTorso(pb: PB, st: number, off: number): void {
 
 /** Sleeves, in arm space. `upper` = upper arm (at the shoulder), `lower` = forearm (at the elbow). */
 function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
+  if (st >= 10) return TOP_V3[st - 10].arm?.(pb, upper, s); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
   const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => gb.add(tubeGeo(yT, yB, rT, rB, 12), {}, true);
@@ -267,8 +277,8 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
         tube(main, 0.0, -0.3, 0.068, 0.064);
         cap(main, 0.068, -0.002);
       } else {
-        tube(main, 0.03, -0.262, 0.062, 0.056);
-        trim.ring(-0.25, 0.049, 0.015);
+        tube(main, 0.03, -0.247, 0.062, 0.056);
+        trim.ring(-0.238, 0.049, 0.013);
       }
       break;
     case 3: { // varsity: cream sleeves, ribbed cuffs
@@ -285,7 +295,7 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
     case 4: { // puffer: quilted sleeves
       const o = () => 0;
       const base = upper ? 0.052 : 0.046;
-      const len = upper ? 0.3 : 0.25;
+      const len = upper ? 0.3 : 0.243;
       const pts: THREE.Vector2[] = [];
       for (let i = 0; i <= 12; i++) {
         const y = (upper ? 0.01 : 0.03) - (len * i) / 12;
@@ -295,7 +305,7 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
       pts.reverse();
       main.add(new THREE.LatheGeometry(pts, 10), {}, true);
       if (upper) cap(main, 0.058, 0);
-      else trim.ring(-0.24, 0.04, 0.012);
+      else trim.ring(-0.232, 0.04, 0.012);
       break;
     }
     case 5: // crop: short fitted
@@ -323,7 +333,7 @@ function buildSleeve(pb: PB, st: number, upper: boolean, s: number): void {
         pb.at('white').seg([s * 0.057, -0.02, 0], [s * 0.053, -0.29, 0], 0.0045);
       } else {
         tube(main, 0.03, -0.246, 0.046, 0.04);
-        trim.ring(-0.24, 0.04, 0.012);
+        trim.ring(-0.233, 0.04, 0.012);
         pb.at('white').seg([s * 0.049, 0.02, 0], [s * 0.043, -0.235, 0], 0.0045);
       }
       break;
@@ -375,6 +385,7 @@ function crotch(gb: GB): void {
 }
 
 function buildBottomTorso(pb: PB, st: number): void {
+  if (st >= 8) return BOTTOM_V3[st - 8].torso(pb); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
   switch (st) {
@@ -429,6 +440,7 @@ function buildBottomTorso(pb: PB, st: number): void {
 
 /** Trouser legs. thigh: hip space (hangs from y = 0), shin: knee space. */
 function buildLeg(pb: PB, st: number, thigh: boolean, s: number): void {
+  if (st >= 8) return BOTTOM_V3[st - 8].leg?.(pb, thigh, s); // v3 wardrobe
   const main = pb.at('main');
   const trim = pb.at('trim');
   const tube = (gb: GB, yT: number, yB: number, rT: number, rB: number) => {
@@ -505,6 +517,7 @@ export function getShoes(style: number): Piece[] {
     const white = pb.at('white');
     const dark = pb.at('dark');
     const trim = pb.at('trim');
+    if (st >= 7) return SHOE_V3[st - 7].build(pb); // v3 wardrobe
     switch (st) {
       case 0: // chunky sneakers
       case 6: { // LED sneakers (glowing soles)
@@ -570,8 +583,12 @@ export function getShoes(style: number): Piece[] {
         break;
       }
     }
-  }, undefined, true);
+  }, chunkyFoot, true);
 }
+/** Fortnite-style feet are chunky: widen and fatten every shoe a little (the sole stays on the ground). */
+const chunkyFoot = (g: THREE.BufferGeometry): void => {
+  g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(0, -0.09 + 0.09 * 1.14, 0), new THREE.Quaternion(), new THREE.Vector3(1.17, 1.14, 1.1)));
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Accessories
@@ -609,9 +626,15 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
   const st = clampStyle('accessory', style);
   if (st === ACC.none) return null;
   const topOff = TOP_OFF[clampStyle('top', topStyle)];
-  const key = `${st}|${st === ACC.chain || st === ACC.bag ? topOff : 'x'}`;
+  const key = `${st}|${st === ACC.chain || st === ACC.bag || (st >= 14 && ACC_V3[st - 14].bodyDep) ? topOff : 'x'}`;
   const hit = accCache.get(key);
   if (hit) return hit;
+  if (st >= 14) {
+    // v3 wardrobe (wardrobeAcc.ts)
+    const a = ACC_V3[st - 14].make(topOff);
+    accCache.set(key, a);
+    return a;
+  }
   const acc: AccPart = { head: EMPTY, body: EMPTY, handR: EMPTY, wristL: EMPTY, back: EMPTY, hat: false, fixed: false, topLift: 0 };
   const hs = (v: number) => v; // readability
   void hs;
@@ -636,15 +659,16 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
         const glass = pb.at('glass');
         const pts: THREE.Vector3[] = [];
         for (const s of [-1, 1]) {
-          const { p, n } = facePoint(22 * s, 3, 0.012);
+          // centered on the eyes (EYE.theta / EYE.phi in the kit), big enough to cover them
+          const { p, n } = facePoint(EYE.theta * s, EYE.phi + 0.5, 0.012);
           const q = frameQ(n.clone().lerp(new THREE.Vector3(0, 0, 1), 0.4));
-          glass.add(roundedBox(0.056, 0.036, 0.006, 0.014), { p: arr3(p), q });
-          main.add(roundedBox(0.064, 0.043, 0.004, 0.017), { p: arr3(p.clone().add(new THREE.Vector3(0, 0, -0.003))), q });
-          const out = new THREE.Vector3(0.03 * s, 0, 0).applyQuaternion(q).add(p);
+          glass.add(roundedBox(0.068, 0.05, 0.006, 0.016), { p: arr3(p), q });
+          main.add(roundedBox(0.076, 0.058, 0.004, 0.02), { p: arr3(p.clone().add(new THREE.Vector3(0, 0, -0.003))), q });
+          const out = new THREE.Vector3(0.036 * s, 0, 0).applyQuaternion(q).add(p);
           main.seg(arr3(out), [0.094 * s, 0.002, -0.02], 0.0045);
           pts.push(p);
         }
-        main.seg([pts[0].x + 0.026, pts[0].y + 0.004, pts[0].z], [pts[1].x - 0.026, pts[1].y + 0.004, pts[1].z], 0.0045);
+        main.seg([pts[0].x + 0.03, pts[0].y + 0.006, pts[0].z], [pts[1].x - 0.03, pts[1].y + 0.006, pts[1].z], 0.0045);
       });
       break;
     case ACC.round:
@@ -654,15 +678,15 @@ export function getAccessory(style: number, topStyle = 0): AccPart | null {
         const lens = pb.at('lens');
         const pts: THREE.Vector3[] = [];
         for (const s of [-1, 1]) {
-          const { p, n } = facePoint(22 * s, 3, 0.012);
+          const { p, n } = facePoint(EYE.theta * s, EYE.phi + 0.5, 0.012);
           const q = frameQ(n.clone().lerp(new THREE.Vector3(0, 0, 1), 0.4));
-          main.add(torus(0.027, 0.0033), { p: arr3(p), q });
-          lens.add(new THREE.CircleGeometry(0.0265, 16), { p: arr3(p), q });
-          const out = new THREE.Vector3(0.027 * s, 0, 0).applyQuaternion(q).add(p);
+          main.add(torus(0.031, 0.0035), { p: arr3(p), q });
+          lens.add(new THREE.CircleGeometry(0.0305, 16), { p: arr3(p), q });
+          const out = new THREE.Vector3(0.031 * s, 0, 0).applyQuaternion(q).add(p);
           main.seg(arr3(out), [0.094 * s, 0.002, -0.02], 0.003);
           pts.push(p);
         }
-        main.seg([pts[0].x + 0.027, pts[0].y + 0.006, pts[0].z], [pts[1].x - 0.027, pts[1].y + 0.006, pts[1].z], 0.003);
+        main.seg([pts[0].x + 0.031, pts[0].y + 0.006, pts[0].z], [pts[1].x - 0.031, pts[1].y + 0.006, pts[1].z], 0.003);
       });
       break;
     case ACC.bucket:

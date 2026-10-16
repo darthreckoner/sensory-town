@@ -6,7 +6,10 @@
 // World: +x east, +z south, y up. heading 0 = facing -z (north), π/2 = east.
 import { tuning } from '../tuning';
 import { BOUNDS } from '../world/townLayout';
-import { groundHeight } from '../world/heightfield';
+import { groundHeight, waveY } from '../world/heightfield';
+import { isBuildCollider, surfaceBelow } from '../world/buildSpace';   // v3 rides: cars drive ON the player's builds
+import { WATER_Y } from '../world/townLayout';
+import type { VehicleKind } from '../core/model';
 import type { Collider } from '../world/townEnv';
 import { clamp } from './envUtils';
 
@@ -21,6 +24,19 @@ export interface CarInput {
   handbrake: boolean;
   /** The boost is firing this frame (the scene owns the meter). */
   boost: boolean;
+  /** Hop (the hoverboard's Space / the hop button); rides with no hop ignore it. */
+  hop?: boolean;
+}
+
+// ── v3 rides ──
+/** The player's builds (W5, src/world/buildSpace.ts surfaceBelow): cars, hoverboards and carts drive ON floors, ramps and roofs. */
+let surfaceHook: ((x: number, z: number, yRef: number) => number) | null = (x, z, yRef) => surfaceBelow(x, z, yRef);
+export function setSurfaceBelow(fn: ((x: number, z: number, yRef: number) => number) | null): void {
+  surfaceHook = fn;
+}
+/** The tuning a ride is driven with: tuning.drive overridden by tuning.rides.<kind>. */
+export function rideTune(kind: VehicleKind): typeof tuning.drive {
+  return Object.assign(Object.create(tuning.drive), (tuning.rides as Record<string, object>)[kind]) as typeof tuning.drive;
 }
 
 // ── a coarse spatial grid so 1000+ colliders stay cheap ─────────────────────
@@ -47,10 +63,19 @@ export class ColliderGrid {
     }
   }
 
+  /** Movable colliders (parked rides): checked on every query, not part of the static grid. */
+  private dyn: Collider[] = [];
+  setDynamic(list: Collider[]): void {
+    this.dyn = list;
+  }
   private out: Collider[] = [];
   /** Colliders whose cells touch the square (x ± r, z ± r). The returned array is reused. */
   near(x: number, z: number, r: number): Collider[] {
     this.out.length = 0;
+    for (const c of this.dyn) {
+      const cr = c.kind === 'circle' ? c.r : Math.max(c.hw, c.hd);
+      if (Math.abs(c.x - x) <= r + cr && Math.abs(c.z - z) <= r + cr) this.out.push(c);
+    }
     this.tick++;
     const gx0 = Math.floor((x - r) / this.cell), gx1 = Math.floor((x + r) / this.cell);
     const gz0 = Math.floor((z - r) / this.cell), gz1 = Math.floor((z + r) / this.cell);
@@ -66,6 +91,35 @@ export class ColliderGrid {
         }
       }
     return this.out;
+  }
+
+  // ── v3 build ── colliders that come and go while the game runs (the player's walls and ramps)
+  private cellsOf(c: Collider): number[] {
+    const [x0, z0, x1, z1] = c.kind === 'circle' ? [c.x - c.r, c.z - c.r, c.x + c.r, c.z + c.r] : [c.x - c.hw, c.z - c.hd, c.x + c.hw, c.z + c.hd];
+    const out: number[] = [];
+    const gx1 = Math.floor(x1 / this.cell), gz1 = Math.floor(z1 / this.cell);
+    for (let gz = Math.floor(z0 / this.cell); gz <= gz1; gz++) for (let gx = Math.floor(x0 / this.cell); gx <= gx1; gx++) out.push(gx * 4096 + gz);
+    return out;
+  }
+  add(c: Collider): void {
+    this.list.push(c);
+    for (const k of this.cellsOf(c)) {
+      const arr = this.cells.get(k);
+      if (arr) arr.push(c);
+      else this.cells.set(k, [c]);
+    }
+  }
+  remove(c: Collider): void {
+    const i = this.list.indexOf(c);
+    if (i >= 0) this.list.splice(i, 1);
+    for (const k of this.cellsOf(c)) {
+      const arr = this.cells.get(k);
+      if (!arr) continue;
+      const j = arr.indexOf(c);
+      if (j >= 0) arr.splice(j, 1);
+      if (!arr.length) this.cells.delete(k);
+    }
+    this.stamp.delete(c);
   }
 }
 
@@ -113,9 +167,17 @@ export function pushOut(c: Collider, cx: number, cz: number, r: number): boolean
   return true;
 }
 
-export const NO_INPUT: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false };
+export const NO_INPUT: CarInput = { steer: 0, gas: 0, brake: 0, handbrake: false, boost: false, hop: false };
 
 export class CarPhysics {
+  /** which ride this is (its handling comes from tuning.rides.<kind>) */
+  kind: VehicleKind = 'sports';
+  private tune: typeof tuning.drive = rideTune('sports');
+  /** seconds (the scene sets it every frame): the boat rides the same waves as the water mesh */
+  time = 0;
+  private hopCool = 0;
+  /** was the last frame spent on a player-built surface (floor / ramp / roof)? */
+  private onBuild = false;
   x = 0;
   z = 0;
   y = 0;
@@ -148,10 +210,37 @@ export class CarPhysics {
   private driftHold = 0;
   private prevGround = 0;
 
-  reset(x: number, z: number, heading: number): void {
+  /** Switch to another ride's handling (call before reset). */
+  setKind(kind: VehicleKind): void {
+    this.kind = kind;
+    this.tune = rideTune(kind);
+  }
+  get hover(): number {
+    return this.tune.hover;
+  }
+  get waterOnly(): boolean {
+    return !!this.tune.waterOnly;
+  }
+
+  /** The surface this ride sits on at (x, z): the ground (or a player build on it), the water for a boat, shallow water for a hoverboard. */
+  surfaceAt(x: number, z: number, yRef: number): number {
+    const d = this.tune;
+    if (d.waterOnly) return waveY(x, z, this.time);
+    let g = groundHeight(x, z);
+    if (surfaceHook) {
+      const sb = surfaceHook(x, z, yRef - d.hover + (d.hover > 0 ? 1 : 0)); // a hoverboard's cushion lags a steep rise: look a little higher
+      if (sb > g) g = sb;
+    }
+    if (d.hover > 0 && g < WATER_Y) g = WATER_Y; // skims the shallows
+    return g;
+  }
+
+  /** Park the ride at (x, z). `surfY`: the surface it stands on (so a ride left on a built floor stays on it); omitted: the ground, or a low built floor. */
+  reset(x: number, z: number, heading: number, surfY?: number): void {
     this.x = x;
     this.z = z;
-    this.y = groundHeight(x, z);
+    this.hopCool = 0;
+    this.y = this.surfaceAt(x, z, (surfY ?? groundHeight(x, z)) + 0.5 + this.tune.hover) + this.tune.hover;
     this.prevGround = this.y;
     this.heading = heading;
     this.vx = this.vz = this.vy = 0;
@@ -164,12 +253,13 @@ export class CarPhysics {
   }
 
   get speed01(): number {
-    return clamp(Math.abs(this.fwdSpeed) / (tuning.drive.topSpeed * (this.boosting ? tuning.drive.boostSpeed : 1)), 0, 1);
+    const d = this.tune;
+    return clamp(Math.abs(this.fwdSpeed) / (d.topSpeed * (this.boosting ? d.boostSpeed : 1)), 0, 1);
   }
 
   /** Advance one step. Returns the strongest wall impact of this step (0 if none). */
   step(dt: number, inp: CarInput, grid: ColliderGrid): number {
-    const d = tuning.drive;
+    const d = this.tune;
     this.impact = 0;
     this.jumped = 0;
     this.landed = 0;
@@ -211,7 +301,7 @@ export class CarPhysics {
         fs = Math.abs(fs) <= drag ? 0 : fs - Math.sign(fs) * drag;
       }
       // hills slow you down uphill and push you downhill
-      const gF = groundHeight(this.x + fx * 1.8, this.z + fz * 1.8), gR = groundHeight(this.x - fx * 1.8, this.z - fz * 1.8);
+      const gF = this.surfaceAt(this.x + fx * 1.8, this.z + fz * 1.8, this.y), gR = this.surfaceAt(this.x - fx * 1.8, this.z - fz * 1.8, this.y);
       const slope = clamp((gF - gR) / 3.6, -0.9, 0.9);
       fs -= slope * d.slopeGravity * dt * (this.boosting ? 0.4 : 1);
       if (fs > top) fs = Math.max(top, fs - 14 * dt);
@@ -236,8 +326,25 @@ export class CarPhysics {
     this.z += this.vz * dt;
     this.collide(grid);
 
-    // ── vertical: ride the ground or fly ──
-    const gy = groundHeight(this.x, this.z);
+    // ── vertical: ride the ground, ride the waves, hop, or fly ──
+    this.hopCool -= dt;
+    if (d.waterOnly) {
+      // a boat floats: it bobs on the same waves as the water mesh and never leaves it
+      this.y += (this.surfaceAt(this.x, this.z, this.y) - this.y) * (1 - Math.exp(-10 * dt));
+      this.vy = 0;
+      this.grounded = true;
+      this.prevGround = this.y;
+      return this.finishStep(dt, inp, prevFs);
+    }
+    const gy = this.surfaceAt(this.x, this.z, this.y) + d.hover;
+    if (inp.hop && d.hopSpeed > 0 && this.grounded && this.hopCool <= 0) {
+      // the hoverboard's hop
+      this.vy = d.hopSpeed;
+      this.grounded = false;
+      this.hopCool = 0.35;
+      this.jumped = d.hopSpeed;
+      this.airTime = 0;
+    }
     if (this.grounded) {
       if (gy - this.y > d.climbLimit) {
         // a wall (the back of a ramp, a cliff): bounce off it
@@ -254,20 +361,23 @@ export class CarPhysics {
       } else {
         const ball = this.y + this.vy * dt - 0.5 * d.gravity * dt * dt; // where a free-flying car would be
         if (this.vy > d.launchMinVy * 0.5 && gy < ball - 0.02) {
-          // the ground fell away faster than gravity: take off
+          // the ground fell away faster than gravity: take off (off a player-built ramp the kick is capped: a steep ramp is a hop, not a rocket)
+          const up = this.onBuild ? Math.min(this.vy, d.launchMaxVy) : this.vy;
           this.grounded = false;
-          this.vy = this.vy - d.gravity * dt;
-          this.y = ball;
+          this.vy = up - d.gravity * dt;
+          this.y = this.y + up * dt - 0.5 * d.gravity * dt * dt;
           this.airTime = 0;
-          if (this.vy + d.gravity * dt >= d.launchMinVy) this.jumped = this.vy + d.gravity * dt;
+          if (up >= d.launchMinVy) this.jumped = up;
         } else if (gy < this.y - 0.45) {
           // a sudden drop (kerb, ledge): fall
           this.grounded = false;
           this.vy = Math.min(0, this.vy);
           this.airTime = 0;
         } else {
-          this.vy = clamp((gy - this.y) / dt, -30, 30) * 0.5 + this.vy * 0.5;
-          this.y = gy;
+          // a hoverboard glides over the ground on a cushion of air; a car sits right on it
+          const yPrev = this.y;
+          this.y = d.hover > 0 ? this.y + (gy - this.y) * (1 - Math.exp(-18 * dt)) : gy;
+          this.vy = clamp((this.y - yPrev) / dt, -30, 30) * 0.5 + this.vy * 0.5;
         }
       }
     }
@@ -287,9 +397,13 @@ export class CarPhysics {
         this.vz *= k;
       }
     }
+    this.onBuild = gy - d.hover > groundHeight(this.x, this.z) + 0.05;
     this.prevGround = gy;
+    return this.finishStep(dt, inp, prevFs);
+  }
 
-    // ── outputs ──
+  /** The step's outputs (speeds, acceleration, resting) — shared by cars, hoverboards and boats. */
+  private finishStep(dt: number, inp: CarInput, prevFs: number): number {
     const nsh = Math.sin(this.heading), nch = Math.cos(this.heading);
     this.fwdSpeed = this.vx * nsh + this.vz * -nch;
     this.latSpeed = this.vx * nch + this.vz * nsh;
@@ -303,7 +417,7 @@ export class CarPhysics {
 
   // ── collisions ──────────────────────────────────────────────────────────
   private collide(grid: ColliderGrid): void {
-    const d = tuning.drive;
+    const d = this.tune;
     const r = d.carRadius, off = d.carCircleOffset;
     for (let iter = 0; iter < 2; iter++) {
       const fx = Math.sin(this.heading), fz = -Math.cos(this.heading);
@@ -315,15 +429,36 @@ export class CarPhysics {
           const c = cols[i];
           if (c.only === 'foot') continue;
           // flying over a low obstacle
-          if (c.h !== undefined && this.y > c.h + 0.2) continue;
+          if (c.h !== undefined) {
+            if (isBuildCollider(c)) {
+              // the player's builds: a wall panel blocks until you stand above it; the thin strips of a ramp are climbed, not hit
+              // (the circle in front of a car on the slope is looking at strips up to slope * radius higher than the car)
+              const cb = Math.max(this.surfaceAt(cx, cz, this.y + 0.9), this.y - d.hover);
+              const strip = c.y0 !== undefined && c.h - c.y0 < 0.45;
+              if (cb > c.h - 0.55 - (strip ? 0.8 * r : 0)) continue;
+            } else if (this.y > c.h + 0.2) continue; // flying over a low obstacle
+          }
+          // railings on a bridge or pier deck high above (a boat sails under them)
+          if (c.y0 !== undefined && c.y0 > this.y + 2.2) continue;
           if (!this.grounded && this.y - groundHeight(cx, cz) > 1.2) continue;
           if (!pushOut(c, cx, cz, r)) continue;
           const pen = this.respond(res.nx, res.nz, res.pen, cx, cz, r);
           cx += res.nx * pen;
           cz += res.nz * pen;
         }
-        // the sea and the lake: too deep to drive into — slide back up the bank
-        if (this.grounded) {
+        if (d.waterOnly) {
+          // a boat: shore is a wall — nose up to it and slide back out into the water
+          for (let n = 0; n < 8 && groundHeight(cx, cz, false, true) > d.shoreLimit; n++) {
+            const gx = groundHeight(cx + 1.2, cz, false, true) - groundHeight(cx - 1.2, cz, false, true);
+            const gz = groundHeight(cx, cz + 1.2, false, true) - groundHeight(cx, cz - 1.2, false, true);
+            const gl = Math.hypot(gx, gz);
+            if (gl < 1e-4) break;
+            this.respond(-gx / gl, -gz / gl, 0.3, cx, cz, r);
+            cx -= (gx / gl) * 0.3;
+            cz -= (gz / gl) * 0.3;
+          }
+        } else if (this.grounded) {
+          // the sea and the lake: too deep to drive into — slide back up the bank
           for (let n = 0; n < 8 && groundHeight(cx, cz) < d.waterLimit; n++) {
             const gx = groundHeight(cx + 1.2, cz) - groundHeight(cx - 1.2, cz);
             const gz = groundHeight(cx, cz + 1.2) - groundHeight(cx, cz - 1.2);
@@ -348,7 +483,7 @@ export class CarPhysics {
 
   /** Push the car out along (nx, nz) by `pen` and bounce the velocity off the surface. */
   private respond(nx: number, nz: number, pen: number, cx: number, cz: number, r: number): number {
-    const d = tuning.drive;
+    const d = this.tune;
     pen = Math.min(pen, 2.5);
     this.x += nx * pen;
     this.z += nz * pen;

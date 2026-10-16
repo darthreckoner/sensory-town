@@ -46,6 +46,12 @@ export function openMenu(): void {
       bindTap(c, () => {
         bus.emit('uiTap', { kind: 'big' });
         close();
+        // ── v3 build ── "Build" is build mode in the world now (the separate Build scene is retired from the main flow)
+        if (n.scene === 'build') {
+          if (scenes.current?.name === 'town') bus.emit('buildToggle', { on: true });
+          else void scenes.go('town').then(() => bus.emit('buildToggle', { on: true }));
+          return;
+        }
         if (scenes.current?.name !== n.scene) void scenes.go(n.scene);
       });
     }

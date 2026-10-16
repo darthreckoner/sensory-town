@@ -282,3 +282,49 @@ export class Ripples {
     this.mesh.count = 0;
   }
 }
+
+// ── soft contact shadows under every ride: ONE instanced draw call for all of them ──
+export class Blobs {
+  readonly mesh: THREE.InstancedMesh;
+  private k = 0;
+  private readonly n: number;
+  private readonly dummy = new THREE.Object3D();
+
+  constructor(n = 24) {
+    this.n = n;
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 128;
+    const x = c.getContext('2d')!;
+    const g = x.createRadialGradient(32, 64, 4, 32, 64, 60);
+    g.addColorStop(0, 'rgba(20,16,30,1)');
+    g.addColorStop(1, 'rgba(20,16,30,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, 64, 128);
+    const tex = new THREE.CanvasTexture(c);
+    this.mesh = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.42, depthWrite: false }),
+      n,
+    );
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = -1;
+  }
+
+  begin(): void {
+    this.k = 0;
+  }
+  add(x: number, y: number, z: number, heading: number, w: number, l: number): void {
+    if (this.k >= this.n) return;
+    this.dummy.position.set(x, y + 0.04, z);
+    this.dummy.rotation.set(0, -heading, 0);
+    this.dummy.scale.set(w, 1, l);
+    this.dummy.updateMatrix();
+    this.mesh.setMatrixAt(this.k++, this.dummy.matrix);
+  }
+  end(): void {
+    this.mesh.count = this.k;
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}

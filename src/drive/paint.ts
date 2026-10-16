@@ -6,23 +6,25 @@ import { bus } from '../core/events';
 import { tuning } from '../tuning';
 import { isUnlocked, lockedToast } from '../core/unlocks';
 import { bindTap, button, el, sheet, swatches } from '../ui/ui';
-import type { Car, CarFinish } from '../art/car';
+import { defaultLocker } from '../core/model';
+import type { Ride, RideFinish } from './rides';
 
 const NEONS = ['#00d4ff', '#ff2e88', '#b6ff3b', '#7c4dff', '#ffc93c', '#ffffff'];
 const RIMS = ['#d9dce6', '#1d1b26', '#ffc93c', '#ff2e88', '#00d4ff'];
-const FINISHES: { id: CarFinish; icon: string; label: string; lock?: string }[] = [
+const FINISHES: { id: RideFinish; icon: string; label: string; lock?: string }[] = [
   { id: 'gloss', icon: '✨', label: 'Gloss' },
   { id: 'matte', icon: '🌫️', label: 'Matte' },
+  { id: 'glitter', icon: '💎', label: 'Glitter' },
   { id: 'chrome', icon: '🪞', label: 'Chrome', lock: 'car.chrome' },
 ];
 
-/** Open the paint shop for `car`. */
-export function openPaintSheet(car: Car, where: { x: number; y: number; z: number }): void {
+/** Open the paint shop (the wrap) for `car` — any of the six rides. The choice is saved as profile.locker.wraps[kind]; underglow / trail / rims are shared by every ride. */
+export function openPaintSheet(car: Ride, where: { x: number; y: number; z: number }): void {
   sheet((body, close) => {
     body.classList.add('paint-sheet');
-    el('h2', '', body, '🎨 Paint shop');
+    el('h2', '', body, `🎨 Wrap · ${car.info.name}`);
 
-    const cur = (): { finish: CarFinish; neon: string | null; trail: boolean; rims: string } => {
+    const cur = (): { finish: RideFinish; neon: string | null; trail: boolean; rims: string } => {
       const s = car.currentStyle;
       return { finish: s.finish, neon: s.neon, trail: s.trail, rims: s.rims };
     };
@@ -31,6 +33,8 @@ export function openPaintSheet(car: Car, where: { x: number; y: number; z: numbe
       const s = cur();
       store.update(() => {
         store.profile.carStyle = { finish: s.finish, neon: s.neon, trail: s.trail, rims: s.rims };
+        const lk = (store.profile.locker ??= defaultLocker());
+        lk.wraps[car.kind] = { color: '#' + car.color.getHexString(), finish: s.finish };
       });
       bus.emit('optionPicked', { pos: where });
     };
@@ -73,10 +77,12 @@ export function openPaintSheet(car: Car, where: { x: number; y: number; z: numbe
     swatches(
       body,
       tuning.art.palette,
-      store.profile.carColor,
+      '#' + car.color.getHexString(),
       (c) => {
         store.update(() => {
-          store.profile.carColor = c;
+          if (car.kind === 'sports') store.profile.carColor = c;
+          const lk = (store.profile.locker ??= defaultLocker());
+          lk.wraps[car.kind] = { color: c, finish: car.currentStyle.finish };
         });
         car.setColor(c);
         bus.emit('optionPicked', { pos: where });
@@ -85,7 +91,7 @@ export function openPaintSheet(car: Car, where: { x: number; y: number; z: numbe
     );
 
     el('div', 'label', body, 'Finish');
-    chips<CarFinish>(
+    chips<RideFinish>(
       body,
       FINISHES.map((f) => ({ value: f.id, icon: f.icon, label: f.label, lock: f.lock })),
       () => cur().finish,

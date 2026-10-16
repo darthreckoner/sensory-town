@@ -4,15 +4,17 @@
 // lawns, paved plazas, and the sea + lake (a clipped, animated water mesh).
 import * as THREE from 'three';
 import {
-  BOUNDS, GROUND, PAVED, PLOTS, ROAD_PATHS, ROAD_WIDTH, SIDEWALK, WATER_Y, nearestRoad, onRoad, type RoadPath,
+  GROUND, GROVE, MEADOW, PAVED, PLOTS, ROAD_PATHS, ROAD_WIDTH, SANDS, SIDEWALK, SUMMIT, WATER_Y, nearestRoad, onRoad, type RoadPath,
 } from '../world/townLayout';
-import { HF, coastX, groundNormal, paveHeight, terrainHeight, vnoise, waveY } from '../world/heightfield';
+import { HF, cliffiness, groundNormal, paveHeight, shoreDist, terrainHeight, vnoise } from '../world/heightfield';
+import { sunDirection } from '../art/env';
+import { tuning } from '../tuning';
 import { PAL } from './palette';
 import { clamp, smoothstep } from './envUtils';
 
 export const ROAD_LIFT = 0.05;
 export const CURB_H = 0.14;
-export const CHUNK = 72;
+export const CHUNK = 84;       // v3: 10 x 10 chunks over the 840 m ground square (a multiple of the 4 m mesh step)
 const CHUNK_N = Math.ceil((GROUND * 2) / CHUNK);
 
 // ── soup of triangles with flat normals and vertex colours ──────────────────
@@ -115,37 +117,114 @@ function softRect(x: number, z: number, cx: number, cz: number, hw: number, hd: 
   return 1 - smoothstep(0, fall, Math.hypot(dx, dz));
 }
 
+// ── v3 world: biome palette (bright, saturated, stylized) ──
+const BIO = {
+  warm: new THREE.Color('#a4dc4f'),       // sunny yellow-green patches
+  cool: new THREE.Color('#2fb36b'),       // blue-green patches
+  meadow: new THREE.Color('#93e45e'),
+  meadowB: new THREE.Color('#5fcf6f'),
+  bloom: ['#ff7ab8', '#ffd84a', '#ffffff', '#b78cff', '#ff9a52'].map((c) => new THREE.Color(c)),
+  groveA: new THREE.Color('#2a8f72'),
+  groveB: new THREE.Color('#5a49b0'),
+  groveGlow: new THREE.Color('#38e0c8'),
+  snow: new THREE.Color('#f6faff'),
+  snowShade: new THREE.Color('#bcd4ee'),
+  snowRock: new THREE.Color('#8f9bb5'),
+  sandA: new THREE.Color('#f1c373'),
+  sandB: new THREE.Color('#e08a4c'),
+  sandC: new THREE.Color('#c9603a'),
+  beach: new THREE.Color('#f7e6b4'),
+  rockWarm: new THREE.Color('#a79276'),
+  rockCool: new THREE.Color('#7e7f8f'),
+  seaShallow: new THREE.Color('#e9d9a5'),
+  seaMid: new THREE.Color('#58a9b8'),
+  seaDeep: new THREE.Color('#1f5f86'),
+  tmp: new THREE.Color(),
+};
+
+/**
+ * Painterly vertex colour: big warm/cool patches of grass, then a biome on top
+ * (meadow, grove, snow, dunes, beach, cliffs), then a little speckle.
+ */
 function terrainColor(x: number, z: number, h: number, slope: number, out: THREE.Color): void {
+  const n0 = vnoise(x / 52 + 2, z / 52, 10);     // continent-scale warm/cool patches
   const n1 = vnoise(x / 14, z / 14, 11);
   const n2 = vnoise(x / 4.5, z / 4.5, 12);
-  colA.set(PAL.grass[0]).lerp(colB.set(PAL.grass[1]), n1).lerp(colC.set(PAL.grass[2]), n2 * 0.5);
+  colA.set(PAL.grass[0]).lerp(colB.set(PAL.grass[1]), n1).lerp(colC.set(PAL.grass[2]), n2 * 0.45);
+  colA.lerp(BIO.warm, smoothstep(0.55, 0.85, n0) * 0.5).lerp(BIO.cool, smoothstep(0.45, 0.15, n0) * 0.4);
   // calm lush park
   const park = softRect(x, z, 85, -104, 50, 40, 16);
-  if (park > 0) colA.lerp(colB.set('#4a9a3f'), park * 0.55);
+  if (park > 0) colA.lerp(colB.set('#58c052'), park * 0.5);
   // tidy lawns in Home Hills
   const home = softRect(x, z, -102, 3, 46, 46, 12);
   if (home > 0) colA.lerp(colB.set(PAL.lawn), home * 0.85);
   // concrete under downtown
   const urban = softRect(x, z, 0, 0, 48, 48, 12);
   if (urban > 0) colA.lerp(colB.set('#8d8b96'), urban * 0.9);
-  // beach sand
-  const d = x - coastX(z);
-  const sandW = smoothstep(-34, -22, d) * smoothstep(-74, -58, z);
-  if (sandW > 0) colA.lerp(colB.set(PAL.sand), sandW);
-  // wet sand and sea floor
+
+  // ── Bloom Meadow: lime hills dotted with flower colour ──
+  const dMead = Math.hypot(x - MEADOW.x, z - MEADOW.z);
+  const mw = 1 - smoothstep(MEADOW.r - 20, MEADOW.r + 22, dMead);
+  if (mw > 0) {
+    colA.lerp(colB.copy(BIO.meadow).lerp(BIO.meadowB, n1), mw * 0.85);
+    const f = vnoise(x / 9, z / 9, 15);
+    const fl = smoothstep(0.62, 0.8, f) * mw * smoothstep(0.1, 0.45, vnoise(x / 40, z / 40, 16));
+    if (fl > 0) colA.lerp(BIO.bloom[Math.floor(vnoise(x / 27, z / 27, 17) * 4.99)], fl * 0.8);
+  }
+  // ── Glow Grove: teal moss with violet and glowing patches ──
+  const dGrove = Math.hypot(x - GROVE.x, z - GROVE.z);
+  const gw = 1 - smoothstep(GROVE.r - 24, GROVE.r + 18, dGrove);
+  if (gw > 0) {
+    colB.copy(BIO.groveA).lerp(BIO.groveB, smoothstep(0.4, 0.75, vnoise(x / 18, z / 18, 18)));
+    colB.lerp(BIO.groveGlow, smoothstep(0.7, 0.9, vnoise(x / 7, z / 7, 19)) * 0.6);
+    colA.lerp(colB, gw * 0.9);
+  }
+  // ── Sunny Sands: banded red dunes ──
+  const dSand = Math.hypot(x - SANDS.x, z - SANDS.z);
+  const sw = 1 - smoothstep(SANDS.r - 16, SANDS.r + 14, dSand);
+  if (sw > 0) {
+    const band = Math.sin(h * 1.1 + vnoise(x / 30, z / 30, 20) * 5) * 0.5 + 0.5;
+    colB.copy(BIO.sandA).lerp(BIO.sandB, band * 0.8).lerp(BIO.sandC, smoothstep(0.55, 0.9, slope * 1.6 + band * 0.25) * 0.7);
+    colA.lerp(colB, sw * 0.95);
+  }
+  // ── Sprinkle Summit: snow with blue shadows over the high ground ──
+  const dSum = Math.hypot(x - SUMMIT.x, z - SUMMIT.z);
+  let snowCover = 0;
+  if (dSum < SUMMIT.shelfR1 + 24) {
+    const line = 8.5 + (vnoise(x / 20, z / 20, 22) - 0.5) * 7;
+    const snow = smoothstep(line, line + 7, h);
+    snowCover = snow;
+    if (snow > 0) {
+      colB.copy(BIO.snow).lerp(BIO.snowShade, smoothstep(0.35, 0.8, slope) * 0.55 + (vnoise(x / 6, z / 6, 23) - 0.5) * 0.12);
+      colA.lerp(colB, snow);
+      // bare rock pokes through on the steepest faces
+      const bare = smoothstep(0.85, 1.25, slope) * smoothstep(14, 30, h);
+      if (bare > 0) colA.lerp(BIO.snowRock, bare * 0.8);
+    }
+  }
+  // ── the shore: sand, wet sand, shallows, deep floor ──
+  const s = shoreDist(x, z);
+  const cl = cliffiness(x, z);
+  const sandW = (1 - smoothstep(14, 32, s)) * (1 - cl * 0.9);
+  if (sandW > 0) colA.lerp(colB.copy(BIO.beach).lerp(BIO.sandA, smoothstep(0.5, 0.9, n2) * 0.25), sandW * (1 - sw * 0.8));
   if (h < WATER_Y + 0.5) {
     const w = smoothstep(WATER_Y + 0.5, WATER_Y - 0.1, h);
     colA.lerp(colB.set(PAL.wetSand), w * 0.8);
-    const deep = smoothstep(WATER_Y - 0.3, WATER_Y - 1.5, h);
-    colA.lerp(colB.set('#4d7f80'), deep);
+    const mid = smoothstep(WATER_Y - 0.1, WATER_Y - 2.2, h);
+    colA.lerp(BIO.seaMid, mid * 0.85);
+    colA.lerp(BIO.seaDeep, smoothstep(WATER_Y - 2.2, WATER_Y - 6.5, h));
   }
-  // rock on steep ground, lighter lawn on the lookout top
-  const rock = smoothstep(0.42, 0.75, slope);
-  if (rock > 0) colA.lerp(colB.set(PAL.rock), rock);
-  if (h > 24) colA.lerp(colB.set('#86b05a'), smoothstep(24, 27, h) * (1 - rock));
+  // ── rock on steep ground and on the cliffs; grass tops stay green ──
+  const rock = smoothstep(0.42, 0.78, slope) * (1 - snowCover * 0.9);
+  if (rock > 0) {
+    colB.copy(BIO.rockWarm).lerp(BIO.rockCool, vnoise(x / 17, z / 17, 24));
+    colB.multiplyScalar(0.88 + 0.24 * vnoise(x / 5, z / 5, 25));
+    colA.lerp(colB, rock);
+  }
+  if (h > 24 && dSum > SUMMIT.shelfR1) colA.lerp(colB.set('#8fdc62'), smoothstep(24, 27, h) * (1 - rock));
   // a little speckle so big fields are never flat
-  const s = 0.94 + 0.12 * vnoise(x * 1.7, z * 1.7, 21);
-  out.copy(colA).multiplyScalar(s);
+  const sp = 0.95 + 0.1 * vnoise(x * 1.7, z * 1.7, 21);
+  out.copy(colA).multiplyScalar(sp);
 }
 
 function buildChunk(cx: number, cz: number): THREE.Mesh {
@@ -391,73 +470,166 @@ function mk(geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh {
 }
 
 // ── water ───────────────────────────────────────────────────────────────────
+// v3: one stylized water material for the whole sea, the lake, the grove pond and the lazy river.
+//  - the surface is flat cells (12 m) whose height is displaced in the vertex shader with EXACTLY
+//    heightfield.waveY (a swimmer floats on what is drawn);
+//  - the colour, the see-through shallows and the white foam that laps at every shore come from a
+//    small height texture of the terrain (2 m texels), so they are exact per pixel at any cell size.
 export interface WaterBody {
   mesh: THREE.Mesh;
   update(t: number): void;
 }
 
-function buildWater(): WaterBody {
-  const STEP = 3;
+const WATER_VERT = /* glsl */ `
+  uniform float uTime;
+  uniform float uFlat;
+  varying vec3 vWorld;
+  #include <fog_pars_vertex>
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);                 // (the open-ocean strips are offset meshes: work in world space)
+    float a = sin(wp.x * 0.11 + uTime * 1.1), b = sin(wp.z * 0.13 - uTime * 0.8), c = sin((wp.x + wp.z) * 0.2 + uTime * 1.7);
+    wp.y = ${WATER_Y.toFixed(3)} + (1.0 - uFlat) * 0.06 * (a + b + 0.5 * c);
+    vWorld = wp.xyz;
+    vec4 mvPosition = viewMatrix * wp;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }
+`;
+
+const WATER_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform sampler2D uHeights;
+  uniform vec3 uShallow, uMid, uDeep, uSky, uSun, uFoam;
+  uniform vec3 uSunDir;
+  uniform float uGround;
+  uniform float uFoamAmount;
+  varying vec3 vWorld;
+  #include <fog_pars_fragment>
+  void main() {
+    vec2 uv = (vWorld.xz + vec2(uGround)) / (2.0 * uGround);
+    float terrH = texture2D(uHeights, uv).r;
+    float depth = ${WATER_Y.toFixed(3)} - terrH;          // metres of water over the floor (negative: dry land under the plane)
+    float t = uTime;
+    // wave slopes (the three swells of waveY, exaggerated, plus a fine glittering ripple)
+    float dx = 0.06 * (0.11 * cos(vWorld.x * 0.11 + t * 1.1) + 0.1 * cos((vWorld.x + vWorld.z) * 0.2 + t * 1.7));
+    float dz = 0.06 * (0.13 * cos(vWorld.z * 0.13 - t * 0.8) + 0.1 * cos((vWorld.x + vWorld.z) * 0.2 + t * 1.7));
+    float near = 1.0 - smoothstep(30.0, 150.0, length(cameraPosition - vWorld));   // fine ripples fade with distance (no shimmer on the horizon)
+    dx = dx * 4.0 + near * (0.05 * cos(vWorld.x * 0.8 + vWorld.z * 0.35 + t * 2.3) + 0.03 * cos(vWorld.x * 1.7 - vWorld.z * 1.1 - t * 3.1));
+    dz = dz * 4.0 + near * (0.05 * cos(vWorld.z * 0.9 - vWorld.x * 0.3 + t * 2.0) + 0.03 * cos(vWorld.z * 1.6 + vWorld.x * 1.2 + t * 2.7));
+    vec3 N = normalize(vec3(-dx, 1.0, -dz));
+    vec3 V = normalize(cameraPosition - vWorld);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    // body colour by depth: sunlit aqua shallows, turquoise, then deep blue
+    float k = clamp(depth / 5.0, 0.0, 1.0);
+    vec3 col = mix(uShallow, uMid, smoothstep(0.0, 0.35, k));
+    col = mix(col, uDeep, smoothstep(0.3, 1.0, k));
+    col = mix(col, uSky, fres * 0.55);
+    // sun glints
+    vec3 H = normalize(uSunDir + V);
+    float spec = pow(max(dot(N, H), 0.0), 140.0) * 1.3 + pow(max(dot(N, H), 0.0), 18.0) * 0.12;
+    col += uSun * spec;
+    // foam: a bright line right at the shore, lapping bands that creep up and fade back with the swell
+    float lap = 0.5 + 0.5 * sin(t * 0.9 + vWorld.x * 0.045 + vWorld.z * 0.06);
+    float reach = mix(0.35, 1.1, lap) * uFoamAmount;
+    float wob = sin(vWorld.x * 0.37 + sin(vWorld.z * 0.21) * 2.3) * 0.5 + 0.5;
+    float band = smoothstep(reach + 0.2, 0.0, depth + wob * 0.2);
+    float streak = smoothstep(0.3, 0.75, sin(depth * 9.0 - t * 1.5 + wob * 5.0) * 0.5 + 0.5);
+    float foam = band * (0.4 + 0.6 * mix(0.5, streak, near)) + smoothstep(0.16, 0.0, depth) * 0.9;
+    foam = clamp(foam, 0.0, 1.0);
+    col = mix(col, uFoam, foam);
+    float alpha = mix(0.38, 0.97, smoothstep(0.0, 2.4, depth));
+    alpha = max(alpha, foam * 0.95) * smoothstep(-0.04, 0.1, depth);
+    gl_FragColor = vec4(col, alpha);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+let heightTex: THREE.DataTexture | null = null;
+/** The terrain height (metres) over the whole ground square, 2 m texels (half floats: filterable on iPad). */
+function terrainHeightTexture(): THREE.DataTexture {
+  if (heightTex) return heightTex;
+  const W = Math.round(GROUND), data = new Uint16Array(W * W);
+  const cell = (GROUND * 2) / W;
+  for (let j = 0; j < W; j++)
+    for (let i = 0; i < W; i++) data[j * W + i] = THREE.DataUtils.toHalfFloat(terrainHeight(-GROUND + (i + 0.5) * cell, -GROUND + (j + 0.5) * cell));
+  const t = new THREE.DataTexture(data, W, W, THREE.RedFormat, THREE.HalfFloatType);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  heightTex = t;
+  return t;
+}
+
+function waterMaterial(flat: boolean): THREE.ShaderMaterial {
+  const a = tuning.art;
+  const uniforms = THREE.UniformsUtils.merge([
+    THREE.UniformsLib.fog,
+    {
+      uTime: { value: 0 }, uFlat: { value: flat ? 1 : 0 }, uHeights: { value: terrainHeightTexture() }, uGround: { value: GROUND },
+      uShallow: { value: new THREE.Color(a.waterShallow) }, uMid: { value: new THREE.Color(a.waterMid) }, uDeep: { value: new THREE.Color(a.waterDeep) },
+      uSky: { value: new THREE.Color(a.waterSky) }, uSun: { value: new THREE.Color(a.sunColor) }, uFoam: { value: new THREE.Color(a.waterFoam) },
+      uSunDir: { value: sunDirection() }, uFoamAmount: { value: a.waterFoamAmount },
+    },
+  ]);
+  const m = new THREE.ShaderMaterial({ uniforms, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, transparent: true, depthWrite: false, fog: true });
+  return m;
+}
+
+function buildWater(): WaterBody & { far: THREE.Mesh[] } {
+  const STEP = 12;
   const n = Math.round((GROUND * 2) / STEP);
   const x0 = -GROUND;
-  const has = new Uint8Array(n * n);
-  const h = (i: number, j: number): number => terrainHeight(x0 + i * STEP, x0 + j * STEP);
   const vid = new Int32Array((n + 1) * (n + 1)).fill(-1);
-  const P: number[] = [], C: number[] = [];
-  const idx: number[] = [];
+  const P: number[] = [], idx: number[] = [];
   const need = (i: number, j: number): number => {
     const k = j * (n + 1) + i;
     if (vid[k] >= 0) return vid[k];
     const id = P.length / 3;
     vid[k] = id;
-    const x = x0 + i * STEP, z = x0 + j * STEP;
-    P.push(x, WATER_Y, z);
-    const depth = WATER_Y - terrainHeight(x, z);
-    const shallow = 1 - clamp(depth / 2.2, 0, 1);
-    // deep teal → turquoise shallows → white foam at the edge
-    colA.set('#1d6f86').lerp(colB.set('#35c1c9'), Math.pow(shallow, 0.8));
-    const foam = clamp(1 - Math.abs(depth - 0.1) / 0.55, 0, 1) * 0.65;
-    colA.lerp(colB.set('#ffffff'), foam);
-    C.push(colA.r, colA.g, colA.b, clamp(0.97 - shallow * 0.42 + foam * 0.2, 0.3, 1));
+    P.push(x0 + i * STEP, WATER_Y, x0 + j * STEP);
     return id;
   };
   for (let j = 0; j < n; j++)
     for (let i = 0; i < n; i++) {
-      const m = Math.min(h(i, j), h(i + 1, j), h(i, j + 1), h(i + 1, j + 1));
-      if (m > WATER_Y + 0.3) continue;
-      has[j * n + i] = 1;
+      // a cell is water if any of 9 samples dips near or below the surface (a flat cell over land is hidden by the land anyway)
+      let m = 1e9;
+      for (let b = 0; b <= 2; b++)
+        for (let a = 0; a <= 2; a++) m = Math.min(m, terrainHeight(x0 + (i + a / 2) * STEP, x0 + (j + b / 2) * STEP));
+      if (m > WATER_Y + 0.6) continue;
       const a = need(i, j), b = need(i + 1, j), c = need(i, j + 1), d = need(i + 1, j + 1);
       idx.push(a, c, b, b, c, d);
     }
   const g = new THREE.BufferGeometry();
-  const pos = new Float32Array(P);
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(P.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
-  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(C), 4));
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
   g.setIndex(idx);
   g.computeBoundingSphere();
   g.computeBoundingBox();
-  const mat = new THREE.MeshPhysicalMaterial({
-    vertexColors: true, transparent: true, roughness: 0.12, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.15, depthWrite: false,
-  });
+  const mat = waterMaterial(false);
   const mesh = new THREE.Mesh(g, mat);
   mesh.renderOrder = 2;
   mesh.receiveShadow = false;
-  const nor = g.attributes.normal as THREE.BufferAttribute;
-  const count = pos.length / 3;
+  mesh.frustumCulled = false;
+  mesh.name = 'water';
+  // the open ocean beyond the terrain square: four flat strips with the same look
+  const far: THREE.Mesh[] = [];
+  const flat = waterMaterial(true);
+  const R = 2400, E = GROUND;
+  for (const [cx, cz, w, d] of [[0, -E - R / 2, 2 * R + 2 * E, R], [0, E + R / 2, 2 * R + 2 * E, R], [-E - R / 2, 0, R, 2 * E], [E + R / 2, 0, R, 2 * E]] as number[][]) {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d, 1, 1).rotateX(-Math.PI / 2), flat);
+    p.position.set(cx, WATER_Y, cz);
+    p.renderOrder = 2;
+    p.frustumCulled = false;
+    far.push(p);
+  }
   return {
     mesh,
+    far,
     update(t: number) {
-      for (let i = 0; i < count; i++) {
-        const x = pos[i * 3], z = pos[i * 3 + 2];
-        pos[i * 3 + 1] = waveY(x, z, t); // the same surface a swimmer floats on
-        const dx = 0.06 * (0.11 * Math.cos(x * 0.11 + t * 1.1) + 0.1 * Math.cos((x + z) * 0.2 + t * 1.7));
-        const dz = 0.06 * (0.13 * Math.cos(z * 0.13 - t * 0.8) + 0.1 * Math.cos((x + z) * 0.2 + t * 1.7));
-        const l = Math.hypot(dx, 1, dz);
-        nor.setXYZ(i, -dx / l, 1 / l, -dz / l);
-      }
-      (g.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-      nor.needsUpdate = true;
+      mat.uniforms.uTime.value = t;
+      flat.uniforms.uTime.value = t;
     },
   };
 }
@@ -473,19 +645,13 @@ export interface Terrain {
 export function buildTerrain(): Terrain {
   const group = new THREE.Group();
   group.name = 'terrain';
-  // an endless plain + ocean under everything so the horizon is never a void
+  // beyond the terrain square: the deep sea floor, so the horizon is never a void (the water strips sit above it)
   const far = new THREE.Mesh(
-    new THREE.PlaneGeometry(1600, 1600).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: '#6aa352', roughness: 1 }),
+    new THREE.PlaneGeometry(6000, 6000).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: tuning.art.waterDeep, fog: true }),
   );
-  far.position.y = -2.4;
-  far.receiveShadow = false;
-  const ocean = new THREE.Mesh(
-    new THREE.PlaneGeometry(900, 1600).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: '#1f7087', roughness: 0.25 }),
-  );
-  ocean.position.set(GROUND + 440, WATER_Y - 0.05, 0);
-  group.add(far, ocean);
+  far.position.y = WATER_Y - 9;
+  group.add(far);
 
   const chunks: THREE.Mesh[] = [];
   for (let cz = 0; cz < CHUNK_N; cz++)
@@ -498,6 +664,6 @@ export function buildTerrain(): Terrain {
   group.add(roadwork);
   const water = buildWater();
   group.add(water.mesh);
-  void BOUNDS;
+  for (const f of water.far) group.add(f);
   return { group, chunks, roadwork, water };
 }

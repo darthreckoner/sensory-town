@@ -15,7 +15,7 @@ export function initJuice(): void {
     fx.attach(s.scene, s.camera, s.fxScale);
     const inWorkshop = s.name === 'workshop';
     // a beat per place: lobby (picker), town + build, lo-fi studio, runway style
-    audio.setTrack(s.name === 'picker' ? 'lobby' : s.name === 'workshop' ? 'studio' : s.name === 'dressup' ? 'style' : 'town');
+    audio.setTrack(s.name === 'picker' ? 'lobby' : s.name === 'workshop' ? 'studio' : s.name === 'dressup' ? 'locker' : 'town'); // v3 locker: the Locker has its own lobby track
     audio.setMusic(tuning.audio.music > 0 && (!inWorkshop || store.data.settings.musicInWorkshop));
   });
 
@@ -57,6 +57,24 @@ export function initJuice(): void {
     audio.play('sparkle', { vol: 0.6, pitch: 1.2 });
     if (pos) fx.burst('sparkle', pos, { count: 18, color: ['#ffffff', '#ff2e88', '#00d4ff'], size: 1.1 });
   });
+  // ── v3 locker: equipping + the unlock reveal ──
+  const RARITY_FX: Record<string, { pitch: number; count: number; colors: string[] }> = {
+    common: { pitch: 1, count: 14, colors: ['#ffffff', '#b7bcc9'] },
+    uncommon: { pitch: 1.06, count: 20, colors: ['#ffffff', '#5fd447', '#aef59a'] },
+    rare: { pitch: 1.12, count: 26, colors: ['#ffffff', '#36a8ff', '#9bd6ff'] },
+    epic: { pitch: 1.2, count: 34, colors: ['#ffffff', '#b65cff', '#dcaeff', '#ff2e88'] },
+    legendary: { pitch: 1.3, count: 46, colors: ['#ffffff', '#ffb02e', '#ffe08a', '#ff8a1f'] },
+  };
+  bus.on('lockerEquipped', ({ pos, object, rarity }) => {
+    const r = RARITY_FX[rarity] ?? RARITY_FX.common;
+    audio.play('equip', { pitch: r.pitch });
+    if (pos) fx.burst('sparkle', pos, { count: r.count, color: r.colors, size: 1.1 });
+    if (object) popScale(object, 0.45, 0.14);
+  });
+  bus.on('revealShown', ({ rarity }) => {
+    if (rarity === 'epic' || rarity === 'legendary') audio.play('reveal', { pitch: rarity === 'legendary' ? 1.08 : 1 });
+    else audio.play('levelup');
+  });
   bus.on('characterSpin', ({ speed }) => audio.play('swish', { pitch: 0.85 + Math.min(0.5, speed * 0.05), vol: Math.min(0.55, 0.14 + speed * 0.03) }));
 
   // ── Building ──
@@ -90,6 +108,35 @@ export function initJuice(): void {
     fx.burst('puff', pos, { count: 30, speed: 2 });
   });
   bus.on('undo', () => audio.play('back'));
+
+  // ── v3 build (W5): world building ──
+  const buildSound = (mat: string): 'thunk' | 'clunk' | 'clang' => (mat === 'brick' ? 'clunk' : mat === 'metal' ? 'clang' : 'thunk');
+  const dust = (mat: string) => (mat === 'brick' ? ['#d9b79a', '#c9a07e'] : mat === 'metal' ? ['#dfe6f2', '#c5cfdf'] : ['#e8d4b4', '#d6bd94']);
+  bus.on('buildPlaced', ({ pos, mat }) => {
+    audio.play(buildSound(mat), { pitch: 0.94 + Math.random() * 0.12 });
+    fx.burst('puff', { x: pos.x, y: pos.y - 0.4, z: pos.z }, { count: 5, size: 0.55, speed: 0.7, color: dust(mat) });
+  });
+  bus.on('buildSettled', ({ pos, mat }) => {
+    fx.burst('puff', { x: pos.x, y: pos.y - 0.2, z: pos.z }, { count: 8, size: 0.8, speed: 1.1, color: dust(mat), spread: 1.2 });
+  });
+  bus.on('buildDeleted', ({ pos, mat }) => {
+    audio.play('puff', { pitch: 0.9 });
+    fx.burst('puff', pos, { count: 12, size: 0.8, speed: 1.3, color: dust(mat), spread: 1.2 });
+  });
+  bus.on('buildEdited', ({ pos, mat }) => {
+    audio.play('chop', { pitch: mat === 'metal' ? 1.3 : mat === 'brick' ? 0.8 : 1 });
+    fx.burst('puff', pos, { count: 6, size: 0.5, speed: 0.9, color: dust(mat) });
+  });
+  bus.on('buildBlocked', () => audio.play('blocked'));
+  bus.on('decorPlaced', ({ pos }) => {
+    audio.play('snap', { pitch: 1.15 });
+    fx.burst('sparkle', pos, { count: 6, size: 0.5 });
+  });
+  bus.on('decorDeleted', ({ pos }) => {
+    audio.play('puff');
+    fx.burst('puff', pos, { count: 8, size: 0.6, speed: 1 });
+  });
+  bus.on('buildMode', ({ on }) => audio.play(on ? 'swish' : 'back', { vol: 0.6 }));
 
   // ── Squishy ──
   bus.on('squishPress', ({ strength }) => audio.play('squelch', { vol: 0.6 + 0.4 * strength }));
@@ -199,14 +246,25 @@ export function initJuice(): void {
   });
 
   // ── Driving ──
-  bus.on('driveStart', () => audio.engineStart());
+  bus.on('driveStart', ({ kind }) => audio.engineStart(kind));
   bus.on('driveStop', () => audio.engineStop());
   bus.on('carUpdate', ({ speed01, throttle }) => audio.engineSet(speed01, throttle));
   bus.on('carCollide', ({ pos, speed }) => {
     audio.play('bump', { vol: Math.min(1, 0.4 + speed * 0.08) });
     fx.burst('puff', pos, { count: 8, speed: 0.8 });
   });
-  bus.on('horn', () => audio.play('horn'));
+  // ── v3 rides: a horn per ride, and the hop in / out ──
+  const HORNS = { sports: 'horn', pickup: 'hornPickup', golfcart: 'hornCart', hoverboard: 'hornHover', icecream: 'jingle', boat: 'hornBoat' } as const;
+  bus.on('horn', ({ kind }) => audio.play(HORNS[kind ?? 'sports']));
+  bus.on('rideEnter', ({ pos }) => {
+    audio.play('swish', { pitch: 1.15, vol: 0.5 });
+    audio.play('pop', { pitch: 0.9, vol: 0.5 });
+    fx.burst('sparkle', pos, { count: 8, color: ['#ffffff', '#00d4ff', '#ffc93c'], speed: 0.8 });
+  });
+  bus.on('rideExit', ({ pos }) => {
+    audio.play('swish', { pitch: 0.85, vol: 0.45 });
+    fx.burst('puff', pos, { count: 5, speed: 0.6, size: 0.7 });
+  });
   bus.on('passengerWave', () => audio.play('hello'));
   bus.on('passengerPickup', ({ pos }) => {
     audio.play('hello');
@@ -221,10 +279,8 @@ export function initJuice(): void {
     audio.play('collect');
     fx.burst('sparkle', pos, { count: 40, color: ['#ffffff', '#00d4ff', '#ff2e88', '#ffc93c'] });
   });
-  bus.on('rewardUnlocked', ({ label, icon }) => {
-    audio.play('levelup');
-    toast(`${icon} Unlocked: ${label}`);
-  });
+  // v3 locker: the big reveal card (ui/reveal.ts) owns the unlock moment: it plays the sting (revealShown) and shows the card.
+  bus.on('rewardUnlocked', () => {});
   bus.on('carJump', () => audio.play('swish', { pitch: 0.7 }));
   bus.on('carLand', ({ pos, strength }) => {
     audio.play('bump', { vol: Math.min(1, 0.4 + strength * 0.3), pitch: 0.8 });
@@ -265,4 +321,39 @@ export function initJuice(): void {
   });
   bus.on('arriveWorkshop', () => audio.play('chime'));
   bus.on('arriveBuild', () => audio.play('chime'));
+
+  // ── v3 movement (W4): sprint dust, mantle, glide, launch pads, party bus, POI cards ──
+  const DUST = ['#e8dcc4', '#f4ead6', '#d8cdb4'];
+  // a sprinting step kicks up dust at the feet
+  bus.on('footstep', ({ pos, run }) => {
+    if (run) fx.burst('puff', { x: pos.x, y: pos.y + 0.12, z: pos.z }, { count: 2, color: DUST, size: 0.26, speed: 0.4 });
+  });
+  bus.on('mantle', ({ pos }) => {
+    audio.play('hup');
+    fx.burst('puff', { x: pos.x, y: pos.y - 0.6, z: pos.z }, { count: 5, color: DUST, size: 0.6, speed: 0.7 });
+  });
+  bus.on('gliderDeploy', ({ pos }) => {
+    audio.play('deploy');
+    fx.burst('sparkle', pos, { count: 16, color: ['#ffffff', '#00d4ff', '#ff2e88'], size: 0.8, speed: 1 });
+  });
+  bus.on('glideLand', ({ pos, strength }) => {
+    audio.play('thud', { vol: Math.min(1, 0.6 + strength * 0.3) });
+    fx.burst('puff', { x: pos.x, y: pos.y + 0.15, z: pos.z }, { count: Math.round(8 + strength * 6), color: DUST, size: 0.9 + strength * 0.3, speed: 1.1 + strength * 0.5, spread: 0.3 });
+  });
+  bus.on('airStart', () => audio.windStart());
+  bus.on('airUpdate', ({ speed01, dive }) => audio.windSet(speed01, dive));
+  bus.on('airStop', () => audio.windStop());
+  bus.on('launchPad', ({ pos }) => {
+    audio.play('boing');
+    fx.burst('sparkle', pos, { count: 34, color: ['#ffffff', '#00d4ff', '#ff2e88', '#ffc93c'], size: 1.1, speed: 1.6, up: 1.8 });
+    fx.burst('puff', { x: pos.x, y: pos.y - 0.2, z: pos.z }, { count: 10, color: DUST, size: 0.6, speed: 1.1, spread: 0.6 });
+  });
+  bus.on('busStart', () => audio.play('fanfare'));
+  bus.on('busHonk', () => audio.play('honk'));
+  bus.on('busJump', ({ pos }) => {
+    audio.play('whoosh', { vol: 0.9, pitch: 0.8 });
+    audio.play('pop', { pitch: 1.5, vol: 0.7 });
+    fx.burst('confetti', pos, { count: 30, size: 0.4, speed: 0.9 });
+  });
+  bus.on('poiEntered', () => audio.play('sting'));
 }

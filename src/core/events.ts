@@ -2,6 +2,7 @@
 // listens and turns them into sound + visuals. Gameplay code must never call
 // audio or effects directly.
 import type * as THREE from 'three';
+import type { VehicleKind } from './model';
 
 export type V3 = { x: number; y: number; z: number };
 export type OutfitSlot = 'skin' | 'hair' | 'top' | 'bottom' | 'shoes' | 'accessory';
@@ -20,7 +21,13 @@ export interface GameEvents {
   reset: { pos?: V3 };
   /** v2: a charm was collected in town / a bonus reward unlocked. */
   charmCollected: { pos: V3; count: number };
-  rewardUnlocked: { id: string; icon: string; label: string };
+  /** v2: a bonus reward unlocked. v3 locker: also carries rarity + the Locker slot/item (the reveal card uses them). */
+  rewardUnlocked: { id: string; icon: string; label: string; rarity?: string; slot?: string; itemId?: string; where?: string };
+  // ── v3 locker ──
+  /** a Locker item was equipped (preview or from the reveal card). slot: outfit|backBling|glider|contrail|emote|ride|wrap|custom */
+  lockerEquipped: { slot: string; id: string; rarity: string; pos?: V3; object?: THREE.Object3D };
+  /** the big unlock reveal card opened (rarity drives the sting: epic/legendary get a bigger one) */
+  revealShown: { rarity: string };
   /** v2: car stunts (ramps / airtime). */
   carJump: { pos: V3; strength: number };
   carLand: { pos: V3; strength: number };
@@ -97,16 +104,59 @@ export interface GameEvents {
   shellCleared: { pos: V3 };
 
   // ── Driving ──
-  driveStart: {};
+  /** (v3 rides: which ride's engine voice to start) */
+  driveStart: { kind?: VehicleKind };
   driveStop: {};
   carUpdate: { speed01: number; throttle: number };
   carCollide: { pos: V3; speed: number };
-  horn: { pos: V3 };
+  /** (v3 rides: each ride has its own horn; the ice-cream truck plays a jingle) */
+  horn: { pos: V3; kind?: VehicleKind };
+  // ── v3 rides ──
+  /** hopped into / out of a ride */
+  rideEnter: { kind: VehicleKind; pos: V3 };
+  rideExit: { kind: VehicleKind; pos: V3 };
   passengerWave: { pos: V3 };
   passengerPickup: { pos: V3 };
   passengerDropoff: { pos: V3 };
   arriveWorkshop: { pos: V3 };
   arriveBuild: { pos: V3 };
+
+  // ── v3 build (W5): free building in the world ──
+  /** build mode switched on / off in the world */
+  buildMode: { on: boolean };
+  /** ask the Drive scene to switch build mode (the ☰ menu's "Build") */
+  buildToggle: { on?: boolean };
+  /** a piece was placed (kind: wall|floor|ramp|roof, mat: wood|brick|metal) */
+  buildPlaced: { pos: V3; kind: string; mat: string };
+  /** its build-in animation finished (a dust puff) */
+  buildSettled: { pos: V3; kind: string; mat: string };
+  buildDeleted: { pos: V3; kind: string; mat: string };
+  /** the ghost was red and the player tried to place anyway */
+  buildBlocked: { pos?: V3 };
+  /** wall / floor panels were cut or restored */
+  buildEdited: { pos: V3; mat: string };
+  decorPlaced: { pos: V3; type: string };
+  decorDeleted: { pos: V3; type: string };
+
+  // ── v3 movement (W4): sprint, mantle, glide, launch pads, the party bus, POI cards ──
+  /** climbed a ledge (short hop-up) */
+  mantle: { pos: V3 };
+  /** the glider popped open */
+  gliderDeploy: { pos: V3 };
+  /** touched down after a glide (strength ~ how fast) */
+  glideLand: { pos: V3; strength: number };
+  /** a flyer is airborne (skydive / glide): drives the wind loop. airUpdate every frame, airStop at touchdown. */
+  airStart: {};
+  airUpdate: { speed01: number; dive: number };
+  airStop: {};
+  /** stepped on a launch pad: boing! */
+  launchPad: { pos: V3; strength: number };
+  /** party bus intro: it arrived / honked / the player jumped off */
+  busStart: { pos: V3 };
+  busHonk: { pos: V3 };
+  busJump: { pos: V3 };
+  /** a POI title card was shown */
+  poiEntered: { id: string; name: string; pos: V3 };
 }
 
 type Handler<T> = (payload: T) => void;

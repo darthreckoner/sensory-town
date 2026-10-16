@@ -1,6 +1,10 @@
-// Charms + bonus rewards. Charms are hidden around town; each profile collects
-// its own. Collecting charms unlocks BONUS cosmetics. Base content is never
-// locked — anything not listed in REWARDS is always available.
+// Charms + the reward ladder. Charms are hidden around the island; each profile collects its
+// own. Every charm milestone unlocks real stuff: Locker items (skins, styles, back blings,
+// gliders, contrails, emotes, ride wraps, rides) and the Studio / Build bonuses from v2.
+// Base content is never locked — anything not listed in REWARDS is always available.
+//
+// v3 locker: the ladder is spread over however many charms exist (CHARMS.length is read at
+// runtime, never hard-coded), so adding more charms to the world just stretches the pacing.
 //
 // Usage in a module:
 //   import { isUnlocked, rewardFor } from '../core/unlocks';
@@ -8,35 +12,105 @@
 import { store } from './store';
 import { bus } from './events';
 import { toast } from '../ui/ui';
+import { CHARMS } from '../world/townLayout';
+import { allCatalogRewards, type ItemSlot, type Rarity } from '../art/gear/catalog';
 
 export interface Reward {
-  id: string;        // namespaced: 'wax.*', 'slime.*', 'squishy.*', 'car.*', 'outfit.*', 'build.*'
-  at: number;        // charms needed
+  id: string;        // namespaced: 'wax.*', 'slime.*', 'squishy.*', 'car.*', 'outfit.*', 'build.*', 'skin.*', 'style.*', 'bling.*', 'glider.*', 'trail.*', 'emote.*', 'wrap.*', 'ride.*'
+  /** charms needed (spread over the world's charm count — always read this, never cache it) */
+  readonly at: number;
   icon: string;
   label: string;     // short, cool
   where: string;     // where it shows up
+  // v3 locker
+  rarity: Rarity;
+  /** Locker slot + item id when this reward is a Locker item (the reveal card offers "Equip") */
+  slot?: ItemSlot | 'wrap' | 'style';
+  itemId?: string;
 }
 
-/** Sorted by `at`. Modules own the actual items; ids must match. */
-export const REWARDS: Reward[] = [
-  { id: 'wax.glitter', at: 2, icon: '✨', label: 'Glitter wax', where: 'Studio · Wax' },
-  { id: 'car.neon', at: 4, icon: '🌈', label: 'Neon underglow', where: 'Car paint' },
-  { id: 'slime.holo', at: 6, icon: '🪩', label: 'Holo slime', where: 'Studio · Slime' },
-  { id: 'outfit.ledkicks', at: 8, icon: '👟', label: 'LED sneakers', where: 'Style' },
-  { id: 'squishy.dragon', at: 10, icon: '🐉', label: 'Dragon squishy', where: 'Studio · Squishy' },
-  { id: 'build.neonsign', at: 12, icon: '💡', label: 'Neon signs', where: 'Build · Decor' },
-  { id: 'wax.chrome', at: 15, icon: '🪞', label: 'Chrome wax', where: 'Studio · Wax' },
-  { id: 'car.chrome', at: 18, icon: '🏎️', label: 'Chrome paint', where: 'Car paint' },
-  { id: 'outfit.wings', at: 21, icon: '🪽', label: 'Angel wings', where: 'Style' },
-  { id: 'build.pool', at: 24, icon: '🏊', label: 'Pool + hot tub', where: 'Build · Outdoor' },
-  { id: 'slime.galaxy', at: 28, icon: '🌌', label: 'Galaxy slime', where: 'Studio · Slime' },
-  { id: 'car.trail', at: 32, icon: '💫', label: 'Sparkle trail', where: 'Car paint' },
-  { id: 'wax.glow', at: 36, icon: '🟢', label: 'Glow-in-the-dark wax', where: 'Studio · Wax' },
-  { id: 'outfit.crown', at: 40, icon: '👑', label: 'Diamond crown', where: 'Style' },
+/** v2 rewards that stay (ids unchanged, so the Studio / Build / paint shop keep working). */
+const LEGACY: Record<string, { icon: string; label: string; where: string; rarity: Rarity }> = {
+  'wax.glitter': { icon: '✨', label: 'Glitter wax', where: 'Studio · Wax', rarity: 'uncommon' },
+  'car.neon': { icon: '🌈', label: 'Neon underglow', where: 'Ride paint', rarity: 'uncommon' },
+  'slime.holo': { icon: '🪩', label: 'Holo slime', where: 'Studio · Slime', rarity: 'rare' },
+  'outfit.ledkicks': { icon: '👟', label: 'LED sneakers', where: 'Locker · Custom', rarity: 'rare' },
+  'squishy.dragon': { icon: '🐉', label: 'Dragon squishy', where: 'Studio · Squishy', rarity: 'epic' },
+  'build.neonsign': { icon: '💡', label: 'Neon signs', where: 'Build · Decor', rarity: 'rare' },
+  'wax.chrome': { icon: '🪞', label: 'Chrome wax', where: 'Studio · Wax', rarity: 'rare' },
+  'car.chrome': { icon: '🏎️', label: 'Chrome paint', where: 'Ride wraps', rarity: 'epic' },
+  'outfit.wings': { icon: '🪽', label: 'Angel wings', where: 'Locker · Custom', rarity: 'epic' },
+  'build.pool': { icon: '🏊', label: 'Pool + hot tub', where: 'Build · Outdoor', rarity: 'epic' },
+  'slime.galaxy': { icon: '🌌', label: 'Galaxy slime', where: 'Studio · Slime', rarity: 'epic' },
+  'car.trail': { icon: '💫', label: 'Sparkle trail', where: 'Ride wraps', rarity: 'rare' },
+  'wax.glow': { icon: '🟢', label: 'Glow-in-the-dark wax', where: 'Studio · Wax', rarity: 'legendary' },
+  'outfit.crown': { icon: '👑', label: 'Diamond crown', where: 'Locker · Custom', rarity: 'legendary' },
+};
+
+/**
+ * The ladder, in unlock order. Rarity climbs through it but never in a straight line: there is
+ * a treat at almost every charm and the legendaries land at the end. Skins that wear v2 parts
+ * (LED kicks, wings, crown) come AFTER those parts. Anything in the catalog that is missing from
+ * this list is appended at the end (and warned about in dev).
+ */
+const LADDER: string[] = [
+  'bling.bunny', 'trail.sparkles', 'skin.glitterRacer', 'emote.tada', 'wax.glitter', 'glider.umbrella',
+  'ride.pickup', 'skin.neonSkater', 'car.neon', 'bling.boba', 'trail.hearts', 'slime.holo',
+  'skin.snowDay', 'outfit.ledkicks', 'emote.twirl', 'bling.guitar', 'glider.balloons', 'skin.starChef',
+  'build.neonsign', 'skin.cometCat', 'ride.boat', 'emote.giggle', 'trail.stars', 'squishy.dragon',
+  'skin.bobaBreeze', 'bling.catpack', 'style.glitterRacer.2', 'glider.butterfly', 'skin.studioSpark', 'wrap.pearl',
+  'wax.chrome', 'skin.jellyJet', 'bling.butterfly', 'emote.heart', 'skin.cherryPop', 'trail.bubbles',
+  'car.trail', 'skin.galaxyGamer', 'bling.jetpack', 'style.neonSkater.2', 'skin.moonlightMixer', 'glider.pizza',
+  'outfit.wings', 'ride.hoverboard', 'skin.roboRascal', 'emote.shuffle', 'bling.balloon', 'style.cometCat.2',
+  'skin.dinoDash', 'build.pool', 'bling.shell', 'skin.cosmicCheer', 'glider.cloud', 'car.chrome',
+  'emote.robot', 'style.galaxyGamer.2', 'skin.dragonDrift', 'trail.confetti', 'slime.galaxy', 'bling.angel',
+  'skin.auroraSkies', 'glider.dragonfly', 'style.cosmicCheer.2', 'ride.icecream', 'skin.shadowSprite', 'emote.swing',
+  'style.dragonDrift.2', 'wrap.glitter', 'skin.solarSparkle', 'style.auroraSkies.2', 'wax.glow', 'skin.midnightMirage',
+  'bling.rainbowcape', 'emote.sway', 'trail.rainbow', 'outfit.crown', 'skin.prismParade',
 ];
 
+const WHERE: Record<string, string> = {
+  outfit: 'Locker · Outfit', backBling: 'Locker · Back Bling', glider: 'Locker · Glider', contrail: 'Locker · Contrail',
+  emote: 'Locker · Emotes', ride: 'Locker · Ride', wrap: 'Locker · Ride Wrap', style: 'Locker · Outfit style',
+};
+
+/** How many charms exist in the world right now. */
+export function charmTotal(): number {
+  return Math.max(1, CHARMS.length);
+}
+
+function buildRewards(): Reward[] {
+  const meta = new Map<string, Omit<Reward, 'at' | 'id'>>();
+  for (const [id, m] of Object.entries(LEGACY)) meta.set(id, { ...m });
+  for (const c of allCatalogRewards()) {
+    meta.set(c.reward, { icon: c.item.icon, label: c.item.name, where: WHERE[c.slot] ?? 'Locker', rarity: c.item.rarity, slot: c.slot, itemId: c.item.id });
+  }
+  const order = LADDER.filter((id) => meta.has(id));
+  const missing = [...meta.keys()].filter((id) => !order.includes(id));
+  if (import.meta.env?.DEV) {
+    for (const id of LADDER) if (!meta.has(id)) console.warn(`[unlocks] ladder id "${id}" is not in the catalog`);
+    if (missing.length) console.warn('[unlocks] not in the ladder, appended at the end:', missing);
+  }
+  order.push(...missing);
+  const M = order.length;
+  return order.map((id, k): Reward => {
+    const m = meta.get(id)!;
+    return {
+      id,
+      get at(): number {
+        return Math.max(1, Math.ceil(((k + 1) * charmTotal()) / M));
+      },
+      ...m,
+    };
+  });
+}
+
+/** Sorted by `at`. */
+export const REWARDS: Reward[] = buildRewards();
+const BY_ID = new Map(REWARDS.map((r) => [r.id, r]));
+
 export function rewardFor(id: string): Reward | undefined {
-  return REWARDS.find((r) => r.id === id);
+  return BY_ID.get(id);
 }
 
 export function charmCount(): number {
@@ -47,6 +121,12 @@ export function charmCount(): number {
 export function isUnlocked(id: string): boolean {
   const r = rewardFor(id);
   return !r || charmCount() >= r.at;
+}
+
+/** How many more charms until `id` unlocks (0 = unlocked). */
+export function charmsNeeded(id: string): number {
+  const r = rewardFor(id);
+  return r ? Math.max(0, r.at - charmCount()) : 0;
 }
 
 export function hasCharm(charmId: string): boolean {
@@ -61,7 +141,9 @@ export function collectCharm(charmId: string): Reward[] {
   store.update(() => p.charms.push(charmId));
   const after = p.charms.length;
   const unlocked = REWARDS.filter((r) => r.at > before && r.at <= after);
-  for (const r of unlocked) bus.emit('rewardUnlocked', { id: r.id, icon: r.icon, label: r.label });
+  for (const r of unlocked) {
+    bus.emit('rewardUnlocked', { id: r.id, icon: r.icon, label: r.label, rarity: r.rarity, slot: r.slot, itemId: r.itemId, where: r.where });
+  }
   return unlocked;
 }
 

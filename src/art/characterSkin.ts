@@ -113,7 +113,8 @@ export function getMats(): Mats {
   // bright studio lights and the ring-light environment.
   const fabric = { vertexColors: true, roughness: 0.95, metalness: 0, specularIntensity: 0.12, clearcoat: 0 } as const;
   mats = {
-    skin: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.6, clearcoat: 0.22, clearcoatRoughness: 0.5 }),
+    // warm skin: soft sheen (a faint rosy glow at grazing angles reads as subsurface scattering) + a gentle clearcoat
+    skin: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.6, clearcoat: 0.22, clearcoatRoughness: 0.5, sheen: 0.3, sheenRoughness: 0.55, sheenColor: new THREE.Color('#ffa58a') }),
     fabric: new THREE.MeshPhysicalMaterial({ ...fabric }),
     plaid: new THREE.MeshPhysicalMaterial({ ...fabric, map: plaidTexture() }),
     gloss: new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, clearcoat: 0.28, clearcoatRoughness: 0.32, specularIntensity: 0.7 }),
@@ -135,6 +136,7 @@ export interface Baked {
   nrm: Float32Array;
   uv: Float32Array;
   col: Float32Array | null; // colors baked into the geometry (eyes, head blush) — multiplied by the chunk color
+  w2: Float32Array | null; // per-vertex weight of a second bone (the w2 attribute of the geometry): bends the lips
   index: Uint32Array;
   n: number;
 }
@@ -197,7 +199,13 @@ export function bakeGeo(geo: THREE.BufferGeometry, m: THREE.Matrix4, key?: strin
       index[i + 2] = t;
     }
   }
-  const out: Baked = { pos, nrm, uv, col, index, n };
+  let w2: Float32Array | null = null;
+  const wa = geo.attributes.w2;
+  if (wa) {
+    w2 = new Float32Array(n);
+    for (let i = 0; i < n; i++) w2[i] = wa.getX(i);
+  }
+  const out: Baked = { pos, nrm, uv, col, w2, index, n };
   if (key) {
     let mp = bakeCache.get(geo);
     if (!mp) bakeCache.set(geo, (mp = new Map()));
@@ -210,6 +218,8 @@ export function bakeGeo(geo: THREE.BufferGeometry, m: THREE.Matrix4, key?: strin
 export interface Chunk {
   cat: Cat;
   bone: number;
+  /** optional second bone: vertices blend between `bone` and `bone2` by the geometry w2 attribute */
+  bone2?: number;
   baked: Baked;
   r: number;
   g: number;
@@ -247,7 +257,11 @@ export function assembleGeometry(chunks: Chunk[]): THREE.BufferGeometry | null {
       col[k * 3 + 1] = (b.col ? b.col[i * 3 + 1] : 1) * c.g;
       col[k * 3 + 2] = (b.col ? b.col[i * 3 + 2] : 1) * c.b;
       skinIndex[k * 4] = c.bone;
-      skinWeight[k * 4] = 1;
+      if (b.w2 && c.bone2 !== undefined) {
+        skinIndex[k * 4 + 1] = c.bone2;
+        skinWeight[k * 4] = 1 - b.w2[i];
+        skinWeight[k * 4 + 1] = b.w2[i];
+      } else skinWeight[k * 4] = 1;
     }
     for (let i = 0; i < b.index.length; i++) index[io + i] = b.index[i] + vo;
     vo += b.n;

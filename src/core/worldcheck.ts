@@ -61,6 +61,7 @@ let thawTimer = 0;
 
 export function initWorldCheck(): void {
   if (!import.meta.env.DEV && !new URLSearchParams(location.search).has('selftest')) return;
+  (window as any).__tuning = tuning; // v3 world: dev handle (live culling / fog / look knobs while screenshotting)
   (window as any).__worldcheck = {
     /**
      * Walk-feet sweep: put the walker at grid points across the map, let physics
@@ -217,6 +218,11 @@ export function initWorldCheck(): void {
         for (const r of roofIssues(h.pieces)) out.push({ plot: h.plot, ...r });
       }
       return out;
+    },
+
+    // ── v3 build ── the player's world builds: surfaces, feet on built floors / ramps, roofs on walls (build/world3/check.ts)
+    async builds() {
+      return (await import('../build/world3/check')).buildsIssues();
     },
   };
 }

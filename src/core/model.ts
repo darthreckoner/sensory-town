@@ -10,8 +10,23 @@ export interface OutfitPart {
   style: number; // index into the catalog for that slot
   color: Hex;
 }
+/** v3 face options (all optional; absent = the default face) */
+export interface FaceOpts {
+  /** eye shape variant */
+  eyes?: number;
+  eyeColor?: Hex;
+  /** brow style variant */
+  brows?: number;
+  freckles?: boolean;
+  /** makeup preset: 0 none, then soft looks (lip tint, blush, shimmer, lash flick…) */
+  makeup?: number;
+  /** face sticker / paint id (stars, hearts, sparkle cheeks…), null = none */
+  sticker?: string | null;
+}
 export interface Outfit {
   skin: Hex;
+  /** v3: face customization */
+  face?: FaceOpts;
   hair: OutfitPart;
   top: OutfitPart;
   bottom: OutfitPart;
@@ -36,6 +51,8 @@ export interface Locker {
   ride: VehicleKind;
   /** per-ride paint: colour + finish ('gloss' | 'chrome' | 'matte' | 'glitter' …) */
   wraps: Partial<Record<VehicleKind, { color: Hex; finish?: string }>>;
+  /** v3 locker: the player's own piece-by-piece look, kept while a skin preset is worn (Profile.outfit is always what is worn) */
+  customOutfit?: Outfit;
 }
 export function defaultLocker(): Locker {
   return { skin: 'custom', skinStyle: 0, backBling: null, glider: 'starter', emotes: ['wave', 'dance1'], contrail: null, ride: 'sports', wraps: {} };

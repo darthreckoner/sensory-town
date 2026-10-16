@@ -39,20 +39,34 @@ export const tuning = {
     envIntensity: 0.9,
     exposure: 1.0,
     shadowMapSize: 2048,
-    // golden hour (town / build)
-    skyTop: '#2f5fc4',
-    skyMid: '#7fa7e8',
-    skyBottom: '#ffc7a1',
-    sunColor: '#ffcf9e',
-    sunIntensity: 3.0,
-    sunElevation: 26,          // degrees above the horizon
-    sunAzimuth: 225,           // degrees (0 = +z / south, 90 = +x / east)
-    hemiSky: '#9ec5ff',
-    hemiGround: '#6b5a4a',
-    hemiIntensity: 0.85,
-    fogColor: '#f3c9aa',
-    fogNear: 90,
-    fogFar: 260,
+    // v3: a bright late-morning / afternoon sky (this block used to be the golden hour; same knob names)
+    skyTop: '#2a78e4',
+    skyMid: '#6bb3f4',
+    skyBottom: '#d6ecff',
+    sunColor: '#fff0d2',
+    sunIntensity: 3.4,
+    sunElevation: 56,          // degrees above the horizon
+    sunAzimuth: 215,           // degrees (0 = +z / south, 90 = +x / east)
+    hemiSky: '#c6e4ff',
+    hemiGround: '#8bb26a',
+    hemiIntensity: 1.05,
+    fogColor: '#cde6fa',
+    fogNear: 130,
+    fogFar: 400,
+    // ── v3 world ── (island look: water, sky, clouds; read by drive/terrain.ts, drive/sky.ts, art/env.ts)
+    dayEnvIntensity: 0.7,      // sky reflections on paint / glass
+    waterShallow: '#5ee0d0',   // sunlit aqua over sand
+    waterMid: '#27b5cf',
+    waterDeep: '#1668a8',
+    waterSky: '#bfe3ff',       // what the surface reflects at a glancing angle
+    waterFoam: '#ffffff',
+    waterFoamAmount: 1,        // how far the foam laps up the shore (0 = none)
+    cloudCount: 16,            // big stylized cumulus around the horizon
+    cloudAlt: [95, 175] as [number, number],
+    cloudTop: '#ffffff',
+    cloudBottom: '#cfe0f5',
+    sunDisc: '#fff6d8',
+    shadowRadius: 3,           // soft-edge width of the sun's shadows
     // creator studio (workshop / style)
     studioBg: '#14121c',
     studioKey: 2.4,            // softbox key light intensity
@@ -135,6 +149,23 @@ export const tuning = {
     },
   },
 
+  // ── v3 locker (W2): the Locker's lobby stage, per-slot cameras, face light, reveal card ──
+  locker: {
+    /** camera distance / look-at height per Locker slot */
+    slotDist: { outfit: 5.4, backBling: 3.7, glider: 7.6, contrail: 7.2, emote: 5.4, wrap: 7.4, custom: 5.6 } as Record<string, number>,
+    slotLookY: { outfit: 0.98, backBling: 1.2, glider: 1.5, contrail: 1.15, emote: 1.0, wrap: 1.0, custom: 0.98 } as Record<string, number>,
+    /** warm fill so the face is the best-lit thing on screen (+ a soft hair rim from behind) */
+    faceLight: { color: '#ffd9bd', intensity: 55, range: 10, angle: 0.32, penumbra: 0.9, x: 1.1, y: 2.7, z: 3.6, rim: 1.4 },
+    coolRim: { color: '#9fc4ff', intensity: 40, x: -2.4, y: 2.6, z: -2.2 },
+    rayCount: 12,              // lobby light rays behind the player
+    raySpeed: 0.045,           // rad/s
+    sparkleCount: 70,          // floating dust-sparkles
+    glowLerp: 5,               // how fast the stage glow follows the equipped item's rarity colour
+    thumbBudgetMs: 7,          // item pictures rendered per frame (ms)
+    revealSeconds: 7,          // the unlock card closes itself after this long
+    orbitRadius: 1.5,          // contrail preview: the player flies a lazy circle this wide
+  },
+
   // ── Driving + the big world (drive module) ───────────────────────────────
   drive: {
     // handling (units / s)
@@ -169,6 +200,7 @@ export const tuning = {
     climbLimit: 0.95,          // a step taller than this is a wall for the car
     slopeGravity: 9,           // how hard hills slow you down / speed you up
     launchMinVy: 1.2,          // upward speed that counts as a jump (carJump)
+    launchMaxVy: 8,            // v3 rides: takeoff speed cap off a player-built ramp (the town's own kickers are not capped)
     landMinVy: 3.5,            // landing speed that counts as a landing (carLand)
     airSteer: 0.35,            // steering authority in the air
     waterLimit: -0.5,          // the car can't enter ground lower than this (the sea, the lake)
@@ -187,8 +219,8 @@ export const tuning = {
     cameraMinDistance: 4.5,
     cameraFov: 54,
     cameraFovBoost: 8,         // extra FOV at top speed
-    fogNear: 90,
-    fogFar: 340,
+    fogNear: 130,              // v3 world: light blue haze, a long view over the island
+    fogFar: 400,
     shadowSize: 30,            // half-extent of the sun shadow box that follows the player
     shadowAhead: 10,
     shadowMap: 2048,
@@ -264,8 +296,47 @@ export const tuning = {
     // world
     cloudSpeed: 0.0035,
     scenerySeed: 20261016,
-    cullTerrain: 250,          // terrain chunks farther than this hide
-    cullVegetation: 190,
+    cullTerrain: 330,          // terrain chunks farther than this hide (v3: the haze fully hides them by then)
+    cullVegetation: 230,
+    // ── v3 rides: defaults every ride starts from (tuning.rides.<kind> overrides them) ──
+    hover: 0,                  // ride height above the ground (the hoverboard floats)
+    hopSpeed: 0,               // Space hops (hoverboard) with this upward speed; 0 = no hop
+    waterOnly: 0,              // 1 = a boat: only moves on water
+    shoreLimit: -0.6,          // boat: ground higher than this is shore (it noses up to it and stops)
+    susK: 170,                 // body spring (higher = stiffer)
+    susC: 11,                  // body damping
+    bumpKick: 2.2,             // how hard a bump / landing kicks the body
+    lean: 0.1,                 // body roll into turns
+    wobble: 0,                 // heavy sloshing roll + yaw sway (ice-cream truck)
+    pitchK: 0.05,
+  },
+
+  // ── v3 rides (W3): overrides of tuning.drive per vehicle kind ──────────────
+  // physics: topSpeed, acceleration, brakeForce, reverseSpeed, coastDrag, turnRate, turnSpeedFull, turnMinAuthority, turnSpeedLoss,
+  // grip, steerResponse, boostSpeed, boostAccel, drift*, gravity, climbLimit, slopeGravity, airSteer, waterLimit, carRadius, carCircleOffset,
+  // hover, hopSpeed, waterOnly, shoreLimit; looks: susK, susC, bumpKick, lean, wobble, pitchK.
+  rides: {
+    sports: { topSpeed: 25, acceleration: 13, brakeForce: 28, turnRate: 2.5, grip: 8, driftGrip: 0.22, driftYaw: 1.35, boostSpeed: 1.55, boostAccel: 2.8 },
+    pickup: {
+      topSpeed: 19, acceleration: 9.5, brakeForce: 24, turnRate: 2.0, turnSpeedFull: 4.5, grip: 10.5, climbLimit: 1.55, slopeGravity: 3.5, waterLimit: -1.0,
+      carRadius: 1.15, carCircleOffset: 1.3, boostSpeed: 1.35, susK: 95, susC: 5, bumpKick: 3.4, lean: 0.17, pitchK: 0.08,
+    },
+    golfcart: {
+      topSpeed: 10.5, acceleration: 8, brakeForce: 22, reverseSpeed: 5, turnRate: 3.1, turnSpeedFull: 1.6, turnMinAuthority: 0.6, turnSpeedLoss: 0.08, grip: 15,
+      carRadius: 0.85, carCircleOffset: 0.6, boostSpeed: 1.3, susK: 120, susC: 8, lean: 0.12, collideMinSpeed: 2,
+    },
+    hoverboard: {
+      topSpeed: 21, acceleration: 15, brakeForce: 20, reverseSpeed: 6, turnRate: 3.0, turnSpeedFull: 3, grip: 5.2, driftGrip: 0.3, hover: 0.42, hopSpeed: 6.6, gravity: 22,
+      climbLimit: 1.3, waterLimit: -1.15, airSteer: 0.95, carRadius: 0.55, carCircleOffset: 0.5, boostSpeed: 1.45, lean: 0.34, susK: 80, susC: 6, pitchK: 0.12,
+    },
+    icecream: {
+      topSpeed: 15.5, acceleration: 6.2, brakeForce: 16, turnRate: 1.6, turnSpeedFull: 5, grip: 7, carRadius: 1.2, carCircleOffset: 1.4, boostSpeed: 1.28,
+      wobble: 0.22, susK: 60, susC: 3, lean: 0.28, bumpKick: 3, pitchK: 0.07,
+    },
+    boat: {
+      topSpeed: 21, acceleration: 9, brakeForce: 12, reverseSpeed: 4, coastDrag: 0.7, turnRate: 1.9, turnSpeedFull: 3, turnMinAuthority: 0.3, grip: 2.4,
+      driftGrip: 0.6, waterOnly: 1, shoreLimit: -0.6, boostSpeed: 1.5, carRadius: 1.0, carCircleOffset: 1.4, lean: 0.22, susK: 70, susC: 4,
+    },
   },
 
   // ── House & village building ──────────────────────────────────────────────
@@ -317,6 +388,28 @@ export const tuning = {
     liveSeconds: 1.1,          // a changed piece keeps its own object this long (its pop animation), then folds into the bake
     foldQuietSeconds: 0.18,    // ...and the re-bake waits for this long without edits (so a paint stroke bakes once)
     maxLive: 40,               // too many separate piece objects: fold the settled ones even mid-stroke
+  },
+
+  // ── v3 build (W5): free building anywhere in the world (Fortnite-style pieces) ──────────
+  build3: {
+    tile: 4.8,                 // metres: one build cell (x and z)
+    storey: 3.6,               // metres: one storey (iy)
+    thick: 0.3,                // wall / floor slab thickness
+    maxPieces: 3000,           // cap (perf + save size)
+    chunk: 8,                  // tiles per render chunk (merged per material; only dirty chunks rebuild)
+    rebakeEveryMs: 110,        // at most one chunk re-bake this often (a drag-build run folds in batches)
+    reach: 0.62,               // ghost distance in front of the player, in tiles
+    animSeconds: 0.38,         // build-in animation (rise + scale + bounce)
+    foldSeconds: 0.7,          // an animating piece keeps its own mesh this long, then folds into its chunk
+    undoMax: 60,
+    holdMs: 220,               // press this long (without moving) = drag-build (a run of pieces)
+    placeEveryMs: 70,          // fastest repeat while drag-building
+    roofRise: 0.62,            // pyramid roof apex height, in storeys
+    rampStrips: 6,             // collider strips along a ramp
+    skirtMax: 2.2,             // pieces near the ground extend down to hide gaps on slopes (metres)
+    decorReach: 3.6,           // decor ghost distance in front of the player (m)
+    decorMax: 600,
+    stepUp: 0.62,              // surfaceBelow() tolerance (matches tuning.drive.stepUp)
   },
 
   // ── Workshop: squishy ─────────────────────────────────────────────────────
@@ -454,6 +547,84 @@ export const tuning = {
     dipDepth: 1.6,             // how far down the squishy must go to dip
     bulgeAmount: 0.18,
     crackWidth: 0.018,
+  },
+
+  // ── v3 movement (W4): over-the-shoulder camera, sprint, mantle, glide, launch pads, bus drop, POI cards ──
+  movement3: {
+    // over-the-shoulder camera (on foot)
+    camArm: 3.7,               // m from the pivot back to the lens
+    camShoulder: 0.8,          // m the lens sits to the RIGHT of the character (so she reads slightly left of centre)
+    camPivotY: 1.45,           // pivot height above the feet
+    camPitchDefault: 0.16,     // rad: lens elevation above the pivot
+    camPitchMin: -0.3,         // drag limits (rad)
+    camPitchMax: 1.1,
+    camFollow: 18,             // 1/s: how tightly the pivot tracks the walker horizontally (higher = snappier)
+    camRise: 7,                // 1/s: ... vertically (stairs, jumps, swimming)
+    camRiseAir: 20,            // 1/s: ... vertically while flying (pads, skydive)
+    camSettle: 7,              // 1/s: easing after hopping out of the car
+    camOccIn: 18,              // 1/s: the lens comes in fast when something is in the way ...
+    camOccOut: 3,              // ... and eases back out slowly
+    camRecenterDelay: 0.8,     // s after the last drag before the view swings in behind a forward-walking player
+    camRecenterRate: 1.4,
+    lookZoneMinX: 0.4,         // touch: a look-drag only starts to the right of this fraction of the screen width
+    // field of view kicks (degrees on top of the foot FOV)
+    fovSprint: 6,
+    fovLaunch: 12,             // impulse at a launch pad / the bus jump, decays at fovKickDecay
+    fovKickDecay: 2.6,
+    fovDive: 9,
+    fovGlide: 4,
+    fovBus: 6,
+    fovRate: 8,                // 1/s: how fast the FOV follows its target
+    // sprint
+    sprintMul: 1.14,           // on top of drive.runSpeed
+    doubleTapMs: 320,          // double-tap the move stick (second press held) to sprint
+    sprintDustEvery: 0.16,     // s between dust puffs behind a sprinting walker
+    // mantle (climb a ledge you run into)
+    mantleMin: 0.7,            // ledge heights (m above the feet) that trigger a mantle
+    mantleMax: 1.9,
+    mantleSeconds: 0.46,
+    mantleCooldown: 0.45,
+    // free fall + glider
+    airGravity: 22,            // m/s^2 while launched / diving
+    glideDeployFall: 6,        // falling this far (m) deploys the glider by itself
+    glideMinAlt: 3.5,          // ...if there is at least this much air left under the feet
+    glideSink: 3.2,            // m/s descent under the canopy
+    glideSinkPush: 1.1,        // extra sink when the stick is pushed (faster glide)
+    glideSpeedIdle: 5,         // m/s forward drift with no stick
+    glideSpeedMin: 6,
+    glideSpeedMax: 12,
+    glideTurn: 2.6,            // rad/s steering
+    glideAccel: 2.5,           // 1/s speed easing
+    glideFlareAlt: 2.4,        // m above the ground where the glider flares for a soft landing
+    glideLandSink: 1.2,
+    glideOpenSeconds: 0.35,    // canopy pop-open
+    diveTerminal: 17,          // m/s skydive fall speed
+    diveGravity: 36,
+    diveSpeedMin: 6,
+    diveSpeedMax: 14,
+    diveTurn: 3.4,
+    diveTilt: 1.25,            // body pitch while skydiving (rad, 1.57 = belly-down flat)
+    deployAlt: 25,             // the glider opens this far above the ground after a bus jump
+    safeAlt: 11,               // ...and never lower than this, whatever happened
+    airBound: 2,               // m inside the map edge that a flyer is held back
+    trailLife: 1.1,            // s of contrail behind a flyer
+    // launch pads
+    padRadius: 1.5,
+    padSpeed: 33,              // m/s up (apex ~ 25 m at airGravity 22)
+    padCooldown: 1.3,
+    padDeployFall: 8,          // m of skydive after the apex before the glider opens
+    padCullDist: 150,
+    // party bus
+    busAlt: 80,
+    busSpeed: 14,              // m/s along BUS_PATH
+    busArm: 11,                // camera distance from the bus
+    busJumpHop: 5,             // m/s up when you hop off the roof
+    busHonkEveryS: 9,
+    // POI title cards
+    poiCardSeconds: 2.5,
+    poiCooldownS: 75,          // the same POI will not re-announce itself this soon
+    poiGapS: 3,                // minimum time between any two cards
+    poiRadiusMul: 0.7,         // district radii shrink to this fraction when POIS (townLayout) is not there yet
   },
 
   // ── Debug ─────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import { JOB_SPOTS, type Spot } from '../world/townLayout';
 import { groundHeight } from '../world/heightfield';
 import { Character, OUTFIT_CATALOG } from '../art/character';
 import type { Outfit } from '../core/model';
-import type { Car } from '../art/car';
+import type { Ride } from './rides';
 import { ease, popScale, tweens } from '../core/tween';
 import { clamp, emojiSprite, lerpAngle, lightBeam } from './envUtils';
 import type { MapTarget } from './hud';
@@ -116,7 +116,14 @@ export class JobManager {
   private readonly hopTo = new THREE.Vector3();
   private readonly tgt: JobTarget = { x: 0, z: 0, icon: '', name: '', kind: 'pickup' };
 
-  constructor(private readonly parent: THREE.Object3D, private readonly car: Car) {}
+  constructor(private readonly parent: THREE.Object3D, private car: Ride | null) {}
+
+  /** The ride the player is in changed (v3 rides): a ride in progress ends (the passenger leaves with the old ride). */
+  setCar(c: Ride | null): void {
+    if (c === this.car) return;
+    if (this.car && this.state !== 'cooldown') this.clear();
+    this.car = c;
+  }
 
   /** Start over (scene enter). The first passenger shows up after jobFirstSeconds. */
   reset(): void {
@@ -128,10 +135,10 @@ export class JobManager {
   /** Remove everything from the scene (scene exit). */
   clear(): void {
     // every discarded Character gives its GPU buffers back
-    if (this.seated && this.seated !== this.car.passenger) this.seated.dispose();
+    if (this.seated && this.seated !== this.car?.passenger) this.seated.dispose();
     this.standing?.group.removeFromParent();
     this.standing?.dispose();
-    this.car.setPassenger(null); // disposes the seated passenger
+    this.car?.setPassenger(null); // disposes the seated passenger
     this.seated = null;
     this.standing = null;
     this.pickupBeacon?.dispose();
@@ -176,6 +183,7 @@ export class JobManager {
 
   /** cx, cz = where the player is (car or feet); canTrigger = in the car (a ride needs the car). */
   update(dt: number, t: number, cx: number, cz: number, canTrigger = true): void {
+    if (!this.car) return;
     const d = tuning.drive;
     this.pickupBeacon?.update(t);
     this.destBeacon?.update(t);
@@ -213,13 +221,13 @@ export class JobManager {
         this.hopT += dt / Math.max(0.05, d.passengerHopSeconds);
         const k = clamp(this.hopT, 0, 1);
         const e = k * k * (3 - 2 * k);
-        this.car.seatWorld(this.hopTo);
+        this.car!.seatWorld(this.hopTo);
         npc.group.position.lerpVectors(this.hopFrom, this.hopTo, e);
         npc.group.position.y += Math.sin(Math.PI * k) * 1.9;
         npc.group.rotation.y = lerpAngle(npc.group.rotation.y, Math.atan2(this.hopTo.x - npc.group.position.x, this.hopTo.z - npc.group.position.z), 1 - Math.exp(-14 * dt));
-        if (k >= 0.9 && this.seated && !this.car.passenger) {
+        if (k >= 0.9 && this.seated && !this.car!.passenger) {
           // swap the standing hopper for the seated version
-          this.car.setPassenger(this.seated);
+          this.car!.setPassenger(this.seated);
           popScale(this.seated.group, 0.35, 0.18);
           npc.group.removeFromParent();
         }
@@ -299,8 +307,8 @@ export class JobManager {
   private startAlighting(cx: number, cz: number): void {
     bus.emit('passengerDropoff', { pos: { x: cx, y: 1.6, z: cz } });
     const npc = this.standing!;
-    this.car.seatWorld(this.hopFrom);
-    this.car.setPassenger(null);
+    this.car!.seatWorld(this.hopFrom);
+    this.car!.setPassenger(null);
     this.seated = null;
     npc.group.position.copy(this.hopFrom);
     npc.group.scale.setScalar(1);

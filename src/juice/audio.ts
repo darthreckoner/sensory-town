@@ -13,7 +13,34 @@ type Opts = { pitch?: number; vol?: number; pan?: number };
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
 
-export type MusicTrack = 'lobby' | 'town' | 'studio' | 'style';
+export type MusicTrack = 'lobby' | 'town' | 'studio' | 'style' | 'locker'; // v3 locker: 'locker' = the Locker lobby track
+
+// ── v3 rides: each ride has its own engine voice ──
+interface EngineVoice {
+  osc: OscillatorType;
+  sub: OscillatorType;
+  base: number; // × tuning.audio.engineBaseHz
+  top: number; // × tuning.audio.engineTopHz
+  lp: number;
+  lfo: number; // Hz at rest (it speeds up with the ride)
+  lfoDepth: number;
+  rumble: number;
+  rumbleLp: number;
+  whine: number;
+  vol: number;
+}
+const ENGINE_VOICES: Record<string, EngineVoice> = {
+  sports: { osc: 'sawtooth', sub: 'square', base: 1, top: 1, lp: 420, lfo: 18, lfoDepth: 0.22, rumble: 0.25, rumbleLp: 260, whine: 1, vol: 1 },
+  pickup: { osc: 'sawtooth', sub: 'square', base: 0.72, top: 0.8, lp: 380, lfo: 13, lfoDepth: 0.3, rumble: 0.45, rumbleLp: 320, whine: 0.2, vol: 1.05 },
+  // a cute putt-putt: a high triangle chopped by a slow, deep tremolo
+  golfcart: { osc: 'triangle', sub: 'sine', base: 1.6, top: 1.2, lp: 950, lfo: 9, lfoDepth: 0.68, rumble: 0.04, rumbleLp: 500, whine: 1.6, vol: 0.85 },
+  // an airy hum with a hiss of air under the board
+  hoverboard: { osc: 'sine', sub: 'triangle', base: 1.9, top: 1.7, lp: 1500, lfo: 5, lfoDepth: 0.1, rumble: 0.38, rumbleLp: 2200, whine: 0.8, vol: 0.75 },
+  // a heavy diesel idle
+  icecream: { osc: 'sawtooth', sub: 'square', base: 0.55, top: 0.62, lp: 300, lfo: 8, lfoDepth: 0.35, rumble: 0.5, rumbleLp: 240, whine: 0, vol: 1 },
+  // an outboard motor burble
+  boat: { osc: 'sawtooth', sub: 'sawtooth', base: 0.9, top: 0.95, lp: 520, lfo: 26, lfoDepth: 0.42, rumble: 0.55, rumbleLp: 750, whine: 0.1, vol: 1 },
+};
 
 class AudioEngine {
   ctx: AudioContext | null = null;
@@ -26,7 +53,7 @@ class AudioEngine {
   unlocked = false;
 
   // continuous voices
-  private engine: { osc: OscillatorNode; sub: OscillatorNode; whine: OscillatorNode; whineG: GainNode; rumble: AudioBufferSourceNode; rumbleG: GainNode; lp: BiquadFilterNode; g: GainNode; lfo: OscillatorNode } | null = null;
+  private engine: { osc: OscillatorNode; sub: OscillatorNode; whine: OscillatorNode; whineG: GainNode; rumble: AudioBufferSourceNode; rumbleG: GainNode; lp: BiquadFilterNode; g: GainNode; lfo: OscillatorNode; v: EngineVoice } | null = null;
   private pour: { src: AudioBufferSourceNode; lp: BiquadFilterNode; g: GainNode; lfo: OscillatorNode; bubbleTimer: number } | null = null;
 
   // music sequencer
@@ -365,6 +392,52 @@ class AudioEngine {
     this.tone(o, 'sine', 310 * p, 150 * p, t + 0.05, 0.005, 0.1, 0.3);
   }
 
+  // v3 rides: each ride's own horn (the ice-cream truck plays a little original jingle)
+  private s_hornPickup(t: number, p: number, v: number, pan: number) {
+    const ctx = this.ctx!;
+    const o = this.out(0.34 * v, pan, 0.2);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 700;
+    bp.Q.value = 0.7;
+    bp.connect(o);
+    this.tone(bp, 'sawtooth', 196 * p, 190 * p, t, 0.008, 0.42, 0.55);
+    this.tone(bp, 'sawtooth', 247 * p, 240 * p, t, 0.008, 0.42, 0.45);
+  }
+  private s_hornCart(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.3 * v, pan, 0.15);
+    this.tone(o, 'square', 880 * p, 880 * p, t, 0.004, 0.09, 0.28);
+    this.tone(o, 'square', 1175 * p, 1175 * p, t + 0.13, 0.004, 0.12, 0.28);
+  }
+  private s_hornHover(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.4 * v, pan, 0.25);
+    this.tone(o, 'sine', 320 * p, 980 * p, t, 0.01, 0.2, 0.6);
+    this.tone(o, 'triangle', 640 * p, 1960 * p, t, 0.01, 0.18, 0.18);
+    this.noiseBurst(o, t, 0.02, 0.2, 0.25, 'bandpass', 900 * p, 3200 * p, 1.2);
+  }
+  private s_hornBoat(t: number, p: number, v: number, pan: number) {
+    const ctx = this.ctx!;
+    const o = this.out(0.4 * v, pan, 0.5);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 420;
+    bp.Q.value = 0.9;
+    bp.connect(o);
+    this.tone(bp, 'sawtooth', 123 * p, 117 * p, t, 0.03, 0.7, 0.6);
+    this.tone(bp, 'square', 185 * p, 176 * p, t, 0.03, 0.7, 0.3);
+  }
+  private s_jingle(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.5 * v, pan, 0.35);
+    // C-E-G-C ... a music-box tune of our own
+    const tune = [72, 76, 79, 84, 83, 79, 76, -1, 81, 77, 74, 77, 79, 76, 72];
+    tune.forEach((n, i) => {
+      if (n < 0) return;
+      const f = midi(n) * p, tt = t + i * 0.15;
+      this.tone(o, 'triangle', f, f, tt, 0.004, 0.22, 0.55);
+      this.tone(o, 'sine', f * 2, f * 2, tt, 0.002, 0.14, 0.18);
+    });
+  }
+
   // Car
   private s_horn(t: number, p: number, v: number, pan: number) {
     // real-ish two-tone car horn
@@ -418,10 +491,63 @@ class AudioEngine {
     this.tone(o, 'sine', 180 * p, 90 * p, t, 0.001, 0.09, 0.7);
     this.tone(o, 'square', 2200 * p, 2200 * p, t, 0.0005, 0.008, 0.12);
   }
+  // ── v3 locker: equip + reveal stings ──
+  /** equip: a bright "shing" sweep + a two-note rise (pitch up = rarer) */
+  private s_equip(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.6 * v, pan, 0.3);
+    this.noiseBurst(o, t, 0.012, 0.2, 0.4, 'bandpass', 1500 * p, 6500 * p, 1.4);
+    this.tone(o, 'sine', 660 * p, 1320 * p, t, 0.003, 0.16, 0.5);
+    this.synth(o, 'square', midi(79) * p, t + 0.07, 0.12, 0.4, 5000, 3);
+    this.synth(o, 'square', midi(86) * p, t + 0.13, 0.22, 0.4, 5000, 3);
+    this.kick(o, t, 0.35);
+  }
+  /** reveal: rising swell → chord hit with a sparkle tail (epic / legendary unlock card) */
+  private s_reveal(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.55 * v, pan, 0.4);
+    this.noiseBurst(o, t, 0.34, 0.14, 0.5, 'bandpass', 300 * p, 5200 * p, 1.2);
+    [72, 76, 79, 84, 88, 91].forEach((n, i) => this.synth(o, 'square', midi(n) * p, t + 0.34 + i * 0.05, 0.14, 0.28, 5200, 3));
+    this.kick(o, t + 0.38, 0.9);
+    for (const n of [60, 64, 67, 72]) this.synth(o, 'sawtooth', midi(n + 12) * p, t + 0.38, 0.9, 0.26, 5200, 12);
+    this.tone(o, 'sine', midi(36) * p, midi(36) * p, t + 0.38, 0.01, 0.8, 0.5);
+    this.noiseBurst(o, t + 0.38, 0.002, 0.9, 0.3, 'highpass', 6500, 6500, 0.7);
+    this.s_sparkle(t + 0.55, p, v * 0.9, pan);
+  }
   private s_puff(t: number, p: number, v: number, pan: number) {
     const o = this.out(0.6 * v, pan, 0.2);
     this.noiseBurst(o, t, 0.01, 0.26, 0.6, 'lowpass', 2400 * p, 250 * p, 1);
     this.tone(o, 'sine', 300 * p, 120 * p, t, 0.002, 0.1, 0.3);
+  }
+
+  // ── v3 build (W5): material sounds for world pieces ──
+  /** wood: a hollow thunk with a woody tok on top */
+  private s_thunk(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.95 * v, pan, 0.12);
+    this.tone(o, 'sine', 150 * p, 62 * p, t, 0.001, 0.16, 0.95);
+    this.tone(o, 'triangle', 430 * p, 260 * p, t, 0.001, 0.05, 0.5);
+    this.noiseBurst(o, t, 0.0006, 0.045, 0.6, 'bandpass', 720 * p, 520 * p, 2.2);
+  }
+  /** brick: a heavy dull clunk, a gritty stone scrape on the end */
+  private s_clunk(t: number, p: number, v: number, pan: number) {
+    const o = this.out(1.0 * v, pan, 0.1);
+    this.tone(o, 'sine', 100 * p, 44 * p, t, 0.001, 0.22, 1.0);
+    this.noiseBurst(o, t, 0.0006, 0.06, 0.7, 'lowpass', 1500 * p, 500 * p, 1.2);
+    this.noiseBurst(o, t + 0.02, 0.002, 0.07, 0.35, 'bandpass', 2600 * p, 1800 * p, 3);
+    this.tone(o, 'square', 190 * p, 120 * p, t, 0.001, 0.03, 0.18);
+  }
+  /** metal: a ringing clang, inharmonic partials fading out */
+  private s_clang(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.8 * v, pan, 0.3);
+    this.tone(o, 'sine', 120 * p, 70 * p, t, 0.001, 0.12, 0.7);
+    this.noiseBurst(o, t, 0.0005, 0.02, 0.6, 'highpass', 3600 * p, 3000 * p, 1);
+    for (const [f, g, d] of [[518, 0.5, 0.42], [1377, 0.34, 0.32], [2214, 0.22, 0.22], [3351, 0.14, 0.14]] as const) {
+      this.tone(o, 'sine', f * p, f * p * 0.995, t, 0.0008, d, g);
+    }
+  }
+  /** a wall opening cut / filled: a quick crunchy chop */
+  private s_chop(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.8 * v, pan, 0.1);
+    this.noiseBurst(o, t, 0.0006, 0.05, 0.7, 'bandpass', 1800 * p, 900 * p, 2);
+    this.tone(o, 'triangle', 330 * p, 200 * p, t, 0.001, 0.06, 0.5);
   }
 
   // ── ASMR core (realistic — unchanged character) ──
@@ -491,24 +617,153 @@ class AudioEngine {
     this.tone(o, 'sine', 500 * p, 1300 * p, t, 0.002, 0.06, 0.5);
   }
 
+  // ── v3 movement (W4): boing, party honk, glider fwump, landing thud, POI sting, bus fanfare, mantle hup, wind ──
+  /** Launch pad: a big springy BOI-oi-oing. */
+  private s_boing(t: number, p: number, v: number, pan: number) {
+    const ctx = this.ctx!;
+    const o = this.out(0.95 * v, pan, 0.3);
+    this.tone(o, 'sine', 150 * p, 62 * p, t, 0.003, 0.14, 0.95); // the thump of the pad
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    const f = osc.frequency;
+    f.setValueAtTime(180 * p, t);
+    f.exponentialRampToValueAtTime(780 * p, t + 0.08);
+    f.exponentialRampToValueAtTime(300 * p, t + 0.2);
+    f.exponentialRampToValueAtTime(940 * p, t + 0.33);
+    f.exponentialRampToValueAtTime(380 * p, t + 0.52);
+    f.exponentialRampToValueAtTime(520 * p, t + 0.7);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 24;
+    const lg = ctx.createGain();
+    lg.gain.setValueAtTime(140, t);
+    lg.gain.exponentialRampToValueAtTime(8, t + 0.75);
+    lfo.connect(lg);
+    lg.connect(osc.detune);
+    const g = ctx.createGain();
+    this.env(g, t, 0.01, 0.55, 0.7);
+    osc.connect(g);
+    g.connect(o);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.85);
+    lfo.stop(t + 0.85);
+    this.noiseBurst(o, t + 0.04, 0.05, 0.4, 0.4, 'bandpass', 400 * p, 3200 * p, 1.2); // the whoosh up
+    this.s_sparkle(t + 0.12, p * 1.1, v * 0.7, pan);
+  }
+  /** The party bus's silly horn: a short toot, then a long wobbly HOOONK. */
+  private s_honk(t: number, p: number, v: number, pan: number) {
+    const ctx = this.ctx!;
+    const o = this.out(0.5 * v, pan, 0.25);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 950;
+    bp.Q.value = 0.9;
+    bp.connect(o);
+    this.tone(bp, 'sawtooth', 247 * p, 247 * p, t, 0.008, 0.12, 0.55);
+    this.tone(bp, 'sawtooth', 311 * p, 311 * p, t, 0.008, 0.12, 0.45);
+    this.tone(bp, 'square', 124 * p, 124 * p, t, 0.008, 0.12, 0.3);
+    const t2 = t + 0.2;
+    this.tone(bp, 'sawtooth', 247 * p, 196 * p, t2, 0.01, 0.5, 0.6, 6);
+    this.tone(bp, 'sawtooth', 311 * p, 247 * p, t2, 0.01, 0.5, 0.5, -6);
+    this.tone(bp, 'square', 124 * p, 98 * p, t2, 0.01, 0.5, 0.32);
+  }
+  /** The glider pops open: cloth FWUMP + a flutter. */
+  private s_deploy(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.8 * v, pan, 0.25);
+    this.tone(o, 'sine', 110 * p, 48 * p, t, 0.004, 0.18, 0.85);
+    this.noiseBurst(o, t, 0.01, 0.22, 0.7, 'lowpass', 400 * p, 2600 * p, 0.8);
+    this.noiseBurst(o, t + 0.08, 0.01, 0.35, 0.35, 'bandpass', 1500 * p, 700 * p, 2.2);
+    for (let i = 0; i < 4; i++) this.noiseBurst(o, t + 0.14 + i * 0.07, 0.004, 0.06, 0.25 - i * 0.05, 'bandpass', 1900 * p, 1100 * p, 3);
+  }
+  /** Landing: a soft thud and a puff of dust. */
+  private s_thud(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.9 * v, pan, 0.15);
+    this.tone(o, 'sine', 125 * p, 42 * p, t, 0.002, 0.22, 0.95);
+    this.noiseBurst(o, t, 0.002, 0.2, 0.55, 'lowpass', 1100 * p, 220 * p, 0.8);
+    this.noiseBurst(o, t + 0.03, 0.02, 0.3, 0.3, 'bandpass', 1800 * p, 600 * p, 1.4);
+  }
+  /** POI title card: whoosh in, then a bold two-note hit. */
+  private s_sting(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.5 * v, pan, 0.3);
+    this.noiseBurst(o, t, 0.12, 0.18, 0.45, 'bandpass', 300 * p, 3200 * p, 1.1);
+    this.kick(o, t + 0.12, 0.7);
+    this.synth(o, 'sawtooth', midi(67) * p, t + 0.1, 0.09, 0.4, 3800, 8);
+    for (const n of [74, 79, 83]) this.synth(o, 'sawtooth', midi(n) * p, t + 0.19, 0.5, 0.32, 4600, 10);
+    this.tone(o, 'sine', midi(43) * p, midi(43) * p, t + 0.19, 0.01, 0.45, 0.5);
+  }
+  /** Party-bus arrival: a bright rising arpeggio with a cymbal wash. */
+  private s_fanfare(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.45 * v, pan, 0.35);
+    [60, 64, 67, 72, 76, 79].forEach((n, i) => this.synth(o, 'square', midi(n + 12) * p, t + i * 0.07, 0.14, 0.32, 5200, 3));
+    this.kick(o, t + 0.45, 0.8);
+    for (const n of [67, 72, 76, 79]) this.synth(o, 'sawtooth', midi(n + 12) * p, t + 0.45, 0.8, 0.26, 5200, 12);
+    this.noiseBurst(o, t + 0.45, 0.01, 0.7, 0.3, 'highpass', 7000, 5000, 0.7);
+  }
+  /** Mantle: a quick "hup!" and a scuff. */
+  private s_hup(t: number, p: number, v: number, pan: number) {
+    const o = this.out(0.55 * v, pan, 0.1);
+    this.tone(o, 'sine', 230 * p, 420 * p, t, 0.004, 0.09, 0.6);
+    this.noiseBurst(o, t, 0.004, 0.1, 0.4, 'bandpass', 1500 * p, 900 * p, 1.5);
+    this.noiseBurst(o, t + 0.22, 0.002, 0.06, 0.3, 'lowpass', 700 * p, 300 * p, 1);
+  }
+
+  // wind while skydiving / gliding (a bandpassed noise loop that follows the speed)
+  private wind: { src: AudioBufferSourceNode; bp: BiquadFilterNode; g: GainNode } | null = null;
+  windStart(): void {
+    if (!this.ctx || this.wind) return;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 500;
+    bp.Q.value = 0.7;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.sfx);
+    src.start(0, Math.random() * 1.5);
+    g.gain.setTargetAtTime(0.18, ctx.currentTime, 0.15);
+    this.wind = { src, bp, g };
+  }
+  windSet(speed01: number, dive: number): void {
+    if (!this.ctx) return;
+    if (!this.wind) this.windStart();
+    const w = this.wind;
+    if (!w) return;
+    const t = this.ctx.currentTime;
+    w.bp.frequency.setTargetAtTime(380 + speed01 * 1500 + dive * 600, t, 0.12);
+    w.g.gain.setTargetAtTime(0.1 + speed01 * 0.42 + dive * 0.1, t, 0.12);
+  }
+  windStop(): void {
+    if (!this.ctx || !this.wind) return;
+    const w = this.wind;
+    this.wind = null;
+    w.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
+    setTimeout(() => w.src.stop(), 700);
+  }
+
   // ── continuous voices ─────────────────────────────────────────────────────
-  engineStart(): void {
+  engineStart(kind?: string): void {
     if (!this.ctx || this.engine) return;
+    const V = ENGINE_VOICES[kind ?? 'sports'] ?? ENGINE_VOICES.sports;
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
+    osc.type = V.osc;
     const sub = ctx.createOscillator();
-    sub.type = 'square';
+    sub.type = V.sub;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 420;
+    lp.frequency.value = V.lp;
     lp.Q.value = 3;
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 18;
+    lfo.frequency.value = V.lfo;
     const am = ctx.createGain();
     am.gain.value = 0.8;
     const lfoG = ctx.createGain();
-    lfoG.gain.value = 0.22;
+    lfoG.gain.value = V.lfoDepth;
     lfo.connect(lfoG);
     lfoG.connect(am.gain);
     // gritty rumble (filtered noise) + turbo whine that only appears at speed
@@ -517,9 +772,9 @@ class AudioEngine {
     rumble.loop = true;
     const rlp = ctx.createBiquadFilter();
     rlp.type = 'lowpass';
-    rlp.frequency.value = 260;
+    rlp.frequency.value = V.rumbleLp;
     const rumbleG = ctx.createGain();
-    rumbleG.gain.value = 0.25;
+    rumbleG.gain.value = V.rumble;
     rumble.connect(rlp);
     rlp.connect(rumbleG);
     const whine = ctx.createOscillator();
@@ -536,28 +791,29 @@ class AudioEngine {
     rumbleG.connect(g);
     whineG.connect(g);
     g.connect(this.sfx);
-    osc.frequency.value = tuning.audio.engineBaseHz;
-    sub.frequency.value = tuning.audio.engineBaseHz / 2;
+    osc.frequency.value = tuning.audio.engineBaseHz * V.base;
+    sub.frequency.value = (tuning.audio.engineBaseHz * V.base) / 2;
     for (const n of [osc, sub, lfo, whine]) n.start();
     rumble.start();
-    g.gain.setTargetAtTime(tuning.audio.engineVolume * 0.6, ctx.currentTime, 0.2);
-    this.engine = { osc, sub, whine, whineG, rumble, rumbleG, lp, g, lfo };
+    g.gain.setTargetAtTime(tuning.audio.engineVolume * 0.6 * V.vol, ctx.currentTime, 0.2);
+    this.engine = { osc, sub, whine, whineG, rumble, rumbleG, lp, g, lfo, v: V };
   }
 
   engineSet(speed01: number, throttle: number): void {
     if (!this.ctx || !this.engine) return;
     const a = tuning.audio;
     const t = this.ctx.currentTime;
-    const f = a.engineBaseHz + (a.engineTopHz - a.engineBaseHz) * speed01;
     const e = this.engine;
+    const V = e.v;
+    const f = a.engineBaseHz * V.base + (a.engineTopHz * V.top - a.engineBaseHz * V.base) * speed01;
     e.osc.frequency.setTargetAtTime(f, t, 0.08);
     e.sub.frequency.setTargetAtTime(f / 2, t, 0.08);
     e.whine.frequency.setTargetAtTime(f * 7, t, 0.1);
-    e.whineG.gain.setTargetAtTime(Math.max(0, speed01 - 0.45) * 0.05, t, 0.15);
-    e.lfo.frequency.setTargetAtTime(12 + speed01 * 26, t, 0.1);
-    e.lp.frequency.setTargetAtTime(320 + speed01 * 900 + throttle * 350, t, 0.1);
-    e.rumbleG.gain.setTargetAtTime(0.2 + throttle * 0.25, t, 0.1);
-    e.g.gain.setTargetAtTime(a.engineVolume * (0.5 + 0.5 * Math.max(speed01, throttle * 0.6)), t, 0.1);
+    e.whineG.gain.setTargetAtTime(Math.max(0, speed01 - 0.45) * 0.05 * V.whine, t, 0.15);
+    e.lfo.frequency.setTargetAtTime(V.lfo * 0.7 + speed01 * V.lfo * 1.4, t, 0.1);
+    e.lp.frequency.setTargetAtTime(V.lp * 0.75 + speed01 * V.lp * 2 + throttle * V.lp * 0.8, t, 0.1);
+    e.rumbleG.gain.setTargetAtTime(V.rumble * 0.8 + throttle * V.rumble, t, 0.1);
+    e.g.gain.setTargetAtTime(a.engineVolume * V.vol * (0.5 + 0.5 * Math.max(speed01, throttle * 0.6)), t, 0.1);
   }
 
   engineStop(): void {
@@ -714,6 +970,13 @@ class AudioEngine {
         this.synth(out(0.07), T.lofi ? 'triangle' : 'square', midi(n), t, sd * 1.6, 0.5, 3200, 0);
       }
     }
+    // ── v3 locker: optional lead melody (MIDI note per 16th, null = rest) ──
+    const lead = T.lead?.[bar]?.[s];
+    if (lead != null) {
+      const o = out(0.085);
+      this.synth(o, 'square', midi(lead), t, sd * 2.4, 0.5, 4200, 6);
+      this.tone(o, 'sine', midi(lead - 12), midi(lead - 12), t, 0.004, sd * 1.6, 0.18);
+    }
     // lo-fi vinyl crackle
     if (T.lofi && Math.random() < 0.35) this.noiseBurst(out(0.02), t + Math.random() * sd, 0.0005, 0.004, 0.8, 'highpass', 3000, 3000, 0.5);
   }
@@ -734,6 +997,7 @@ interface TrackDef {
   stab: string;
   stabLen?: number;
   arp?: string;           // digit = chord tone index
+  lead?: (number | null)[][]; // v3 locker: per bar, 16 steps of MIDI notes (null = rest)
 }
 
 // Am  F  C  G (vi–IV–I–V) — the modern pop loop
@@ -741,7 +1005,24 @@ const POP = [[57, 60, 64, 67], [53, 57, 60, 64], [48, 55, 60, 64], [55, 59, 62, 
 // Dm9 G13 Cmaj9 Am9 — lo-fi jazz loop
 const LOFI = [[50, 53, 57, 60, 64], [55, 59, 64, 65, 69], [48, 52, 55, 59, 62], [45, 48, 52, 55, 59]];
 
+// ── v3 locker: "Lobby Lights" — an original upbeat lobby track for the Locker (C – G – Am – F, 124 bpm) ──
+// Cmaj7 · Gmaj7 · Am7 · Fmaj7. Four-on-the-floor kick, offbeat open hats, syncopated funk bass, bright
+// off-beat stabs and a catchy pentatonic hook (call → response) on top.
+const LOCKER_CHORDS = [[60, 64, 67, 71], [67, 71, 74, 78], [57, 60, 64, 67], [65, 69, 72, 76]];
+const LOCKER_LEAD: (number | null)[][] = [
+  [76, null, 79, null, 76, null, 74, null, 72, null, 76, null, 79, null, 81, null],
+  [79, null, null, 74, null, 79, null, 83, null, 81, null, 79, null, 74, null, null],
+  [76, null, 81, null, 79, null, 76, null, 72, null, 76, null, 79, null, 76, null],
+  [77, null, 81, null, 84, null, 81, null, 79, null, 77, null, 76, null, 74, 76],
+];
+
 const TRACKS: Record<MusicTrack, TrackDef> = {
+  locker: {
+    bpm: 124, swing: 0.05, chords: LOCKER_CHORDS,
+    kick: 'x...x...x...x...', snare: '................', clap: '....x.......x...', hat: 'x.x.x.x.x.x.x.x.', openHat: '..x...x...x...x.',
+    bass: 'x..xo..x..x.o.x.', bassLen: 1.1, stab: 'x..x..x.x..x..x.', stabLen: 1.2,
+    arp: '0.1.2.1.0.2.3.2.', lead: LOCKER_LEAD,
+  },
   lobby: {
     bpm: 96, swing: 0.12, chords: POP,
     kick: 'x.......x.x.....', snare: '....x.......x...', hat: 'x.x.x.x.x.x.x.x.',
@@ -768,6 +1049,8 @@ const TRACKS: Record<MusicTrack, TrackDef> = {
 };
 
 export type SoundName =
+  // v3 rides
+  | 'hornPickup' | 'hornCart' | 'hornHover' | 'hornBoat' | 'jingle'
   | 'tap' | 'tab' | 'back' | 'whoosh' | 'pop' | 'squelch' | 'slimeClick' | 'slimeStretch' | 'poke'
   | 'crunch' | 'flake' | 'flakeLand' | 'gloop' | 'drip' | 'snap' | 'blocked' | 'puff' | 'rotate'
   | 'chime' | 'switch' | 'sparkle' | 'swish' | 'horn' | 'bump' | 'hello' | 'happy' | 'confetti'
@@ -775,6 +1058,12 @@ export type SoundName =
   // v2
   | 'collect' | 'levelup' | 'step' | 'boost' | 'skid'
   // v2 r3: water
-  | 'splash' | 'wade' | 'stroke';
+  | 'splash' | 'wade' | 'stroke'
+  // v3 build
+  | 'thunk' | 'clunk' | 'clang' | 'chop'
+  // v3 locker
+  | 'equip' | 'reveal'
+  // v3 movement
+  | 'boing' | 'honk' | 'deploy' | 'thud' | 'sting' | 'fanfare' | 'hup';
 
 export const audio = new AudioEngine();
