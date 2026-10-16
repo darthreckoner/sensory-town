@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Character, OUTFIT_CATALOG, type CatalogSlot } from '../art/character';
 import { WARDROBE_PRESETS, suggestedColor, suitOutfit } from '../art/wardrobeCatalog';
 import { getTop } from '../art/characterParts';
+import { getHair } from '../art/characterHair';
 import type { Outfit } from '../core/model';
 import { tuning } from '../tuning';
 
@@ -78,6 +79,7 @@ for (let i = 0; i < n; i++) {
   if (!isSuit) o[slot].color = colArg === 'sugg' ? suggestedColor(slot, st) : colors ? colors[i % colors.length] : pal[(i * 7 + 3) % pal.length];
   if (!isSuit && slot === 'hair' && !Q.has('hc')) o.hair.color = pal[[6, 0, 6, 11, 12, 6, 1, 6][i % 8]];
   if (isSuit && !Q.has('keephair')) o.hair = { style: WARDROBE_PRESETS[st].hair?.style ?? base.hair.style, color: WARDROBE_PRESETS[st].hair?.color ?? base.hair.color };
+  if (Q.has('hcol')) o.hair.color = Q.get('hcol')!;
   const c = new Character(o, { seated });
   const col = i % cols, row = Math.floor(i / cols);
   c.group.position.set((col - (cols - 1) / 2) * spacing, 0, 0);
@@ -123,6 +125,7 @@ function step(dt: number): void {
   chars.forEach((c, i) => {
     if (view === 'jump') c.setMove(0.3, false);
     else c.setMove(speed, true);
+    if (Q.has('emote') && frames === 1) c.playEmote(Q.get('emote')!);
     if (view === 'pose' && frames === 1) c.pose(['hips', 'peace', 'cross', 'strut', 'twirl'][i % 5] as 'hips', 4, true);
     c.update(dt, t);
   });
@@ -152,6 +155,51 @@ function frame(): void {
   requestAnimationFrame(frame);
 }
 (window as unknown as { __lab: unknown }).__lab = { chars, scene, camera, renderer, step };
+if (Q.has('hairdbg')) {
+  for (const st of [0, 1, 10]) {
+    const p = getHair(st);
+    for (const [nm, g] of [['dark', p.dark], ['base', p.base]] as const) {
+      if (!g) continue;
+      const pa = g.attributes.position, na = g.attributes.normal;
+      let s = 0;
+      for (let q = 0; q < pa.count; q++) s += pa.getX(q) * na.getX(q) + pa.getY(q) * na.getY(q) + pa.getZ(q) * na.getZ(q);
+      g.computeBoundingBox();
+      console.log('HAIRDBG ' + st + ' ' + nm + ' avg(p.n)=' + (s / pa.count).toFixed(4) + ' bb=' + JSON.stringify(g.boundingBox!.min.toArray().map((v) => +v.toFixed(3))) + JSON.stringify(g.boundingBox!.max.toArray().map((v) => +v.toFixed(3))) + ' idx=' + (g.index ? g.index.count : 'none'));
+    }
+    console.log('HAIRDBG ' + st + ' counts dark=' + (p.dark ? p.dark.attributes.position.count : 'null') + ' base=' + p.base.attributes.position.count);
+  }
+}
+if (Q.has('tris')) {
+  // dev: triangles per dressed character (body ~17k; target <= ~35k)
+  chars.forEach((c, i) => {
+    let tris = 0, bodyTris = 0;
+    c.group.traverse((m) => {
+      const s = m as THREE.SkinnedMesh;
+      if (s.isSkinnedMesh && s.visible && s.geometry.index) { tris += s.geometry.index.count / 3; if (Q.has('bycat')) console.log('TRIS   ' + s.name + ' ' + s.geometry.index.count / 3); }
+    });
+    console.log('TRIS ' + i + ' ' + tris);
+    void bodyTris;
+  });
+}
+if (Q.has('trisall')) {
+  const baseO: Outfit = { skin: '#f6c9a8', hair: { style: 1, color: '#6e4a33' }, top: { style: 0, color: '#3d6bff' }, bottom: { style: 1, color: '#22304f' }, shoes: { style: 0, color: '#f6f6f4' }, accessory: { style: 0, color: '#ff2e88' } };
+  const count = (o: Outfit): number => {
+    const c = new Character(o);
+    let t = 0;
+    c.group.traverse((m) => { const s = m as THREE.SkinnedMesh; if (s.isSkinnedMesh && s.visible && s.geometry.index) t += s.geometry.index.count / 3; });
+    c.dispose();
+    return t;
+  };
+  const b0 = count(baseO);
+  console.log('TRIS base ' + b0);
+  for (const s of ['hair', 'top', 'bottom', 'shoes', 'accessory'] as CatalogSlot[]) {
+    for (let i = 0; i < OUTFIT_CATALOG[s].length; i++) {
+      const o = structuredClone(baseO);
+      o[s].style = i;
+      console.log('TRIS ' + s + ' ' + i + ' ' + OUTFIT_CATALOG[s][i].name + ' ' + (count(o) - b0));
+    }
+  }
+}
 if (Q.has('cats')) {
   // dev: material categories (= draw calls) each part adds on top of a plain base outfit
   const baseO: Outfit = { skin: '#f6c9a8', hair: { style: 1, color: '#6e4a33' }, top: { style: 0, color: '#3d6bff' }, bottom: { style: 1, color: '#22304f' }, shoes: { style: 0, color: '#f6f6f4' }, accessory: { style: 0, color: '#ff2e88' } };

@@ -3,13 +3,13 @@
 // normal wardrobe part (so kids can mix them) and wardrobeCatalog.ts bundles them into WARDROBE_SUITS.
 // Appended to TOP_V3 / BOTTOM_V3 / ACC_V3 by their files, so the style indices keep growing at the end.
 import * as THREE from 'three';
-import { B, GB, TAU, TY, bodyR, pieces, shell, spike, torus, type PB, type Piece } from './characterKit';
+import { B, TAU, TY, type PB, type Piece } from './characterKit';
 import type { TopDef } from './wardrobeTops';
 import type { BottomDef } from './wardrobeBottoms';
 import type { AccDef } from './wardrobeAcc';
 import type { AccPart } from './characterParts';
 import {
-  HIP_TOP, NECK, PI, blobRing, box, checkTube, CIRCLE, crotch, decal, ELLIPSE, foreArm, front, heartGeo, legJoint, legTube, RECT, roles, scaleLathe, starGeo, upperArm, wrapHead, zAt,
+  GB, HIP_TOP, NECK, PI, bodyR, hoodCowl, pieces, shell, spike, torus, blobRing, box, checkTube, CIRCLE, crotch, decal, ELLIPSE, foreArm, front, heartGeo, legJoint, legSpec, legTube, RECT, roles, scaleLathe, starGeo, upperArm, wrapHead, zAt,
 } from './wardrobeKit';
 
 const L = B.thighLen;
@@ -20,10 +20,7 @@ const accBase = (over: Partial<AccPart>): AccPart => ({ head: EMPTY, body: EMPTY
 const Y = new THREE.Vector3(0, 1, 0);
 const qTo = (x: number, y: number, z: number): THREE.Quaternion => new THREE.Quaternion().setFromUnitVectors(Y, new THREE.Vector3(x, y, z).normalize());
 type G = GB;
-const hood = (main: G, off: number): void => {
-  main.add(torus(0.082 + off * 0.2, 0.03), { p: [0, 1.418, -0.006], r: [PI / 2, 0, 0], s: [1.05, 1, 1] });
-  main.e([0, 1.4, -0.088], [0.1, 0.048, 0.06]);
-};
+const hood = (main: G, off: number): void => hoodCowl(main, off);
 const zip = (pb: ReturnType<typeof roles>, off: number, y0: number, y1: number): void => {
   pb.white.seg([0, y0, front(y0, off, 0.006)], [0, y1, front(y1, off, 0.006)], 0.0042);
   pb.gold.e([0, y0 - 0.012, front(y0 - 0.012, off, 0.012)], [0.007, 0.012, 0.005]);
@@ -361,12 +358,11 @@ export const SUIT_BOTTOMS: BottomDef[] = [
       const m = pb.at('main'), ink = pb.at('ink'); // crisp black checks on any pants color
       if (thigh) {
         legTube(m, true, 0.04, -L - 0.01, 0.098, 0.094);
-        // the thigh tube narrows toward the hip; follow it so the checks sit on the cloth
-        const rT = (y: number): number => (y > -0.12 ? 0.09 + (0.098 - 0.09) * ((0.04 - y) / 0.16) : 0.098 - 0.004 * ((-0.12 - y) / (L - 0.11)));
-        checkTube(ink, -0.06, -L - 0.005, rT, 28, 0.02, 0.0015);
+        // the checks follow the cloth's own radius (it follows the thigh), a hair above it
+        checkTube(ink, -0.05, -L - 0.005, legSpec(true, 0.04, -L - 0.01, 0.098, 0.094), 28, 0.02, 0.0015);
       } else {
         legTube(m, false, 0.02, -SL + 0.03, 0.094, 0.09);
-        checkTube(ink, -0.03, -SL + 0.035, (y) => 0.094 - 0.004 * ((0.02 - y) / (SL - 0.01)), 28, 0.02, 0.0015, 1);
+        checkTube(ink, -0.03, -SL + 0.035, legSpec(false, 0.02, -SL + 0.03, 0.094, 0.09), 28, 0.02, 0.0015, 1);
         pb.at('trim').ring(-SL + 0.03, 0.09, 0.012);
       }
     },

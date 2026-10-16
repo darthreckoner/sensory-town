@@ -3,7 +3,8 @@
 // its shape if the head proportions are tuned. Head space: origin = head center,
 // +z forward, +y up.
 import * as THREE from 'three';
-import { B, D2R, GB, TAU, type V3t } from './characterKit';
+import { B, D2R, TAU, type V3t } from './characterKit';
+import { GB, loft, strand } from './wardrobeKit';
 
 export interface HairParts {
   base: THREE.BufferGeometry; // always shown (hugs the head / falls below a hat)
@@ -35,7 +36,6 @@ const hr = (r: V3t): V3t => [r[0] * B.HX, r[1] * B.HY, r[2] * B.HZ];
 const E = (b: GB, p: V3t, r: V3t, rot?: V3t) => b.e(hp(p), hr(r), rot);
 /** Round puff: position in head units, radius in puff units (1 = 0.1 m). */
 const P = (b: GB, p: V3t, rad: number) => b.e(hp(p), rad * U);
-const capN = (b: GB, k = 1, y = 0.1) => E(b, [0, y, -0.14], [1.08 * k, 1.02 * k, 1.06 * k]);
 const dir = (yawDeg: number, elDeg: number, tilt = 0.3): V3t => {
   const t = yawDeg * D2R, f = elDeg * D2R;
   const d = new THREE.Vector3(Math.sin(t) * Math.cos(f), Math.sin(f) + tilt, Math.cos(t) * Math.cos(f)).normalize();
@@ -49,85 +49,206 @@ function braid(b: GB, a: V3t, to: V3t, rad: number, bumps = 9): void {
   const A = new THREE.Vector3(...a);
   const d = new THREE.Vector3(...to).sub(A);
   const L = d.length();
-  const per = 4;
+  const per = 3;
   const pts: THREE.Vector2[] = [];
   for (let i = 0; i <= bumps * per; i++) {
     const t = i / (bumps * per);
     const u = (i % per) / per;
     const taper = 1 - 0.5 * Math.pow(t, 2.4);
-    pts.push(new THREE.Vector2(rad * (0.8 + 0.24 * Math.sin(Math.PI * u)) * taper, L * t));
+    pts.push(new THREE.Vector2(rad * (0.8 + 0.24 * Math.sin(Math.PI * u)) * taper * (i === bumps * per ? 0.3 : 1), L * t));
   }
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
-  b.add(new THREE.LatheGeometry(pts, 8), { p: a, q }, true);
+  b.add(new THREE.LatheGeometry(pts, 10), { p: a, q }, true);
 }
 
-/** Smooth wavy curtain / lock: tapered lathe from `a` (top) to `to`, flattened by zScale (meters, head space). */
-function lock(b: GB, a: V3t, to: V3t, rTop: number, rBot: number, zScale = 0.5, wave = 0.0, waves = 2, seg = 10): void {
-  const A = new THREE.Vector3(...a);
-  const d = new THREE.Vector3(...to).sub(A);
-  const L = d.length();
-  const pts: THREE.Vector2[] = [];
-  const n = 10;
+/** A point on the head surface (theta = yaw from +z toward +x, phi = elevation, degrees; k = scale > 1 sits above the skin), head-space meters. */
+const hs = (thDeg: number, phDeg: number, k = 1): V3t => {
+  const t = thDeg * D2R, f = phDeg * D2R;
+  return [B.HX * k * Math.sin(t) * Math.cos(f), B.HY * k * Math.sin(f), B.HZ * k * Math.cos(t) * Math.cos(f)];
+};
+interface Hairline {
+  /** hairline elevation (degrees) at the front (center of the forehead), the temple (theta 55), above the ear (100) and the nape (180) */
+  f: number;
+  t: number;
+  e: number;
+  n: number;
+}
+const LONG_LINE: Hairline = { f: 25, t: 19, e: -4, n: -42 };
+const smooth = (x: number): number => x * x * (3 - 2 * x);
+function hairlinePhi(thDeg: number, l: Hairline): number {
+  const a = Math.min(180, Math.abs(thDeg));
+  const nodes: [number, number][] = [[0, l.f], [55, l.t], [100, l.e], [180, l.n]];
+  for (let i = 1; i < nodes.length; i++) {
+    if (a <= nodes[i][0]) {
+      const k = smooth((a - nodes[i - 1][0]) / (nodes[i][0] - nodes[i - 1][0]));
+      return nodes[i - 1][1] + (nodes[i][1] - nodes[i - 1][1]) * k;
+    }
+  }
+  return l.n;
+}
+/**
+ * Scalp shell: the head ellipsoid scaled a few percent and cut off along a hairline that follows the head (a curve
+ * over the forehead, past the temple and ear, down to the nape), so the hairline is a clean line instead of the ragged
+ * intersection of a big blob with the skull. 64 columns x 12 rows, smooth normals.
+ */
+function scalp(b: GB, k = 1.045, line: Hairline = LONG_LINE): void {
+  const cols = 48, rows = 8;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let j = 0; j < cols; j++) {
+    const th = (j / cols) * 360 - 180;
+    const f0 = hairlinePhi(th, line);
+    for (let i = 0; i <= rows; i++) {
+      const ph = f0 + (90 - f0) * (i / rows);
+      // the shell lifts a little off the skin toward its free edge (a soft rolled edge)
+      const kk = k + 0.012 * (1 - i / rows) * (1 - i / rows);
+      pos.push(...hs(th, ph, kk));
+    }
+  }
+  for (let j = 0; j < cols; j++) {
+    for (let i = 0; i < rows; i++) {
+      const a = j * (rows + 1) + i, bb = ((j + 1) % cols) * (rows + 1) + i, c = a + 1, d = bb + 1;
+      idx.push(a, bb, c, bb, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  b.add(g, {}, true);
+}
+/** The hair mass: a scalp shell with a clean hairline plus crown / back volume (its front stays behind the hairline). */
+const capN = (b: GB, k = 1, y = 0.1): void => {
+  scalp(b, 1.045 + (k - 1) * 0.5);
+  E(b, [0, y, -0.3], [1.08 * k, 1.02 * k, 0.98 * k]);
+};
+/**
+ * The back of long hair: a cupped, clumped, feathered-edge sheet that wraps the back of the skull (never a flat card).
+ * prof = [y, rx, rz, zc][] control rows from the crown down (meters, head space); the cross-section is a crescent
+ * (outer arc + inner arc, `thick` meters apart, tapering to a feathered edge at the bottom) of +-span degrees, rippled
+ * into `clumps` strand clumps whose tips end at uneven lengths.
+ */
+function back(b: GB, prof: [number, number, number, number][], span = 105, thick = 0.02, clumps = 9, amp = 0.05, tipVar = 0.025): void {
+  const cx = new THREE.SplineCurve(prof.map(([y, rx]) => new THREE.Vector2(y, rx)));
+  const cz = new THREE.SplineCurve(prof.map(([y, , rz]) => new THREE.Vector2(y, rz)));
+  const cc = new THREE.SplineCurve(prof.map(([y, , , zc]) => new THREE.Vector2(y, zc)));
+  void cx; void cz; void cc;
+  const yTop = prof[0][0], yBot = prof[prof.length - 1][0];
+  // piecewise-linear lookup of the control rows by height (smoothed)
+  const at = (y: number, col: 1 | 2 | 3): number => {
+    for (let i = 1; i < prof.length; i++) {
+      if (y >= prof[i][0] || i === prof.length - 1) {
+        const k = smooth(Math.min(1, Math.max(0, (prof[i - 1][0] - y) / (prof[i - 1][0] - prof[i][0]))));
+        return prof[i - 1][col] + (prof[i][col] - prof[i - 1][col]) * k;
+      }
+    }
+    return prof[prof.length - 1][col];
+  };
+  const rows = 16, m = 12;
+  const rings: V3t[][] = [];
+  for (let r = 0; r <= rows; r++) {
+    const t = r / rows;
+    const ring: V3t[] = [];
+    const th = thick * Math.min(1, t * 6 + 0.25) * (1 - 0.82 * smooth(Math.max(0, (t - 0.72) / 0.28)));
+    const outer: V3t[] = [], inner: V3t[] = [];
+    for (let i = 0; i <= m; i++) {
+      const u = (i / m) * 2 - 1; // -1..1 across the back
+      const a = u * span * D2R;
+      // clumps: ripples across the sheet, growing toward the ends; uneven tip lengths
+      const rip = 1 + amp * (0.35 + 0.65 * t) * Math.sin(u * clumps * Math.PI) ;
+      const yv = yTop + (yBot + tipVar * Math.sin(u * clumps * Math.PI * 0.9 + 1) * (t > 0.85 ? 1 : 0) - yTop) * t;
+      const rx = at(yv, 1), rz = at(yv, 2), zc = at(yv, 3);
+      outer.push([Math.sin(a) * rx * rip, yv, zc - Math.cos(a) * rz * rip]);
+      inner.push([Math.sin(a) * (rx - th) * rip, yv, zc - Math.cos(a) * (rz - th) * rip]);
+    }
+    ring.push(...outer, ...inner.reverse());
+    rings.push(ring);
+  }
+  loft(b, rings);
+}
+/** One tapered hair strand sweeping along head-surface points [theta, phi, k]; w = half-width (meters). Blunt ends stay fat. */
+function sweep(b: GB, pts: [number, number, number][], w = 0.016, tip = 0.35, blunt = false): void {
+  strand(b, pts.map(([th, ph, k]) => hs(th, ph, k)), (t) => {
+    const e = blunt ? 1 - Math.pow(t, 6) * 0.45 : 1 - Math.pow(t, 1.8) * (1 - tip);
+    const swell = 1 + 0.18 * Math.sin(Math.PI * Math.min(1, t * 1.4));
+    return [w * e * swell, w * 0.62 * e * swell];
+  }, 8, 9);
+}
+/** Side-swept fringe: strands start at a parting on the crown and sweep across the forehead toward one temple. */
+function fringe(h: HairBuild, flip = 1, y = 0.62): void {
+  const lift = (y - 0.62) * 20; // callers pass 0.62 .. 0.72
+  for (let i = 0; i < 7; i++) {
+    const u = i / 6;
+    const th0 = -flip * (14 - u * 4);
+    const end = flip * (-38 + u * 94); // tip theta: from the far temple across to the near temple
+    sweep(h.front, [[th0, 78 - u * 3 + lift, 1.07], [th0 * 0.4 + end * 0.32, 58 - u * 6, 1.095], [end * 0.78, 40 - u * 10, 1.07], [end, 26 - u * 10 + (u > 0.6 ? -3 : 0), 1.045]], 0.02 - u * 0.002, 0.3);
+  }
+}
+const softFringe = fringe;
+/** Curtain bangs: each side sweeps from a soft center part down and out over the temple. */
+function curtains(h: HairBuild, y = 0.7): void {
+  const lift = (y - 0.7) * 20;
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 5; i++) {
+      const u = i / 4;
+      const th0 = s * (3 + u * 6);
+      const end = s * (52 + u * 12);
+      sweep(h.front, [[th0, 78 + lift, 1.075], [s * (14 + u * 14), 58 - u * 4, 1.085], [s * (34 + u * 14), 36 - u * 6, 1.065], [end, 14 - u * 22, 1.04]], 0.019 - u * 0.001, 0.32);
+    }
+  }
+}
+const softCurtains = curtains;
+/** Blunt bangs: a row of strands cut straight across the forehead. */
+function bluntBangs(h: HairBuild): void {
+  for (let i = 0; i < 9; i++) {
+    const th = (i / 8) * 96 - 48;
+    sweep(h.front, [[th, 80, 1.07], [th * 1.06, 56, 1.09], [th * 1.1, 36, 1.07], [th * 1.12, 27 - Math.abs(th) * 0.08, 1.05]], 0.0215, 0.9, true);
+  }
+}
+/** A side lock that frames the face / falls over the shoulder: head-surface start, then free points (meters). */
+function sideLock(b: GB, s: number, th: number, ph: number, to: V3t, w = 0.022, bulge = 0.0): void {
+  const a = hs(th * s, ph, 1.05);
+  const mid: V3t = [a[0] + (to[0] * s - a[0]) * 0.4 + s * bulge, a[1] + (to[1] - a[1]) * 0.45, a[2] + (to[2] - a[2]) * 0.4];
+  strand(b, [a, mid, [to[0] * s, to[1], to[2]]], (t) => {
+    const e = 1 - Math.pow(t, 2.2) * 0.62;
+    return [w * e, w * 0.66 * e];
+  }, 9, 8);
+}
+/** Smooth wavy lock: a lofted, tapered strand from `a` (top) to `to` (meters, head space), flattened by zScale (the old lathe signature). */
+function lock(b: GB, a: V3t, to: V3t, rTop: number, rBot: number, zScale = 0.5, wave = 0.0, waves = 2, _seg = 10): void {
+  void _seg;
+  const n = 7;
+  const pts: V3t[] = [];
   for (let i = 0; i <= n; i++) {
     const t = i / n;
-    const round = i === n ? 0.35 : 1;
-    pts.push(new THREE.Vector2(Math.max(0.001, (rTop + (rBot - rTop) * t + wave * Math.sin(t * waves * TAU)) * round), L * t));
+    pts.push([a[0] + (to[0] - a[0]) * t + wave * 1.6 * Math.sin(t * waves * TAU * 0.5) * Math.min(1, t * 2), a[1] + (to[1] - a[1]) * t, a[2] + (to[2] - a[2]) * t]);
   }
-  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
-  const g = new THREE.LatheGeometry(pts, seg);
-  g.scale(1, 1, zScale);
-  b.add(g, { p: a, q }, true);
-}
-
-/** Side-swept fringe over the forehead. */
-function fringe(h: HairBuild, flip = 1, y = 0.62): void {
-  const b = h.front;
-  E(b, [-0.34 * flip, y, 0.8], [0.52, 0.26, 0.3], [0.1, 0, 0.5 * flip]);
-  E(b, [0.0, y + 0.06, 0.82], [0.5, 0.26, 0.3], [0.1, 0, -0.1 * flip]);
-  E(b, [0.36 * flip, y - 0.02, 0.78], [0.46, 0.25, 0.3], [0.1, 0, -0.5 * flip]);
-}
-/** v3: a thinner side-swept fringe (no roll across the forehead) for the new styles. */
-function softFringe(h: HairBuild, flip = 1, y = 0.62): void {
-  const b = h.front;
-  E(b, [-0.36 * flip, y - 0.04, 0.78], [0.46, 0.19, 0.28], [0.1, 0, 0.55 * flip]);
-  E(b, [0.0, y + 0.02, 0.82], [0.44, 0.19, 0.28], [0.12, 0, -0.2 * flip]);
-  E(b, [0.38 * flip, y - 0.05, 0.78], [0.4, 0.17, 0.28], [0.1, 0, -0.6 * flip]);
-}
-/** Curtain bangs: two swoops that part in the middle and frame the face. */
-function curtains(h: HairBuild, y = 0.7): void {
-  for (const s of [-1, 1]) {
-    E(h.front, [0.3 * s, y, 0.78], [0.5, 0.2, 0.28], [0.1, 0, -0.35 * s]);
-    E(h.base, [0.68 * s, y - 0.28, 0.62], [0.3, 0.4, 0.28], [0.05, 0, 0.12 * s]);
-  }
-}
-/** v3: curtain bangs with a soft center part: each side sweeps down and out to the temple (no roll across the forehead). */
-function softCurtains(h: HairBuild, y = 0.7): void {
-  for (const s of [-1, 1]) {
-    E(h.front, [0.5 * s, y - 0.06, 0.74], [0.4, 0.16, 0.27], [0.12, 0, -0.62 * s]);
-    E(h.front, [0.27 * s, y + 0.02, 0.82], [0.24, 0.11, 0.22], [0.1, 0, -0.4 * s]);
-    E(h.base, [0.7 * s, y - 0.3, 0.6], [0.28, 0.42, 0.28], [0.05, 0, 0.12 * s]);
-  }
+  strand(b, pts, (t) => {
+    const r = rTop + (rBot - rTop) * t;
+    const tip = t > 0.8 ? 1 - Math.pow((t - 0.8) / 0.2, 2) * 0.6 : 1;
+    return [Math.max(0.0015, r * tip), Math.max(0.0015, r * tip * zScale)];
+  }, 10, 10);
 }
 
 const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 0 Fade — short textured top, tapered sides
   (h) => {
-    E(h.dark, [0, -0.08, -0.12], [1.035, 0.86, 1.02]);
-    E(h.base, [0, 0.4, -0.08], [0.95, 0.72, 0.97]);
-    E(h.base, [0, 0.78, 0.18], [0.7, 0.3, 0.7]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
+    scalp(h.base, 1.075, { f: 27, t: 46, e: 56, n: 44 });
+    E(h.base, [0, 0.56, -0.06], [0.88, 0.5, 0.9]);
+    E(h.base, [0, 0.8, 0.16], [0.66, 0.28, 0.66]);
     E(h.base, [-0.25, 0.92, 0.3], [0.4, 0.2, 0.42], [0, 0, 0.3]);
+    for (const [x, y, z] of [[-0.3, 0.98, 0.36], [0.2, 0.97, 0.3], [0.0, 1.0, 0.08], [0.32, 0.9, -0.1]] as V3t[]) SP(h.base, [x, y, z], [x * 0.5, 1, z * 0.5], 0.05, 0.03);
     h.topY = 0.14;
     h.hairR = 1.12;
   },
   // 1 Mid-part bob — chin length, parted in the middle
   (h) => {
     capN(h.base, 1.03);
-    E(h.base, [0, -0.3, -0.3], [1.02, 0.88, 0.76]);
-    for (const s of [-1, 1]) {
-      E(h.base, [0.99 * s, -0.22, 0.04], [0.22, 0.78, 0.66], [0, 0, 0.05 * s]);
-      E(h.front, [0.5 * s, 0.66, 0.78], [0.62, 0.3, 0.3], [0.1, 0, -0.55 * s]);
-      E(h.base, [0.86 * s, 0.1, 0.55], [0.22, 0.62, 0.34], [0, 0, 0.08 * s]);
-    }
+    back(h.base, [[0.03, 0.095, 0.098, -0.01], [-0.05, 0.094, 0.092, -0.022], [-0.11, 0.1, 0.086, -0.03], [-0.165, 0.106, 0.082, -0.032]], 128, 0.024, 10, 0.055, 0.012);
+    curtains(h, 0.7);
+    for (const s of [-1, 1]) sideLock(h.base, s, 84, 10, [0.099, -0.15, 0.02], 0.027);
     h.topY = 0.15;
     h.hairR = 1.16;
   },
@@ -137,11 +258,12 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     fringe(h, -1, 0.7);
     h.accent.ringAt(hp([0, 0.78, -0.74]), [0, 0.45, -0.9], 0.03, 0.016);
     const t = new GB();
-    t.e([0, -0.02, -0.035], [0.03, 0.045, 0.03]);
-    t.e([0, -0.095, -0.065], [0.034, 0.062, 0.032]);
-    t.e([0, -0.18, -0.075], [0.032, 0.072, 0.028]);
-    t.e([0, -0.27, -0.07], [0.027, 0.072, 0.025]);
-    t.e([0, -0.35, -0.055], [0.018, 0.062, 0.018]);
+    // a ponytail lofted along a soft curve: full at the tie, a gentle bulge, a tapered pointed tip
+    strand(t, [[0, -0.01, -0.03], [0.004, -0.09, -0.066], [-0.004, -0.19, -0.078], [0.006, -0.29, -0.07], [0, -0.385, -0.05]], (u) => {
+      const r = 0.031 + 0.008 * Math.sin(Math.PI * Math.min(1, u * 1.3));
+      const tip = 1 - Math.pow(u, 2.6) * 0.72;
+      return [r * tip, r * tip * 0.84];
+    }, 14, 18);
     h.tails.push({ gb: t, pivot: TAIL_PIVOT, side: 0, tilt: 0.45 });
     h.topY = 0.14;
     h.hairR = 1.1;
@@ -150,32 +272,25 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   (h) => {
     capN(h.base, 1.04);
     E(h.vol, [0, 0.92, 0.05], [0.8, 0.26, 0.78]);
-    E(h.base, [0, -0.12, -0.22], [1.15, 0.5, 1.03]);
-    E(h.base, [0, -0.62, -0.4], [1.06, 0.42, 0.9]);
+    back(h.base, [[0.03, 0.095, 0.1, -0.01], [-0.06, 0.095, 0.092, -0.03], [-0.14, 0.104, 0.08, -0.05], [-0.22, 0.112, 0.07, -0.062], [-0.3, 0.118, 0.062, -0.07]], 118, 0.026, 11, 0.09, 0.045);
     for (const s of [-1, 1]) {
-      E(h.base, [1.0 * s, -0.3, 0.0], [0.24, 0.62, 0.62]);
-      SP(h.base, [1.02 * s, -0.78, 0.0], dir(s * 85, -70, -0.2), 0.07, 0.03);
-      SP(h.base, [0.82 * s, -0.95, -0.35], dir(s * 120, -75, -0.3), 0.08, 0.03);
-      SP(h.base, [0.45 * s, -1.0, -0.78], dir(s * 150, -75, -0.3), 0.085, 0.03);
+      sideLock(h.base, s, 80, 8, [0.104, -0.2, 0.01], 0.028, 0.004);
+      sideLock(h.base, s, 70, 22, [0.112, -0.31, 0.03], 0.022, 0.01);
+      sideLock(h.base, s, 96, 0, [0.1, -0.26, -0.03], 0.024);
     }
-    for (const x of [-0.6, 0, 0.6]) SP(h.base, [x, -0.97, -0.6], dir(Math.sign(x) * 160, -80, -0.2), 0.085, 0.03);
     curtains(h, 0.62);
-    for (const x of [-0.4, 0, 0.4]) SP(h.front, [x, 0.52, 0.9], [x * 0.5, -0.5, 0.9], 0.04, 0.02);
     h.topY = 0.16;
     h.hairR = 1.2;
   },
-  // 4 Long waves — mid-back length, soft S-waves, flat side-swept fringe
+  // 4 Long waves — mid-back length, soft S-waves, side-swept fringe
   (h) => {
     capN(h.base, 1.03);
-    E(h.front, [0.12, 0.7, 0.8], [0.72, 0.12, 0.17], [0.12, 0, -0.5]);
-    E(h.front, [-0.45, 0.62, 0.76], [0.3, 0.1, 0.15], [0.1, 0, 0.45]);
-    for (const s of [-1, 1]) E(h.base, [0.7 * s, 0.38, 0.6], [0.28, 0.42, 0.28], [0.05, 0, 0.12 * s]);
-    // back curtain with waves, down to the shoulder blades
-    lock(h.base, [0, 0.0, -0.075], [0, -0.47, -0.085], 0.104, 0.096, 0.5, 0.011, 2.2, 14);
+    fringe(h, 1, 0.7);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.09, 0.09, -0.03], [-0.16, 0.088, 0.07, -0.062], [-0.3, 0.1, 0.05, -0.09], [-0.46, 0.108, 0.04, -0.1]], 108, 0.026, 7, 0.06, 0.03);
     for (const s of [-1, 1]) {
-      // front locks over the shoulders + side fill so it reads as one mass
-      lock(h.base, [s * 0.1, -0.02, 0.0], [s * 0.1, -0.33, 0.085], 0.034, 0.03, 0.8, 0.006, 2);
-      lock(h.base, [s * 0.098, 0.0, -0.045], [s * 0.098, -0.4, -0.06], 0.04, 0.03, 1.2, 0.0, 1);
+      // front locks over the shoulders so it reads as one mass
+      lock(h.base, [s * 0.1, -0.02, 0.0], [s * 0.106, -0.34, 0.07], 0.034, 0.03, 0.8, 0.006, 2);
+      lock(h.base, [s * 0.098, 0.0, -0.045], [s * 0.104, -0.4, -0.06], 0.04, 0.03, 1.1, 0.0, 1);
     }
     h.topY = 0.15;
     h.hairR = 1.14;
@@ -187,7 +302,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
     for (const s of [-1, 1]) {
       P(h.vol, [0.62 * s, 1.1, -0.28], 0.52);
       h.accent.ringAt(hp([0.5 * s, 0.86, -0.3]), [0.55 * s, 0.8, 0], 0.05, 0.02);
-      E(h.base, [0.92 * s, -0.1, 0.38], [0.1, 0.55, 0.12]);
+      sideLock(h.base, s, 86, 14, [0.099, -0.08, 0.035], 0.016);
     }
     h.topY = 0.15;
     h.hairR = 1.1;
@@ -230,11 +345,11 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   (h) => {
     capN(h.base, 1.03);
     curtains(h, 0.72);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.09, 0.09, -0.03], [-0.16, 0.088, 0.07, -0.062], [-0.26, 0.098, 0.05, -0.085], [-0.34, 0.104, 0.042, -0.094]], 112, 0.022, 6, 0.03, 0.02);
     for (const s of [-1, 1]) {
-      E(h.base, [0.98 * s, -0.4, 0.04], [0.22, 1.0, 0.66], [0, 0, 0.04 * s]);
-      E(h.base, [0.92 * s, -0.3, 0.55], [0.2, 0.82, 0.3], [0, 0, 0.05 * s]);
+      sideLock(h.base, s, 78, 12, [0.104, -0.3, 0.05], 0.03, 0.002);
+      sideLock(h.base, s, 90, 2, [0.1, -0.27, -0.02], 0.026);
     }
-    E(h.base, [0, -0.55, -0.38], [1.0, 1.15, 0.7]);
     h.topY = 0.15;
     h.hairR = 1.14;
   },
@@ -253,8 +368,9 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 10 Quiff — big swept-up front, short sides
   (h) => {
-    E(h.dark, [0, -0.06, -0.12], [1.035, 0.82, 1.02]);
-    E(h.base, [0, 0.42, -0.1], [0.96, 0.74, 0.98]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
+    scalp(h.base, 1.075, { f: 27, t: 46, e: 56, n: 44 });
+    E(h.base, [0, 0.6, -0.08], [0.9, 0.5, 0.92]);
     E(h.base, [0.0, 1.02, 0.5], [0.62, 0.5, 0.78], [-0.5, 0, 0.12]);
     E(h.base, [0.0, 0.92, 0.1], [0.74, 0.44, 0.7]);
     E(h.base, [-0.5, 0.82, 0.6], [0.3, 0.24, 0.32]);
@@ -263,8 +379,9 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 11 Top knot — tight sides, man bun
   (h) => {
-    E(h.dark, [0, -0.08, -0.12], [1.035, 0.84, 1.02]);
-    E(h.base, [0, 0.36, -0.1], [0.96, 0.76, 0.98]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
+    scalp(h.base, 1.075, { f: 27, t: 46, e: 56, n: 44 });
+    E(h.base, [0, 0.56, -0.12], [0.88, 0.5, 0.9]);
     P(h.vol, [0, 1.3, -0.34], 0.5);
     h.accent.ringAt(hp([0, 1.02, -0.3]), [0, 0.8, -0.3], 0.05, 0.02);
     E(h.base, [0, 0.74, 0.2], [0.7, 0.26, 0.66]);
@@ -282,12 +399,11 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
       h.accent.e(hp([Math.sin(a) * 0.5 * 0.55, 0.8 + Math.cos(a) * 0.5 * 0.4, -0.74 - Math.cos(a) * 0.1]), [0.014, 0.014, 0.014]);
     }
     const t = new GB();
-    t.e([0, -0.03, -0.05], [0.05, 0.06, 0.045]);
-    t.e([0, -0.11, -0.075], [0.058, 0.07, 0.05]);
-    t.e([0.004, -0.2, -0.085], [0.056, 0.075, 0.048]);
-    t.e([0.012, -0.3, -0.08], [0.05, 0.075, 0.045]);
-    t.e([0.026, -0.4, -0.066], [0.042, 0.07, 0.04]);
-    t.e([0.04, -0.485, -0.048], [0.032, 0.058, 0.03]);
+    strand(t, [[0, -0.02, -0.05], [0.006, -0.12, -0.082], [-0.014, -0.24, -0.09], [0.016, -0.35, -0.078], [0.034, -0.45, -0.058], [0.044, -0.52, -0.04]], (u) => {
+      const r = 0.047 + 0.012 * Math.sin(Math.PI * Math.min(1, u * 1.2)) + 0.004 * Math.sin(u * 14);
+      const tip = 1 - Math.pow(u, 2.4) * 0.7;
+      return [r * tip, r * tip * 0.8];
+    }, 14, 22);
     h.tails.push({ gb: t, pivot: TAIL_PIVOT, side: 0, tilt: 0.5 });
     h.topY = 0.15;
     h.hairR = 1.1;
@@ -303,11 +419,11 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
       h.accent.ringAt(b, [0.9 * s, 0.1, -0.3], 0.038, 0.019);
       const o: V3t = [b[0] - TAIL_PIVOT[0], b[1] - TAIL_PIVOT[1], b[2] - TAIL_PIVOT[2]];
       const at = (dx: number, dy: number, dz: number): V3t => [o[0] + dx * s, o[1] + dy, o[2] + dz];
-      t.e(at(0.012, -0.04, -0.008), [0.036, 0.05, 0.036]);
-      t.e(at(0.024, -0.11, -0.016), [0.04, 0.06, 0.04]);
-      t.e(at(0.034, -0.19, -0.02), [0.038, 0.065, 0.036]);
-      t.e(at(0.04, -0.27, -0.016), [0.032, 0.06, 0.03]);
-      t.e(at(0.044, -0.34, -0.01), [0.022, 0.05, 0.022]);
+      strand(t, [at(0.006, -0.01, -0.004), at(0.022, -0.1, -0.016), at(0.038, -0.2, -0.022), at(0.05, -0.3, -0.016), at(0.056, -0.39, -0.008)], (u) => {
+        const r = 0.034 + 0.006 * Math.sin(Math.PI * Math.min(1, u * 1.2));
+        const tip = 1 - Math.pow(u, 2.5) * 0.72;
+        return [r * tip, r * tip * 0.88];
+      }, 12, 16);
     }
     h.tails.push({ gb: t, pivot: TAIL_PIVOT, side: 0, tilt: 0.3 });
     h.topY = 0.15;
@@ -316,13 +432,13 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 14 Half-Up — top knot, long waves down the back
   (h) => {
     capN(h.base, 1.03);
-    softCurtains(h, 0.68);
+    curtains(h, 0.68);
     P(h.vol, [0, 1.12, -0.35], 0.42);
     h.accent.ringAt(hp([0, 0.9, -0.34]), [0, 0.8, -0.3], 0.044, 0.02);
-    lock(h.base, [0, 0.0, -0.075], [0, -0.5, -0.09], 0.1, 0.07, 0.5, 0.009, 2, 14);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.09, 0.09, -0.03], [-0.16, 0.088, 0.07, -0.062], [-0.3, 0.1, 0.05, -0.09], [-0.46, 0.108, 0.04, -0.1]], 100, 0.024, 8, 0.05, 0.03);
     for (const s of [-1, 1]) {
-      lock(h.base, [s * 0.092, -0.02, 0.0], [s * 0.1, -0.34, 0.07], 0.03, 0.018, 0.8, 0.006, 2);
-      lock(h.base, [s * 0.09, 0.0, -0.045], [s * 0.098, -0.4, -0.06], 0.034, 0.02, 1.0, 0.0, 1);
+      lock(h.base, [s * 0.092, -0.02, 0.0], [s * 0.102, -0.34, 0.07], 0.03, 0.018, 0.8, 0.006, 2);
+      lock(h.base, [s * 0.09, 0.0, -0.045], [s * 0.1, -0.4, -0.06], 0.034, 0.02, 1.0, 0.0, 1);
     }
     h.topY = 0.19;
     h.hairR = 1.14;
@@ -362,25 +478,23 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 17 Side Shave — shaved on one side, a long swoop on the other
   (h) => {
-    E(h.dark, [0, 0.04, -0.12], [1.045, 0.92, 1.04]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
     E(h.base, [0.24, 0.5, -0.05], [0.8, 0.7, 0.95]);
     E(h.base, [0.3, 0.88, 0.2], [0.7, 0.34, 0.7], [0, 0, -0.2]);
-    E(h.front, [0.22, 0.66, 0.8], [0.72, 0.28, 0.3], [0.1, 0, -0.45]);
-    E(h.base, [0.98, -0.35, 0.0], [0.24, 0.9, 0.66]);
-    lock(h.base, [0.1, -0.02, 0.0], [0.11, -0.38, 0.09], 0.045, 0.036, 0.9, 0.008, 2);
-    lock(h.base, [0.07, 0.0, -0.06], [0.09, -0.36, -0.07], 0.05, 0.04, 1.0, 0, 1);
-    E(h.base, [0.5, -0.1, -0.8], [0.45, 0.6, 0.4]);
+    fringe(h, -1, 0.66);
+    back(h.base, [[0.03, 0.09, 0.098, -0.01], [-0.06, 0.088, 0.09, -0.03], [-0.16, 0.086, 0.07, -0.05], [-0.3, 0.09, 0.05, -0.07]], 80, 0.022, 6, 0.04, 0.025);
+    lock(h.base, [0.1, -0.02, 0.0], [0.112, -0.38, 0.09], 0.045, 0.036, 0.9, 0.008, 2);
     h.topY = 0.16;
     h.hairR = 1.14;
   },
   // 18 Clip Waves — long waves pinned with hair clips
   (h) => {
     capN(h.base, 1.03);
-    softCurtains(h, 0.66);
-    lock(h.base, [0, 0.0, -0.075], [0, -0.47, -0.085], 0.104, 0.096, 0.5, 0.011, 2.2, 14);
+    curtains(h, 0.66);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.09, 0.09, -0.03], [-0.16, 0.088, 0.07, -0.062], [-0.3, 0.1, 0.05, -0.09], [-0.46, 0.108, 0.04, -0.1]], 108, 0.026, 7, 0.06, 0.03);
     for (const s of [-1, 1]) {
-      lock(h.base, [s * 0.1, -0.02, 0.0], [s * 0.1, -0.33, 0.085], 0.034, 0.03, 0.8, 0.006, 2);
-      lock(h.base, [s * 0.098, 0.0, -0.045], [s * 0.098, -0.4, -0.06], 0.04, 0.03, 1.2, 0.0, 1);
+      lock(h.base, [s * 0.1, -0.02, 0.0], [s * 0.106, -0.33, 0.085], 0.034, 0.03, 0.8, 0.006, 2);
+      lock(h.base, [s * 0.098, 0.0, -0.045], [s * 0.104, -0.4, -0.06], 0.04, 0.03, 1.1, 0.0, 1);
     }
     for (const [x, y, z] of [[-0.9, 0.62, 0.5], [-0.84, 0.46, 0.62], [-0.96, 0.78, 0.36]]) {
       h.accent.seg(hp([x, y, z]), hp([x * 0.82, y + 0.18, z + 0.2]), 0.0085);
@@ -392,13 +506,9 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   // 19 Bob & Bangs — chin-length bob with blunt bangs
   (h) => {
     capN(h.base, 1.03);
-    E(h.base, [0, -0.3, -0.3], [1.02, 0.88, 0.76]);
-    for (const s of [-1, 1]) {
-      E(h.base, [0.99 * s, -0.22, 0.04], [0.22, 0.78, 0.66], [0, 0, 0.05 * s]);
-      E(h.base, [0.86 * s, 0.1, 0.55], [0.22, 0.62, 0.34], [0, 0, 0.08 * s]);
-      E(h.front, [0.74 * s, 0.5, 0.8], [0.28, 0.3, 0.3]);
-    }
-    E(h.front, [0, 0.64, 0.84], [0.95, 0.22, 0.3], [0.15, 0, 0]);
+    back(h.base, [[0.03, 0.095, 0.098, -0.01], [-0.05, 0.094, 0.092, -0.022], [-0.11, 0.1, 0.086, -0.03], [-0.165, 0.106, 0.082, -0.032]], 126, 0.024, 10, 0.05, 0.012);
+    bluntBangs(h);
+    for (const s of [-1, 1]) sideLock(h.base, s, 80, 18, [0.1, -0.15, 0.025], 0.028);
     h.topY = 0.15;
     h.hairR = 1.16;
   },
@@ -435,34 +545,33 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 22 Pixie — short textured crop, long side-swept bang
   (h) => {
-    E(h.dark, [0, -0.05, -0.12], [1.04, 0.82, 1.03]);
-    E(h.base, [0, 0.42, -0.08], [0.98, 0.75, 0.99]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
+    scalp(h.base, 1.075, { f: 27, t: 46, e: 56, n: 44 });
+    E(h.base, [0, 0.56, -0.08], [0.88, 0.5, 0.9]);
     E(h.base, [0, 0.82, 0.1], [0.74, 0.32, 0.72]);
     for (const [x, z] of [[-0.5, 0.0], [-0.2, 0.3], [0.3, 0.1], [0.5, -0.2], [0.0, -0.4], [-0.35, -0.35]]) SP(h.base, [x, 1.0, z], [x * 0.4, 1, z * 0.4], 0.05, 0.026);
-    E(h.front, [0.3, 0.68, 0.8], [0.8, 0.26, 0.3], [0.1, 0, -0.55]);
-    for (const s of [-1, 1]) E(h.base, [1.0 * s, 0.0, 0.1], [0.12, 0.4, 0.5]);
+    fringe(h, -1, 0.68);
     h.topY = 0.17;
     h.hairR = 1.12;
   },
   // 23 Side Braid — one thick braid over the shoulder
   (h) => {
     capN(h.base, 1.02);
-    softFringe(h, 1, 0.68);
-    E(h.base, [0, -0.3, -0.3], [0.95, 0.8, 0.72]);
+    fringe(h, 1, 0.68);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.088, 0.088, -0.028], [-0.14, 0.082, 0.066, -0.05], [-0.2, 0.075, 0.05, -0.06]], 100, 0.022, 7, 0.04, 0.012);
     braid(h.base, [-0.085, -0.03, 0.012], [-0.125, -0.46, 0.125], 0.034, 12);
     h.accent.e([-0.126, -0.47, 0.127], [0.036, 0.03, 0.036]);
-    lock(h.base, [0.1, -0.02, 0.0], [0.1, -0.3, 0.05], 0.034, 0.03, 0.8, 0.006, 2);
+    lock(h.base, [0.1, -0.02, 0.0], [0.106, -0.3, 0.05], 0.034, 0.03, 0.8, 0.006, 2);
     h.topY = 0.15;
     h.hairR = 1.12;
   },
   // 24 Sleek Long — waist-length straight, center part
   (h) => {
     capN(h.base, 1.02, 0.08);
-    softCurtains(h, 0.74);
-    lock(h.base, [0, 0.0, -0.075], [0, -0.62, -0.09], 0.103, 0.072, 0.48, 0.0, 1, 16);
+    curtains(h, 0.74);
+    back(h.base, [[0.03, 0.094, 0.098, -0.01], [-0.06, 0.09, 0.09, -0.03], [-0.16, 0.088, 0.07, -0.062], [-0.34, 0.098, 0.05, -0.09], [-0.62, 0.108, 0.04, -0.1]], 104, 0.022, 5, 0.025, 0.03);
     for (const s of [-1, 1]) {
       lock(h.base, [0.094 * s, -0.01, -0.02], [0.108 * s, -0.5, 0.01], 0.034, 0.02, 1.0, 0, 1);
-      // a front lock that falls over the shoulder and lies on top of the chest (not inside it)
       lock(h.base, [0.088 * s, -0.02, 0.04], [0.112 * s, -0.36, 0.125], 0.026, 0.016, 0.7, 0, 1);
     }
     h.topY = 0.15;
@@ -470,7 +579,7 @@ const HAIR_DEFS: ((h: HairBuild) => void)[] = [
   },
   // 25 Fauxhawk — shaved sides, a spiky ridge down the middle
   (h) => {
-    E(h.dark, [0, 0.05, -0.12], [1.045, 0.93, 1.04]);
+    scalp(h.dark, 1.03, { f: 34, t: 30, e: 12, n: -24 });
     E(h.base, [0, 0.5, -0.1], [0.4, 0.75, 0.98]);
     for (let i = 0; i < 7; i++) {
       const z = 0.75 - i * 0.28;

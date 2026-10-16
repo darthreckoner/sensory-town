@@ -23,7 +23,7 @@ import type { Outfit } from '../core/model';
 import type { OutfitSlot } from '../core/events';
 import type { Finish } from './materials';
 import { tuning } from '../tuning';
-import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
+import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, lipColor, armGeo, legGeo, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
 import { eyeTints, faceKey, frecklesGeo, freckleColor, getBrowGeo, getEyeKit, getEyeMakeup, getStickerGeo, lipGlossColor, lipHighlightGeo, resolveFace } from './characterFace';
@@ -204,7 +204,7 @@ type ArmPose = { sx: number; sz: number; ex: number; ez: number; wr: number; wf:
 const PEACE_ROLL = -1;
 const HEART_ROLL = -1;
 const HIPS = { wr: 0, wf: 0, wx: -1.05 }; // wrist angles for hands on hips
-const WING_PIVOT = new THREE.Vector3(0.05, 1.3 - TY, -0.095);
+const WING_PIVOT = new THREE.Vector3(0.05, 1.36 - TY, -0.1);
 
 export class Character {
   /** Height of the pelvis bottom above the group origin — a seated character's butt sits here. */
@@ -258,6 +258,8 @@ export class Character {
   // hands: one bone per variant under each wrist (scale 0.001 = hidden), index 0 = +x arm
   private handBones: Record<HandKind, Bone[]> = { relax: [], open: [], grip: [], peace: [], heart: [] };
   private handKind: HandKind[] = ['relax', 'relax'];
+  /** dev: force one hand variant (the body lab uses it to show every gesture) */
+  debugHand: HandKind | null = null;
   private handsBuilt = new Set<HandKind>(['relax']); // hand variants are built on first use (keeps a character light)
   private swayers: Swayer[] = [];
   private wings: { pivot: Bone; side: number }[] = [];
@@ -540,7 +542,7 @@ export class Character {
     this.group.updateWorldMatrix(true, false);
     const local =
       slot === 'hair' || slot === 'accessory' ? new THREE.Vector3(0, HEAD_Y + this.hairTopY * 0.9 * B.headScale, 0)
-        : slot === 'top' ? new THREE.Vector3(0, 1.2, 0.12)
+        : slot === 'top' ? new THREE.Vector3(0, 1.24, 0.12)
           : slot === 'bottom' ? new THREE.Vector3(0, 0.62, 0.12)
             : slot === 'shoes' ? new THREE.Vector3(0, 0.1, 0.18)
               : new THREE.Vector3(0, 1.1, 0.12);
@@ -980,7 +982,7 @@ export class Character {
             break;
           }
           case 'swing': { // sitting on the ground, kicking the legs, leaning back on the hands
-            rigY = mix(rigY, -0.76);
+            rigY = mix(rigY, -0.8);
             L.forEach((l, i) => {
               const f = Math.sin(t * 5.4 + i * Math.PI);
               l.hx = mix(l.hx, -1.5);
@@ -1103,7 +1105,7 @@ export class Character {
       L[1].hx = lerp(L[1].hx, -0.12, w);
       L[1].kx = lerp(L[1].kx, 1.95, w);
       L[1].hz = lerp(L[1].hz, 0.1, w);
-      rigY = lerp(rigY, -0.39 + Math.sin(T * 7) * 0.006, w); // hips low: the trailing knee sits just above the ground
+      rigY = lerp(rigY, -0.41 + Math.sin(T * 7) * 0.006, w); // hips low: the trailing knee sits just above the ground
       rigX = lerp(rigX, 0, w);
       leanX = lerp(leanX, -0.62, w); // lean back ~35 deg
       headX = lerp(headX, 0.5, w); // the head stays up, looking where it is going
@@ -1190,6 +1192,7 @@ export class Character {
     this.upper.rotation.set(leanX, twistY, rollZ);
     this.upper.scale.set(1 - breath * 0.004, 1 + breath * D.breath * 0.5, 1 - breath * 0.004);
     this.headRoot.rotation.set(headX, headY, headZ);
+    if (this.debugHand) hk[0] = hk[1] = this.debugHand;
     this.arms.forEach((arm, i) => {
       const a = A[i];
       arm.shoulder.rotation.set(a.sx, 0, arm.s * a.sz);
@@ -1353,14 +1356,14 @@ export class Character {
       w.scale.x = s;
     });
     this.reg(this.accHandR, this.arms[1].wrist);
-    this.reg(this.cupHolder, this.accHandR, 0.056, -0.054, 0); // the cup sits on the palm side (+x for this arm), inside the gripping fist
+    this.reg(this.cupHolder, this.accHandR, 0.026, -0.06, -0.034); // held items sit in the hollow of the gripping fist (palm side = +x for this arm; their authored z = 0.034 cancels the shift)
     this.reg(this.accWristL, this.arms[0].wrist);
     this.mounts.accessory.push(this.accBody, this.accBack, this.accHead, this.accHandR, this.accWristL);
     // back-bling mount (upper back, +Z away from the back) and the glider grip anchor
-    this.backMount.position.set(0, 1.31 - TY, -0.11);
+    this.backMount.position.set(0, 1.36 - TY, -0.108);
     this.backMount.rotation.y = Math.PI;
     upper.add(this.backMount);
-    this.gliderAnchor.position.set(0, 1.92 - TY, 0.2);
+    this.gliderAnchor.position.set(0, 1.993 - TY, 0.185); // = the midpoint of the two gripping fists (measured over a 4 s glide: fists at x +-0.184, 3 cm behind the old anchor)
     upper.add(this.gliderAnchor);
 
     // face bones: eyes and brows are mirrored copies (index 0 = +x)
@@ -1419,13 +1422,10 @@ export class Character {
     const add = (bone: THREE.Object3D, geo: THREE.BufferGeometry, color: THREE.Color | null = skin, cat: Cat = 'skin', extra?: THREE.Matrix4, key?: string, bone2?: THREE.Object3D) =>
       this.chunk('body', bone, geo, cat, color, extra, key, bone2);
     add(this.upper, torsoSkinGeo());
-    for (const leg of this.legs) {
-      add(leg.hip, limbGeo(0.08, 0.063, B.thighLen));
-      add(leg.knee, limbGeo(0.061, 0.04, B.shinLen));
-    }
+    // each arm and leg is ONE skin blended across its elbow / knee (no seam there, smooth bends)
+    for (const leg of this.legs) add(leg.hip, legGeo(), skin, 'skin', undefined, undefined, leg.knee);
     this.arms.forEach((arm, i) => {
-      add(arm.shoulder, limbGeo(0.046, 0.039, B.armUp));
-      add(arm.elbow, limbGeo(0.037, 0.028, B.armLow));
+      add(arm.shoulder, armGeo(), skin, 'skin', undefined, undefined, arm.elbow);
       for (const k of this.handsBuilt) add(this.handBones[k][i], handGeo(arm.s, k));
     });
     add(this.headBody, headGeo(fo.makeup === 1 ? 1 : fo.makeup === 3 ? 2 : 0));
@@ -1617,7 +1617,7 @@ export class Character {
 function torsoSkinGeo(): THREE.BufferGeometry {
   return cached('torsoSkin', () => {
     const last = TORSO_TABLE.length - 1;
-    const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 8 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 18);
+    const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 4 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 28);
     torsoSpace(g);
     return g;
   });

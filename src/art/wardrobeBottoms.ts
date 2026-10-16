@@ -2,8 +2,8 @@
 //   torso(): torso space (waist/hips/skirts, z flattened afterwards)
 //   leg():   thigh = hip space (hangs from y = 0), shin = knee space; omitted = bare legs (skirts)
 import * as THREE from 'three';
-import { B, bodyR, flare, shell, torus, tubeGeo, type PB } from './characterKit';
-import { HIP_TOP, PI, box, blobRing, crotch, front, legJoint, legTube, lathe, puffTube, roles, starGeo, zAt, type Rarity } from './wardrobeKit';
+import { B, flare, type PB } from './characterKit';
+import { HIP_TOP, PI, bodyR, shell, torus, tubeGeo, box, blobRing, crotch, front, legJoint, legTube, lathe, puffTube, roles, starGeo, zAt, type Rarity } from './wardrobeKit';
 
 export interface BottomDef {
   name: string;
@@ -27,7 +27,7 @@ const underShorts = (pb: PB): void => {
   shell(d, 0.82, 0.98, 0.006);
 };
 const shortsLeg = (pb: PB, thigh: boolean): void => {
-  if (thigh) legTube(pb.at('dark'), true, 0.04, -0.13, 0.088, 0.086);
+  if (thigh) legTube(pb.at('dark'), true, 0.04, -0.075, 0.088, 0.086);
 };
 const waist = (pb: PB, off: number, ring = 0.011, role: 'dark' | 'trim' = 'dark'): void => {
   pb.at(role).ring(HIP_TOP - 0.006, bodyR(HIP_TOP) + off + 0.004, ring);
@@ -130,7 +130,6 @@ export const BOTTOM_V3: BottomDef[] = [
         const R = bodyR(HIP_TOP) + 0.036;
         gold.e([Math.sin(a) * R, HIP_TOP - 0.004, Math.cos(a) * R], 0.0085);
       }
-      box(pb.at('plaid'), 0.07, 0.18, 0.012, 0.01, [0.07, 0.93, zAt(0.93, 0.07, 0.07, 0.03)], [0, -0.3, 0]);
       gold.seg([0.045, 0.99, front(0.99, 0.07, 0.03)], [0.045, 0.9, front(0.9, 0.07, 0.034)], 0.0055);
       gold.e([0.045, 0.99, front(0.99, 0.07, 0.036)], 0.012);
     },

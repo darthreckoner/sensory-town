@@ -3,9 +3,9 @@
 //   arm():   arm space; upper = shoulder at the origin, lower = elbow at the origin; arms hang along -y
 // `off` is the shirt's extra radius at the chest (accessories and bottoms sit outside it).
 import * as THREE from 'three';
-import { bodyR, shell, torus, flare, type PB } from './characterKit';
+import { flare, type PB } from './characterKit';
 import {
-  NECK, PI, blobRing, box, boltGeo, CIRCLE, decal, ELLIPSE, foreArm, fluffLathe, front, heartGeo, leafGeo, overShoulder, puffTube,
+  NECK, PI, bodyR, hoodCowl, placket, shell, torus, blobRing, box, boltGeo, CIRCLE, decal, ELLIPSE, foreArm, fluffLathe, front, heartGeo, leafGeo, overShoulder, puffTube,
   RECT, ribbedShell, ribbedTube, rnd, roles, shoulderPad, starGeo, tube, upperArm, zAt, lathe, type Rarity,
 } from './wardrobeKit';
 
@@ -26,8 +26,7 @@ export interface TopDef {
 /** Hood bunched at the back of the neck. */
 const hoodNeck = (g: THREE.BufferGeometry | null, main: ReturnType<typeof roles>['main']): void => {
   void g;
-  main.add(torus(0.082, 0.03), { p: [0, 1.418, -0.006], r: [PI / 2, 0, 0], s: [1.05, 1, 1] });
-  main.e([0, 1.4, -0.085], [0.09, 0.045, 0.055]);
+  hoodCowl(main);
 };
 const stringsDown = (white: ReturnType<typeof roles>['white'], off: number, y0 = 1.39, y1 = 1.27): void => {
   for (const s of [-1, 1]) {
@@ -74,8 +73,9 @@ export const TOP_V3: TopDef[] = [
       dark.ring(0.93, bodyR(0.93) + off + 0.003, 0.011);
       trim.ring(NECK - 0.012, bodyR(NECK - 0.012) + off + 0.003, 0.012);
       for (const s of [-1, 1]) box(trim, 0.07, 0.034, 0.012, 0.01, [0.046 * s, 1.403, zAt(1.403, off, 0.046, 0.011)], [0.5, 0, 0.5 * s]);
-      dark.seg([0, 1.36, front(1.36, off, 0.003)], [0, 0.95, front(0.95, off, 0.003)], 0.004);
-      for (const y of [1.3, 1.2, 1.1, 1.0]) gold.e([0, y, front(y, off, 0.007)], 0.0095);
+      placket(main, 0.95, 1.38, off);
+      dark.seg([0, 1.36, front(1.36, off, 0.01)], [0, 0.95, front(0.95, off, 0.01)], 0.004);
+      for (const y of [1.3, 1.2, 1.1, 1.0]) gold.e([0, y, front(y, off, 0.014)], 0.0095);
       for (const s of [-1, 1]) {
         box(trim, 0.072, 0.062, 0.012, 0.01, [0.078 * s, 1.2, zAt(1.2, off, 0.078, 0.008)]);
         box(dark, 0.072, 0.014, 0.014, 0.006, [0.078 * s, 1.226, zAt(1.226, off, 0.078, 0.01)]);
@@ -193,7 +193,8 @@ export const TOP_V3: TopDef[] = [
       white.ring(1.195, bodyR(1.195) + off + 0.003, 0.005);
       trim.ring(NECK + 0.003, bodyR(NECK) + off + 0.006, 0.013);
       trim.ring(NECK - 0.02, bodyR(NECK - 0.02) + off + 0.006, 0.011);
-      white.seg([0, 1.4, front(1.4, off, 0.006)], [0, 0.92, front(0.92, off, 0.004)], 0.0036);
+      placket(main, 0.92, 1.22, off, 11, 0.006);
+      white.seg([0, 1.4, front(1.4, off, 0.006)], [0, 0.92, front(0.92, off, 0.01)], 0.0036);
       decal(white, CIRCLE(0.03), 1.13, off, 0.07, 0.001);
       decal(pb.at('pink'), starGeo(0.022, 0.01), 1.13, off, 0.07, 0.0025);
       decal(pb.at('cyan'), RECT(0.07, 0.016), 1.1, off, -0.075, 0.001);
@@ -220,7 +221,8 @@ export const TOP_V3: TopDef[] = [
       dark.ring(0.9, bodyR(0.9) + off + 0.004, 0.016);
       trim.add(torus(0.07, 0.019), { p: [0, 1.436, -0.004], r: [PI / 2, 0, 0] });
       dark.add(torus(0.066, 0.01), { p: [0, 1.458, -0.004], r: [PI / 2, 0, 0] });
-      white.seg([0, 1.4, front(1.4, off, 0.008)], [0, 0.93, front(0.93, off, 0.006)], 0.004);
+      placket(main, 0.93, 1.16, off, 11, 0.007);
+      white.seg([0, 1.4, front(1.4, off, 0.008)], [0, 0.93, front(0.93, off, 0.012)], 0.004);
       for (const s of [-1, 1]) white.seg([0.045 * s, 1.18, zAt(1.18, off, 0.045, 0.008)], [0.1 * s, 1.14, zAt(1.14, off, 0.1, 0.008)], 0.004);
       decal(pb.at('cyan'), RECT(0.075, 0.012), 1.25, off, -0.075, 0.003);
     },
@@ -279,7 +281,8 @@ export const TOP_V3: TopDef[] = [
       decal(pb.at('cream', 'fabric'), new THREE.ShapeGeometry(v), 1.29, off, 0, 0.0012);
       trim.seg([-0.092, 1.355, front(1.355, off, 0.004) * 0.99], [0, 1.09, front(1.09, off, 0.004)], 0.0085);
       trim.seg([0.092, 1.355, front(1.355, off, 0.004) * 0.99], [0, 1.09, front(1.09, off, 0.004)], 0.0085);
-      trim.seg([0, 1.09, front(1.09, off, 0.004)], [0, 0.82, front(0.82, off, 0.004)], 0.0085);
+      placket(main, 0.82, 1.09, off, 12, 0.008);
+      trim.seg([0, 1.09, front(1.09, off, 0.004)], [0, 0.82, front(0.82, off, 0.01)], 0.0085);
       for (const y of [1.04, 0.98, 0.92, 0.86]) white.e([0, y, front(y, off, 0.011)], 0.0085);
       for (const s of [-1, 1]) box(trim, 0.07, 0.065, 0.012, 0.01, [0.085 * s, 0.9, zAt(0.9, off, 0.085, 0.007)]);
     },
@@ -348,7 +351,8 @@ export const TOP_V3: TopDef[] = [
       t.ring(0.95, bodyR(0.95) + off + 0.003, 0.021);
       t.ring(NECK + 0.004, bodyR(NECK) + off + 0.004, 0.017);
       t.ring(NECK - 0.022, bodyR(NECK - 0.022) + off + 0.004, 0.014);
-      white.seg([0, 1.4, front(1.4, off, 0.006)], [0, 0.96, front(0.96, off, 0.005)], 0.0038);
+      placket(m, 0.96, 1.4, off);
+      white.seg([0, 1.4, front(1.4, off, 0.006)], [0, 0.96, front(0.96, off, 0.012)], 0.0038);
       for (const s of [-1, 1]) pb.at('dark').seg([0.07 * s, 1.08, zAt(1.08, off, 0.07, 0.004)], [0.09 * s, 1.0, zAt(1.0, off, 0.09, 0.004)], 0.0045);
       decal(pb.at('print'), CIRCLE(0.03), 1.25, off, 0.075);
       decal(gold, starGeo(0.022, 0.009), 1.25, off, 0.075, 0.0016);
@@ -545,7 +549,8 @@ export const TOP_V3: TopDef[] = [
       shell(main, 0.9, NECK, off);
       trim.ring(0.9, bodyR(0.9) + off + 0.002, 0.014);
       trim.ring(NECK + 0.004, bodyR(NECK) + off + 0.005, 0.015);
-      led.seg([0, 1.4, front(1.4, off, 0.008)], [0, 0.92, front(0.92, off, 0.006)], 0.0032);
+      placket(main, 0.92, 1.4, off);
+      led.seg([0, 1.4, front(1.4, off, 0.012)], [0, 0.92, front(0.92, off, 0.014)], 0.0032);
       led.ring(0.905, bodyR(0.905) + off + 0.006, 0.0042);
       led.ring(1.3, bodyR(1.3) + off + 0.005, 0.0036);
       for (const s of [-1, 1]) {
