@@ -293,3 +293,12 @@ Rubric: locked in docs/V3_PLAN.md before any v3 code. Grades are integers, hones
   - **Rides:** re-built as lofted superellipse bodies with glass cabins, clearcoat paint, and lathe tyres with spoked rims.
   - **Verified:** production build 19/19 selftests at 1920×920; the 6 layout tests pass at 852×393; 0 console errors.
   - **Grades:** Audience fit holds at 8 (models are closer to the Fortnite look, but still procedural). The real-asset upgrade on the web build is next (the designer's choice).
+
+### v3.3 (2026-10-16, ~15:05 CDT): real motion (designer chose the real-asset upgrade on the web build)
+- **Assets:** CC0 Quaternius Universal Animation Library 1 + 2, free tiers. Licence pages checked and saved on 2026-10-16; the raw packs stay outside the repo (docs/ASSETS.md).
+- **Clips:** 29 non-combat clips, retargeted onto our procedural characters, so the wardrobe and face options are kept. Shipped as `public/anims/moves.glb` (265 KB).
+- **States covered:** idle with fidgets, walk / jog / sprint, jump, swim, drive / sit, slide, a mantle climb, and a new Party Dance emote with an original tune.
+- **Rollback:** `tuning.character.mocap` switches it off.
+- **Verified:** production build passes 19/19 selftests at 1920×920; the 7 layout and emote tests pass at 852×393; 0 console errors. Swim was checked in the real sea.
+- **Not checked by me:** the slide in-game (checked only in the lab).
+- **Open tuning:** the jog/sprint posture leans forward (`leanFixRun`).
