@@ -331,7 +331,7 @@ const buildSports: Builder = (m, paint) => {
   // exhaust tips
   for (const sx of [-1, 1]) cone('flat', sx * 0.52, 0.26, 2.27, 0.055, 0.05, 0.22, CHROME, 12, [Math.PI / 2, 0, 0]);
   // interior seen through the glass: dash, seats, steering wheel on the driver's hands
-  const DRV = { x: -0.42, y: 0.44, z: 0.5, scale: 0.82 };
+  const DRV = { x: -0.42, y: 0.44, z: 0.5, scale: 0.72 }; // W1 body remodel: 0.82 -> 0.72 (the 7.3-head body left 1.4 cm under the roof and the shins through the floor pan)
   rbox('flat', 0, 0.78, -0.55, 1.6, 0.14, 0.4, 0.05, '#1b1a22');
   for (const sx of [-1, 1]) {
     rbox('flat', sx * 0.42, 0.82, 0.86, 0.46, 0.5, 0.13, 0.06, SEAT);
@@ -409,7 +409,7 @@ const buildPickup: Builder = (m, paint) => {
     rbox('flat', sx * (hw(0) + 0.006), 0.83, 0.0, 0.01, 0.035, 4.6, 0.003, '#ffd23f');
   }
   // interior seen through the glass
-  const DRV = { x: -0.5, y: 1.08, z: -0.1, scale: 0.82 };
+  const DRV = { x: -0.5, y: 1.08, z: -0.1, scale: 0.76 }; // W1 body remodel: 0.82 -> 0.76 (head was 2 cm under the cab roof)
   rbox('flat', 0, 1.2, -0.82, 1.5, 0.12, 0.34, 0.04, '#1b1a22', undefined, 1, true);
   for (const sx of [-1, 1]) {
     rbox('flat', sx * 0.5, 1.4, 0.24, 0.5, 0.52, 0.13, 0.06, SEAT);
