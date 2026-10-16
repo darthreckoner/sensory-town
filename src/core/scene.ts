@@ -163,7 +163,7 @@ class SceneManager {
   resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const cap = this.current?.pixelRatioCap ?? tuning.app.maxPixelRatio;
+    const cap = Math.min(this.current?.pixelRatioCap ?? tuning.app.maxPixelRatio, this.qualityCap);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     this.renderer.setSize(w, h, false);
     this.current?.resize(w, h);
@@ -175,10 +175,28 @@ class SceneManager {
     this.fpsFrames++;
     if (this.fpsAcc > 0.5) {
       this.fps = this.fpsFrames / this.fpsAcc;
+      this.adaptQuality(this.fpsAcc);
       this.fpsAcc = 0;
       this.fpsFrames = 0;
     }
     this.tick(dt, this.clock.elapsedTime);
+  }
+
+  /** Adaptive resolution: a slow device steps its pixel ratio down (never back up this session). */
+  qualityCap = 99;
+  private slowFor = 0;
+  private adaptQuality(window: number): void {
+    const a = tuning.app;
+    if (this.switching || document.hidden || performance.now() - this.lastRaf > 250) return;
+    if (this.fps < a.adaptiveFpsFloor) this.slowFor += window;
+    else this.slowFor = 0;
+    if (this.slowFor < a.adaptiveSeconds) return;
+    this.slowFor = 0;
+    const current = this.renderer.getPixelRatio();
+    if (current <= a.adaptiveMinRatio + 0.01) return;
+    this.qualityCap = Math.max(a.adaptiveMinRatio, current - a.adaptiveStep);
+    console.info(`[quality] fps ${this.fps.toFixed(0)} → pixel ratio ${this.qualityCap}`);
+    this.resize();
   }
 
   private simTime = 0;

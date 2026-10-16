@@ -30,10 +30,10 @@ export interface PieceDef {
   paint: boolean;    // can be dragged-out repeatedly ("painted") over many cells
 }
 export const PIECE_CATALOG: PieceDef[] = [
-  { type: 'floor', name: 'Floor', icon: '🟫', cat: 'build', color: '#f2e6da', paint: true },
-  { type: 'wall', name: 'Wall', icon: '🧱', cat: 'build', color: '#ffe4ec', paint: true },
-  { type: 'wallWindow', name: 'Window', icon: '🪟', cat: 'build', color: '#ffe4ec', paint: true },
-  { type: 'wallDoor', name: 'Door', icon: '🚪', cat: 'build', color: '#ffe4ec', paint: true },
+  { type: 'floor', name: 'Floor', icon: '🟫', cat: 'build', color: '#f0d2b4', paint: true },
+  { type: 'wall', name: 'Wall', icon: '🧱', cat: 'build', color: '#ffc4d6', paint: true },
+  { type: 'wallWindow', name: 'Window', icon: '🪟', cat: 'build', color: '#ffc4d6', paint: true },
+  { type: 'wallDoor', name: 'Door', icon: '🚪', cat: 'build', color: '#ffc4d6', paint: true },
   { type: 'roofGable', name: 'Roof', icon: '🔺', cat: 'build', color: '#ff8fb1', paint: true },
   { type: 'roofFlat', name: 'Flat', icon: '🟪', cat: 'build', color: '#9d8cff', paint: true },
   { type: 'bed', name: 'Bed', icon: '🛏️', cat: 'furniture', color: '#7fd8ff', paint: false },
@@ -102,7 +102,7 @@ function fillPiece(g: THREE.Group, p: PlacedPiece, ctx: HouseCtx): void {
   const y = creationBaseY(ctx, p.x, p.z);
   const c = p.creationId ? store.creationById(p.creationId) : undefined;
   if (c) {
-    const o = buildCreationMesh(c, 0.42);
+    const o = buildCreationMesh(c, 0.62);
     o.position.y = y;
     g.add(o);
   } else {
@@ -132,7 +132,7 @@ function bakeHouseInto(baker: Baker, house: House, ox: number, oz: number, extra
       const y = creationBaseY(ctx, p.x, p.z);
       const c = p.creationId ? store.creationById(p.creationId) : undefined;
       if (c) {
-        const o = buildCreationMesh(c, 0.42);
+        const o = buildCreationMesh(c, 0.62);
         o.position.set(cx, y, cz);
         o.rotation.y = pieceRotY(p);
         extras.push(o);

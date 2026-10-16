@@ -187,7 +187,7 @@ export class SquishyBody {
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > ringR * ringR * 9) continue;
         const g = Math.exp(-d2 * inv2R2);
-        const ring = (Math.exp(-d2 * invRing) - g) * 0.22; // volume bulge around the dent
+        const ring = (Math.exp(-d2 * invRing) - g) * t.bulgeRing; // volume bulge around the dent
         const push = c.depth * g;
         tx += c.n.x * push - rn[ix] * ring * c.depth;
         ty += c.n.y * push - rn[ix + 1] * ring * c.depth;

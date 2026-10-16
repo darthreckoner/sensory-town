@@ -200,7 +200,7 @@ class AudioEngine {
     this.tone(o, 'sine', 880 * p, 520 * p, t, 0.003, 0.12, 0.5);
   }
   private s_whoosh(t: number, p: number, v: number, pan: number) {
-    const o = this.out(0.35 * v, pan, 0.6);
+    const o = this.out(0.7 * v, pan, 0.6);
     this.noiseBurst(o, t, 0.12, 0.25, 0.5, 'bandpass', 300 * p, 1400 * p, 0.9);
   }
   private s_pop(t: number, p: number, v: number, pan: number) {
@@ -228,7 +228,7 @@ class AudioEngine {
     this.tone(o, 'sine', 320 * p, 180 * p, t, 0.002, 0.04, 0.2);
   }
   private s_slimeStretch(t: number, p: number, v: number, pan: number) {
-    const o = this.out(0.5 * v, pan, 0.3);
+    const o = this.out(1.0 * v, pan, 0.3);
     this.noiseBurst(o, t, 0.04, 0.22, 0.3, 'bandpass', 700 * p, 1500 * p, 3.5);
     for (let i = 0; i < 3; i++) this.wetClick(o, t + rand(0.01, 0.2), p * rand(0.7, 1.1), 0.2);
   }
@@ -251,7 +251,7 @@ class AudioEngine {
     this.noiseBurst(o, t, 0.001, 0.05, 0.25, 'bandpass', 1400 * p, 900 * p, 1.5);
   }
   private s_flake(t: number, p: number, v: number, pan: number) {
-    const o = this.out(0.5 * v, pan, 0.3);
+    const o = this.out(1.1 * v, pan, 0.3);
     this.noiseBurst(o, t, 0.0005, 0.02, 0.5, 'bandpass', 4200 * p, 3000 * p, 4);
     this.tone(o, 'sine', 3600 * p, 3300 * p, t, 0.0005, 0.03, 0.12);
   }
@@ -290,7 +290,7 @@ class AudioEngine {
     this.tone(o, 'sine', 400 * p, 160 * p, t, 0.002, 0.1, 0.3);
   }
   private s_rotate(t: number, p: number, v: number, pan: number) {
-    const o = this.out(0.5 * v, pan, 0.3);
+    const o = this.out(1.1 * v, pan, 0.3);
     this.noiseBurst(o, t, 0.0008, 0.02, 0.4, 'bandpass', 2400 * p, 2400 * p, 5);
     this.noiseBurst(o, t + 0.05, 0.0008, 0.02, 0.35, 'bandpass', 2900 * p, 2900 * p, 5);
   }
@@ -317,7 +317,7 @@ class AudioEngine {
     }
   }
   private s_swish(t: number, p: number, v: number, pan: number) {
-    const o = this.out(0.5 * v, pan, 0.5);
+    const o = this.out(1.0 * v, pan, 0.5);
     this.noiseBurst(o, t, 0.06, 0.18, 0.45, 'bandpass', 900 * p, 3200 * p, 1.3);
   }
   private s_horn(t: number, p: number, v: number, pan: number) {

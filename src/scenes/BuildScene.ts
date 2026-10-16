@@ -51,8 +51,8 @@ type Gesture = 'none' | 'tap' | 'orbit' | 'pan' | 'multi' | 'paint';
 const colorKey = (t: PieceType): string => (t === 'wall' || t === 'wallWindow' || t === 'wallDoor' ? 'wall' : t);
 
 const KIND_ICON: Record<string, string> = { squishy: '🧸', slime: '🫧', wax: '🕯️' };
-const STARTER_WALLS = ['#ffe4ec', '#e4f4ff', '#fff3d6', '#e9ffe8'];
-const STARTER_ROOFS = ['#ff8fb1', '#7fd8ff', '#ffb38a', '#5fd3a5'];
+const STARTER_WALLS = ['#ffc4d6', '#bfe3ff', '#ffe2a8', '#c6f2c9', '#e0d0ff'];
+const STARTER_ROOFS = ['#ff5d8f', '#5aa9ff', '#ff9f6e', '#3fbf8a', '#8f7cff'];
 
 export class BuildScene extends GameScene {
   readonly name = 'build' as const;

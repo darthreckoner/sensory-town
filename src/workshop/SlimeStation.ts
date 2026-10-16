@@ -73,7 +73,7 @@ export class SlimeStation implements Station {
   private color = tuning.art.palette[0];
   private colorCur = new THREE.Color();
   private colorTarget = new THREE.Color();
-  private glitterOn = false;
+  private glitterOn = true; // starts sparkly — glitter catching the light is half the fun
   private glitterCur = 0;
   private addinBtns = new Map<AddinId, HTMLElement>();
 
@@ -379,7 +379,7 @@ export class SlimeStation implements Station {
     this.holds.clear();
     this.sim.reset();
     this.addins.clear();
-    this.glitterOn = false;
+    this.glitterOn = true;
     this.markAddins();
     // a little pop
     this.sim.kick(-0.3, 2.2);

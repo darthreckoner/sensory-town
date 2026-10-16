@@ -86,6 +86,18 @@ export class Minimap {
     g.textBaseline = 'middle';
     g.font = `${Math.round(8.5 * k)}px ${EMOJI_FONT}`;
     for (const l of LANDMARKS) g.fillText(l.icon, c + l.x * k, c + l.z * k);
+    // my houses: a little 🏠 badge so each kid can find home
+    g.font = `${Math.round(8 * k)}px ${EMOJI_FONT}`;
+    for (const h of store.data.town.houses) {
+      if (h.ownerId !== store.profile.id) continue;
+      const p = PLOTS[h.plot];
+      if (!p) continue;
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.arc(c + p.center.x * k, c + p.center.z * k, 5.2 * k, 0, Math.PI * 2);
+      g.fill();
+      g.fillText('🏠', c + p.center.x * k, c + p.center.z * k + k * 0.4);
+    }
     // entry pads
     for (const [p, icon] of [[WORKSHOP.pad, '🧪'], [BUILD_YARD.pad, '🔨']] as const) {
       g.fillStyle = '#ffffff';

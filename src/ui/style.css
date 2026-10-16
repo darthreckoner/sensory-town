@@ -419,3 +419,12 @@ input[type=range].slider::-moz-range-thumb { width: 36px; height: 36px; border-r
   .slime-sw { grid-template-columns: repeat(4, 46px); gap: 8px; }
   .slime-sw .swatch { width: 46px; height: 46px; border-width: 3px; }
 }
+
+/* ── Portrait iPad / narrow screens ────────────────────────────────── */
+@media (max-aspect-ratio: 1/1) {
+  .scene-ui > .tabs.tc .tab > span:not(.ico) { display: none; }
+  .scene-ui > .tabs.tc .tab { min-width: 72px; padding: 0 14px; }
+  .wax-actions { bottom: calc(110px + var(--safe-b)) !important; }
+  .wax-hint { top: calc(96px + var(--safe-t)); font-size: 17px; white-space: normal; text-align: center; max-width: 80vw; }
+  .lc { top: auto; bottom: calc(110px + var(--safe-b)); transform: none; }
+}

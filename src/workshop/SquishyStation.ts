@@ -106,8 +106,16 @@ export class SquishyStation implements Station {
   }
 
   private idleT = 0;
+  // jelly jiggle: a damped spring on the whole squishy's squash/stretch
+  private wobble = 0;
+  private wobbleV = 0;
 
   update(dt: number, _t: number): void {
+    const sq = tuning.squishy;
+    this.wobbleV += (-sq.jiggleStiffness * this.wobble - sq.jiggleDamping * this.wobbleV) * dt;
+    this.wobble += this.wobbleV * dt;
+    const w = this.wobble;
+    this.holder.scale.set(1 - w * 0.045, 1 + w * 0.09, 1 - w * 0.045);
     // pressing squashes the whole squishy a little (soft body), easing back slowly
     const target = Math.min(0.6, this.last.size * tuning.squishy.squashPerFinger);
     const k = 1 - Math.exp(-(target > this.body.squeeze ? 6 : tuning.squishy.recoverySpeed * 1.5) * dt);
@@ -129,6 +137,7 @@ export class SquishyStation implements Station {
     const localDir = inward.applyQuaternion(this.holder.quaternion.clone().invert());
     this.body.press(p.id, h.local, localDir, p.pressure);
     this.last.set(p.id, { x: p.x, y: p.y, t: performance.now() });
+    this.wobbleV -= tuning.squishy.jigglePress;
     bus.emit('squishPress', { pos: v3(h.world), strength: p.pressure });
   }
 
@@ -153,6 +162,7 @@ export class SquishyStation implements Station {
     if (!this.last.has(p.id)) return;
     this.last.delete(p.id);
     const depth = this.body.release(p.id);
+    this.wobbleV += tuning.squishy.jiggleRelease * (0.4 + Math.min(1, depth / tuning.squishy.maxDent));
     bus.emit('squishRelease', { pos: v3(this.holder.position), depth });
   }
 

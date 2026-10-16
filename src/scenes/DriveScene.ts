@@ -127,15 +127,17 @@ export class DriveScene extends GameScene {
     // Spawn: at SPAWN, or on the pad we just came out of (facing away from it).
     let x = SPAWN.x, z = SPAWN.z, heading = SPAWN.heading;
     this.armed = { workshop: true, build: true };
+    // Coming back out: park on the cross street just past the driveway, facing into town,
+    // so the chase camera starts on open road (not inside the building behind the pad).
     if (params?.from === 'workshop') {
-      x = WORKSHOP.pad.x;
-      z = WORKSHOP.pad.z;
-      heading = 0; // north, away from the door
+      x = WORKSHOP.pad.x - 3;
+      z = 1.5;
+      heading = -Math.PI / 2; // west, towards the town centre
       this.armed.workshop = false;
     } else if (params?.from === 'build') {
-      x = BUILD_YARD.pad.x;
-      z = BUILD_YARD.pad.z;
-      heading = Math.PI; // south, away from the yard
+      x = BUILD_YARD.pad.x + 3;
+      z = -1.5;
+      heading = Math.PI / 2; // east, along the cross street
       this.armed.build = false;
     }
     this.phys.reset(x, z, heading);

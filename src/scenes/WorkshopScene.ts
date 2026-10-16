@@ -196,7 +196,8 @@ export class WorkshopScene extends GameScene {
   private updateCamera(dt: number, snap = false): void {
     const v = this.active?.view?.() ?? { lookY: 0.62, dist: 6.3 };
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-    const fit = aspect < 1.2 ? 1.33 : aspect < 1.45 ? 1.1 : 1;
+    // keep the same table width in view on narrower screens (portrait iPad = ~0.7)
+    const fit = Math.pow(Math.max(1, 1.44 / aspect), 0.9);
     const k = snap ? 1 : 1 - Math.exp(-4 * dt);
     this.camLookY += (v.lookY - this.camLookY) * k;
     this.camDist += (v.dist * fit - this.camDist) * k;

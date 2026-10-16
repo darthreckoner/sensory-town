@@ -60,7 +60,9 @@ export function pickTownFile(): Promise<SaveData | null> {
 
 export function applyImportedTown(data: SaveData): void {
   const activeName = store.profile?.name;
-  const next = structuredClone(data);
+  const next = structuredClone(data) as SaveData & { app?: string; exportedAt?: string };
+  delete next.app;
+  delete next.exportedAt;
   next.version = Math.min(next.version ?? 1, SAVE_VERSION);
   // keep this device's settings
   next.settings = store.data.settings;

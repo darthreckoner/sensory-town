@@ -12,6 +12,10 @@ export const tuning = {
     defaultProfileNames: ['Star', 'Moon'],
     maxPixelRatio: 2,          // DPR cap (iPad is 2; lower = faster)
     townPixelRatio: 1.5,       // DPR cap used in big town scenes
+    adaptiveFpsFloor: 50,      // if fps stays below this, resolution steps down
+    adaptiveSeconds: 2.5,      // ...for this long
+    adaptiveStep: 0.25,        // DPR reduction per step
+    adaptiveMinRatio: 1,       // never below this DPR
     sceneFadeMs: 260,
     autosaveDebounceMs: 400,
     minTouchTarget: 56,        // px — every button is at least this
@@ -155,10 +159,10 @@ export const tuning = {
     nameTagDistance: 45,       // owner tags fade in inside this distance
     // world
     cloudSpeed: 0.0035,        // rad / s around the town
-    sceneryTrees: 64,
-    sceneryPines: 52,
-    sceneryBushes: 74,
-    sceneryFlowerPatches: 56,
+    sceneryTrees: 50,
+    sceneryPines: 40,
+    sceneryBushes: 56,
+    sceneryFlowerPatches: 44,
     scenerySeed: 20261016,
   },
 
@@ -210,9 +214,14 @@ export const tuning = {
     pressDepth: 0.4,           // dent depth on a static press (no drag)
     holdDeepenRate: 0.35,      // extra depth per second while holding
     popThreshold: 0.02,        // max remaining dent at which the "pop" fires
-    meshDetail: 30,            // icosphere edge subdivisions (30 ≈ 9.6k verts)
+    meshDetail: 26,            // icosphere edge subdivisions (26 ≈ 7.3k verts)
     bodyRadius: 1.25,
     squashPerFinger: 0.22,     // whole-body squash added per pressing finger (squishy station)
+    jiggleStiffness: 140,      // jelly wobble spring (higher = faster wobble)
+    jiggleDamping: 7,          // how quickly the wobble dies out
+    jigglePress: 2.2,          // wobble kick when a finger lands
+    jiggleRelease: 3.2,        // wobble kick when a finger lifts
+    bulgeRing: 0.34,           // how much the surface puffs up around a dent (volume)
   },
 
   // ── Workshop: slime ───────────────────────────────────────────────────────

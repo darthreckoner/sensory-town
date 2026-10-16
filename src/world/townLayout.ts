@@ -80,7 +80,7 @@ export const JOB_SPOTS: Spot[] = [
   { id: 'homes', name: 'Home Street', icon: '🏡', x: 0, z: -34 },
 ];
 
-export const SPAWN = { x: -23, z: -4, heading: Math.PI / 2 }; // heading 0 = facing -z (north); π/2 = east
+export const SPAWN = { x: -18, z: -1.5, heading: Math.PI / 2 }; // heading 0 = facing -z (north); π/2 = east
 
 /** Deterministic pseudo-random for scenery placement. */
 export function seeded(seed: number): () => number {

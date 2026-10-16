@@ -15,16 +15,25 @@ export function buildCreationMesh(c: Creation, size = 0.5): THREE.Object3D {
     blob.scale.set(1.15, 0.5, 1.15);
     blob.position.y = 0.24;
     g.add(blob);
-    // add-in sprinkles
+    // add-ins ride on the dome surface
+    const onDome = (o: THREE.Object3D) => {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 0.42;
+      o.position.set(Math.cos(a) * r, 0.24 + 0.24 * Math.sqrt(Math.max(0, 1 - (r / 0.56) ** 2)), Math.sin(a) * r);
+      o.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      g.add(o);
+    };
     if (c.addins?.includes('sprinkles')) {
       const cols = ['#ff5d8f', '#ffd166', '#5fd3a5', '#7fd8ff', '#ffffff'];
-      for (let i = 0; i < 14; i++) {
-        const s = mesh(new THREE.CapsuleGeometry(0.018, 0.06, 3, 6), toyMat(cols[i % cols.length]), false, false);
-        const a = Math.random() * Math.PI * 2, r = Math.random() * 0.4;
-        s.position.set(Math.cos(a) * r, 0.24 + 0.24 * Math.sqrt(1 - (r / 0.55) ** 2), Math.sin(a) * r);
-        s.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-        g.add(s);
-      }
+      for (let i = 0; i < 14; i++) onDome(mesh(new THREE.CapsuleGeometry(0.018, 0.06, 3, 6), toyMat(cols[i % cols.length]), false, false));
+    }
+    if (c.addins?.includes('stars')) {
+      for (let i = 0; i < 8; i++) onDome(mesh(new THREE.OctahedronGeometry(0.045), toyMat(i % 2 ? '#ffd166' : '#ffffff'), false, false));
+    }
+    if (c.addins?.includes('pearls')) {
+      for (let i = 0; i < 8; i++) onDome(mesh(new THREE.SphereGeometry(0.035, 10, 8), toyMat('#fff8f0', 'gloss'), false, false));
+    }
+    if ((c.glitter ?? 0) > 0) {
+      for (let i = 0; i < 18; i++) onDome(mesh(new THREE.SphereGeometry(0.012, 6, 4), toyMat('#ffffff', 'emissive'), false, false));
     }
     // a little jar for slime
     const jar = mesh(new THREE.CylinderGeometry(0.62, 0.58, 0.32, 32, 1, true), toyMat('#ffffff', 'glass'), false, false);
