@@ -307,6 +307,30 @@ const TUNES: Record<string, Tune> = {
       { inst: 'softkick', vol: 0.7, bars: ['x.....x.....'] },
     ],
   },
+  // Party Dance: a bright disco-pop groove (the Dance_Loop clip is exactly two beats long: it lands on every kick)
+  party: {
+    bpm: 120, swing: 0.04, steps: 16, loop: true, reverb: 0.18,
+    lines: [
+      { inst: 'kick', bars: ['x...x...x...x...', 'x...x...x...x...', 'x...x...x...x...', 'x...x...x...x.xx'] },
+      { inst: 'clap', bars: ['....X.......X...', '....X.......X...', '....X.......X...', '....X.....x.X.x.'] },
+      { inst: 'hat', vol: 0.7, bars: ['x.x.x.x.x.x.x.x.'] },
+      { inst: 'ohat', bars: ['..x...x...x...x.'] },
+      { inst: 'tribass', vol: 0.95, len: 1, bars: [
+        'a2 . a3 . a2 . a3 . | a2 . a3 . c3 . e3 .',
+        'f2 . f3 . f2 . f3 . | f2 . f3 . a2 . c3 .',
+        'c3 . c4 . c3 . c4 . | c3 . c4 . e3 . g3 .',
+        'g2 . g3 . g2 . g3 . | g2 . g3 . b2 . d3 .',
+      ] },
+      { inst: 'stab', vol: 0.7, len: 1, chords: ['a3+c4+e4', 'f3+a3+c4', 'c4+e4+g4', 'g3+b3+d4'], bars: ['..x...x...x..x..'] },
+      { inst: 'pluck', vol: 0.8, len: 1, bars: [
+        'e5 . . g5 . a5 . . | g5 . e5 . . . . .',
+        'c5 . . f5 . a5 . . | g5 . f5 . . . . .',
+        'e5 . . g5 . c6 . . | b5 . g5 . . . . .',
+        'd5 . . g5 . b5 . . | a5 . g5 . d5 . . .',
+      ] },
+      { inst: 'bell', vol: 0.55, len: 2, bars: ['a5 . . . . . . . | . . . . e6 . . .', 'f5 . . . . . . . | . . . . c6 . . .', 'g5 . . . . . . . | . . . . e6 . . .', 'g5 . . . . . . . | . . . . d6 . . .'] },
+    ],
+  },
 };
 
 const cache = new Map<string, ParsedTune>();

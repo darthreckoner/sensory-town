@@ -6,6 +6,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Character } from '../art/character';
 import type { Outfit } from '../core/model';
 import { tuning } from '../tuning';
+import { loadMocap } from '../art/mocap';
+
+if (new URLSearchParams(location.search).get('mocap') === '0') tuning.character.mocap = false;
+if (tuning.character.mocap) await loadMocap(); // the lab renders statically: wait for the clips
 
 const Q = new URLSearchParams(location.search);
 const W = +(Q.get('w') ?? 1280), H = +(Q.get('h') ?? 613);
@@ -56,32 +60,50 @@ for (let i = 0; i < n; i++) {
     shoes: { style: +(Q.get('shoes') ?? 0), color: Q.get('sc') ?? '#f6f6f4' },
     accessory: { style: +(Q.get('acc') ?? 0), color: Q.get('ac') ?? '#ff2e88' },
   };
-  const c = new Character(o, { seated: poseOf(i) === 'sit' });
+  const c = new Character(o, { seated: poseOf(i) === 'sit' || poseOf(i) === 'drive' });
+  if (poseOf(i) === 'sit' || poseOf(i) === 'drive') c.seatRole = poseOf(i) as 'sit' | 'drive';
   // the pivot (rotated per view) sits at the look-at point: hx/hz pick a body part (a hand: hx=0.2) to orbit around
-  c.group.position.set((poseList ? 0 : (i - (n - 1) / 2) * 0.9) - +(Q.get('hx') ?? 0), 0, -+(Q.get('hz') ?? 0));
+  c.group.position.set(-+(Q.get('hx') ?? 0), 0, -+(Q.get('hz') ?? 0));
   const pv = new THREE.Group();
+  pv.position.x = Q.has('ref') ? -0.55 : poseList ? 0 : (i - (n - 1) / 2) * 0.9; // each model turns about its own axis
   pv.add(c.group);
   scene.add(pv);
   pivots.push(pv);
   chars.push(c);
 }
-const speedOf = (i: number) => (poseOf(i) === 'walk' ? 0.45 : poseOf(i) === 'run' ? 1 : 0);
+// ref=Superhero_Female_FullBody.gltf: a dev-only comparison model (CC0 Universal Base Characters, free tier) served from the local
+// receiver (scratchpad); it is never bundled. It stands next to ours, rest pose, same lights.
+if (Q.has('ref')) {
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+  const g = await new GLTFLoader().loadAsync(`http://localhost:5195/raw/${Q.get('ref')}`);
+  const pv = new THREE.Group();
+  pv.position.x = 0.55;
+  pv.add(g.scene);
+  g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true; });
+  scene.add(pv);
+  pivots.push(pv);
+}
+const speedOf = (i: number) => (poseOf(i) === 'walk' ? 0.55 : poseOf(i) === 'run' || poseOf(i) === 'sprint' ? 1 : poseOf(i) === 'swim' ? 0.6 : poseOf(i) === 'jump' ? 0.4 : 0);
 let t = 0;
+let climbed = false;
 function step(dt: number): void {
   t += dt;
+  if (!climbed && t > 0.05) { climbed = true; chars.forEach((c, i) => { if (poseOf(i) === 'climb') c.playMantle(+(Q.get('climbT') ?? 0.7)); }); }
   chars.forEach((c, i) => {
-    c.setMove(speedOf(i), true);
+    c.setMove(speedOf(i), poseOf(i) !== 'jump');
     c.update(dt, t);
   });
 }
 chars.forEach((c, i) => {
   const ps = poseOf(i);
+  if (ps === 'sprint') c.setSprint(true);
   if (ps === 'wave') c.wave();
-  else if (ps === 'swim') c.setSwim(1);
+  else if (ps === 'swim' || ps === 'swimidle') c.setSwim(1);
+  else if (ps.startsWith('clip:')) c.debugClip = ps.slice(5);
   else if (ps === 'glide') c.setGliding(true);
   else if (ps === 'skydive') c.setSkydive(true);
   else if (ps === 'slide') c.setSlide(true);
-  else if (!['idle', 'walk', 'run', 'sit'].includes(ps)) c.playEmote(ps);
+  else if (!['idle', 'walk', 'run', 'sprint', 'sit', 'drive', 'jump', 'climb'].includes(ps)) c.playEmote(ps);
 });
 const warm = +(Q.get('warm') ?? 1.4);
 for (let i = 0; i < warm * 60; i++) step(1 / 60);
@@ -92,7 +114,7 @@ const cy = (yr[0] + yr[1]) / 2;
 const hh = yr[1] - yr[0] + 0.1;
 const tanV = Math.tan((camera.fov * Math.PI) / 360);
 camera.aspect = pw / H;
-const dist = Math.max(hh / 2 / tanV, ((poseList ? 1 : n) * (Q.has('wm') ? +Q.get('wm')! : zoom === 'head' ? 0.34 : zoom === 'upper' ? 0.6 : 0.8) + 0.05) / 2 / (tanV * camera.aspect)) + 0.2;
+const dist = Math.max(hh / 2 / tanV, ((poseList ? 1 : n + (Q.has('ref') ? 1 : 0)) * (Q.has('wm') ? +Q.get('wm')! : zoom === 'head' ? 0.34 : zoom === 'upper' ? 0.6 : 0.8) + 0.05) / 2 / (tanV * camera.aspect)) + 0.2;
 camera.position.set(0, cy, dist);
 camera.lookAt(0, cy, 0);
 camera.updateProjectionMatrix();

@@ -26,6 +26,9 @@ import { tuning } from '../tuning';
 import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, lipColor, armGeo, legGeo, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
+import { MB, MocapPlayer, loadMocap, mocapReady, type MocapState } from './mocap';
+
+if (tuning.character.mocap && typeof window !== 'undefined') void loadMocap(); // the clips load in the background; characters stay procedural until they are ready
 import { eyeTints, faceKey, frecklesGeo, freckleColor, getBrowGeo, getEyeKit, getEyeMakeup, getStickerGeo, lipGlossColor, lipHighlightGeo, resolveFace } from './characterFace';
 import { clampStyle, getAccessory, getBottom, getShoes, getTop, OUTFIT_CATALOG, type CatalogSlot } from './characterParts';
 
@@ -54,6 +57,7 @@ export const EMOTES: EmoteInfo[] = [
   { id: 'sway', name: 'Glow Stick Sway', loop: true },
   { id: 'giggle', name: 'Giggle Fit', loop: true },
   { id: 'swing', name: 'Sit & Swing', loop: true },
+  { id: 'party', name: 'Party Dance', loop: true }, // real motion: the Dance_Loop clip (needs mocap; without it the bounce stands in)
 ];
 const EMOTE_SECONDS: Record<string, number> = { cheer: 1.6, tada: 2.2 };
 export type PoseKind = 'hips' | 'peace' | 'cross' | 'strut' | 'jump' | 'twirl';
@@ -302,6 +306,23 @@ export class Character {
   private hopAnim: { t: number; dur: number } | null = null;
   private lastPose: PoseKind | null = null;
   private gait = new Gait();
+  // v3.3 real motion (art/mocap.ts): the clips own the base pose while `mocapW` > 0; every procedural overlay blends over them
+  private mocap: MocapPlayer | null = null;
+  private mocapW = 0;
+  private mocapQ = new THREE.Quaternion();
+  private mocapQ2 = new THREE.Quaternion();
+  private mocapV = new THREE.Vector3();
+  private mocapV2 = new THREE.Vector3();
+  private steerSeenAt = -99;
+  /** dev / tests: force the seated clip ('drive' = hands on a wheel, 'sit' = any seat); null = a seated character drives when it is steered */
+  seatRole: 'drive' | 'sit' | null = null;
+  /** scenes set this for characters that are far away or mostly off-screen: the clips are sampled at a third of the frame rate */
+  lowRate = false;
+  private mocapAcc = 0;
+  private mocapTick = 0;
+  /** dev: hold one named mocap clip as the whole pose (the body lab uses it) */
+  debugClip: string | null = null;
+  private mocapSt: MocapState = { loco: false, speed: 0, sprint: 0, air: false, seat: null, slide: false, swim: 0, swimming: false, dance: false };
   private steer = 0;
   private steerSmooth = 0;
   private prevYaw = 0;
@@ -521,7 +542,12 @@ export class Character {
     }
   }
   /** Seated drivers: -1 (left) … 1 (right) — turns the head and the hands on the wheel. */
+  /** Mantle: climb a ledge (the movement agent calls this when a mantle starts; `seconds` = how long it takes). */
+  playMantle(seconds = 0.7): void {
+    this.mocap?.playClimb(seconds);
+  }
   setSteer(v: number): void {
+    this.steerSeenAt = this.clock;
     this.steer = clamp(v, -1, 1);
   }
 
@@ -557,6 +583,10 @@ export class Character {
 
   update(dt: number, _t?: number): void {
     const D = tuning.dressup;
+    const MC = tuning.character;
+    let mocapP: MocapPlayer | null = null;
+    if (MC.mocap && mocapReady()) mocapP = this.mocap ??= new MocapPlayer();
+    const pm = 1 - this.mocapW; // how much of the procedural base (gait, idle sway) still shows
     this.clock += dt;
     const T = this.clock + this.phase;
     const breath = Math.sin(T * 2.2);
@@ -582,12 +612,13 @@ export class Character {
     };
     const L = this.legs.map(() => ({ hx: 0, hz: 0.022, kx: 0 }));
     let rigX = 0;
-    let rigY = 0, rigYaw = 0, rigRollZ = Math.sin(T * 0.9) * D.idleSway, rigSY = 1, rigSXZ = 1;
+    let rigY = 0, rigYaw = 0, rigRollZ = Math.sin(T * 0.9) * D.idleSway * pm, rigSY = 1, rigSXZ = 1;
     let leanX = 0, twistY = 0, rollZ = 0;
     let headX = Math.sin(T * 0.8) * 0.025, headY = Math.sin(T * 0.55) * 0.1, headZ = Math.sin(T * 0.43) * 0.03;
     // expression: eyes narrowing (squint), winks, smile + smirk, raised brows, open mouth
     let squint = 0, smile = 0.42, smirk = 0, open = 0, browUp = 0;
     const wink = [0, 0];
+    let procPose = 0, procWave = 0, procHop = 0; // procedural overlays that take the limbs back from the clips
 
     if (this.seated) {
       const st = this.steerSmooth;
@@ -624,7 +655,7 @@ export class Character {
     // ── locomotion (walk / run / jump / land) ──
     const G = this.gait.update(dt, !this.seated);
     if (!this.seated) {
-      const gw = G.w;
+      const gw = G.w * pm; // the clips run the legs and arms while the mocap weight is up
       L.forEach((l, i) => {
         l.hx = lerp(l.hx, G.hip[i], gw);
         l.kx = lerp(l.kx, G.knee[i], gw);
@@ -652,7 +683,7 @@ export class Character {
       A.forEach((a) => blend(a, -0.15, 1.0, -0.25, 0.2, G.air));
       // jump anticipation + takeoff extension + landing flex
       const squat = Math.max(G.crouch, G.land);
-      rigSY *= 1 - squat * 0.04;
+      rigSY *= 1 - squat * 0.04 * pm;
       L.forEach((l) => {
         l.hx = lerp(l.hx, -0.7, squat);
         l.kx = lerp(l.kx, 1.25, squat);
@@ -669,7 +700,7 @@ export class Character {
     this.skyW += (this.skyTarget - this.skyW) * (1 - Math.exp(-dt / 0.07));
     this.slideW += (this.slideTarget - this.slideW) * (1 - Math.exp(-dt / 0.05));
     {
-      const idleW = this.seated ? 0 : (1 - G.w) * (1 - G.air) * (1 - this.swimW) * (1 - this.glideW) * (1 - Math.max(G.crouch, G.land));
+      const idleW = this.seated ? 0 : (1 - G.w) * (1 - G.air) * (1 - this.swimW) * (1 - this.glideW) * (1 - Math.max(G.crouch, G.land)) * pm;
       const ws = Math.sin(T * 0.31) * 0.7 + Math.sin(T * 0.77 + 1.3) * 0.3;
       rigX += ws * 0.014 * idleW;
       rollZ -= ws * 0.03 * idleW;
@@ -684,6 +715,7 @@ export class Character {
     if (hopA) {
       const k = hopA.t / hopA.dur;
       const up = Math.sin(k * Math.PI);
+      procHop = up;
       rigY += up * D.hopHeight;
       const crouch = k < 0.15 ? smooth01(k / 0.15) : k > 0.85 ? smooth01((k - 0.85) / 0.15) : 0;
       rigSY *= 1 - crouch * 0.04;
@@ -696,6 +728,7 @@ export class Character {
     if (waveA) {
       const k = waveA.t / waveA.dur;
       const w = envelope(k, 0.14, 0.86);
+      procWave = w;
       blend(A[0], -0.1, 1.9, 0, 0.85 + Math.sin(waveA.t * 13) * 0.4, w);
       wristTo(A[0], 1, 0, w, Math.sin(waveA.t * 13) * 0.3);
       if (w > 0.3) hk[0] = 'open';
@@ -711,6 +744,7 @@ export class Character {
     if (poseA) {
       const k = poseA.t / poseA.dur;
       const w = envelope(k, 0.18, 0.84);
+      procPose = w;
       switch (poseA.kind) {
         case 'hips': {
           A.forEach((a) => {
@@ -893,6 +927,14 @@ export class Character {
             open = Math.max(open, 0.5 * ew);
             break;
           }
+          case 'party': // real motion: the Dance_Loop clip dances (the mocap blend below); without clips it falls back to the bounce
+            if (mocapP && mocapP.weight > 0.5) {
+              smile = Math.max(smile, ew);
+              open = Math.max(open, 0.4 * ew);
+              squint = Math.max(squint, 0.5 * ew);
+              break;
+            }
+          // falls through
           case 'bounce': { // bouncing on both feet, fists pumping
             rigY = mix(rigY, bob * 0.075);
             L.forEach((l) => { l.hx = mix(l.hx, -0.25 * (1 - bob)); l.kx = mix(l.kx, 0.55 * (1 - bob) + 0.1); l.hz = mix(l.hz, 0.09); });
@@ -1184,6 +1226,29 @@ export class Character {
     gz.x += (clamp(gx, -1, 1) - gz.x) * Math.min(1, dt * 26);
     gz.y += (clamp(gy, -1, 1) - gz.y) * Math.min(1, dt * 26);
 
+    // ── real motion: the clips own the base pose (locomotion tree, jump, swim, seats, slide, dance, mantle, fidgets) ──
+    const party = this.emote?.id === 'party' && !this.emote.stopping;
+    if (mocapP) {
+      const s = this.mocapSt;
+      s.loco = !this.seated && this.swimTarget < 0.5 && this.glideTarget < 0.5 && this.skyTarget < 0.5 && !hopA;
+      s.speed = this.gait.speed;
+      s.sprint = this.gait.sprint;
+      s.air = !this.seated && G.air > 0.5 && this.glideTarget < 0.5 && this.skyTarget < 0.5 && this.swimTarget < 0.5;
+      s.seat = this.seated ? (this.seatRole ?? (this.clock - this.steerSeenAt < 1 ? 'drive' : 'sit')) : null;
+      s.slide = this.slideTarget > 0.5 && this.glideTarget < 0.5 && this.skyTarget < 0.5;
+      s.swimming = this.swimTarget > 0.5 && this.glideTarget < 0.5 && this.skyTarget < 0.5;
+      s.swim = this.gait.speed;
+      s.dance = party && !this.seated && !s.swimming && !s.slide;
+      s.force = this.debugClip ?? undefined;
+      this.mocapAcc += dt;
+      if (!this.lowRate || ++this.mocapTick % 3 === 0) { // far / off-screen characters (lowRate) sample the clips every 3rd frame
+        mocapP.update(s, { walk: MC.walkRate, jog: MC.jogRate, sprint: MC.sprintRate }, this.mocapAcc);
+        this.mocapAcc = 0;
+      }
+      if (mocapP.weight > 0.5 && this.gait.speed > 0.06 && s.loco) this.gait.phase = TAU * mocapP.phase; // footsteps land when the clip's feet do
+    }
+    this.mocapW = mocapP ? mocapP.weight : 0;
+
     // ── apply to the rig ──
     const sk = this.proxy.skin.scale;
     this.rig.position.set(rigX, rigY, 0);
@@ -1214,6 +1279,54 @@ export class Character {
       leg.hip.rotation.set(l.hx, 0, leg.s * l.hz);
       leg.knee.rotation.x = l.kx;
     });
+    if (mocapP && mocapP.weight > 0.002) {
+      const mw = mocapP.weight;
+      const ov = Math.max(party ? 0 : this.emoteW, procPose, procHop, this.glideW, this.skyW); // overlays that own the whole body
+      const base = mw * (1 - ov);
+      const swimming = this.mocapSt.swimming;
+      const trunk = swimming ? 0 : base; // swimming keeps its own (water-line) body lean: the clips only stroke and kick
+      const arm0 = base * (1 - procWave), arm1 = this.holdsCup ? 0 : base;
+      const q = mocapP.pose;
+      const take = (bone: Bone, b: number, w: number) => {
+        if (w < 0.002) return;
+        this.mocapQ.set(q[b * 4], q[b * 4 + 1], q[b * 4 + 2], q[b * 4 + 3]);
+        bone.quaternion.slerp(this.mocapQ, w);
+      };
+      // the pelvis turns about the HIP joint (not the feet) and keeps the yaw / roll the scene gives the rig
+      if (trunk > 0.002) {
+        this.rig.position.y *= 1 - trunk; // the clips bring their own pelvis height (the slide's procedural drop must not stack on it)
+        const R = this.mocapQ2.set(q[0], q[1], q[2], q[3]);
+        this.mocapQ.identity().slerp(R, trunk);
+        const hipP = this.mocapV.set(0, B.hipY, 0);
+        const p0 = this.mocapV2.copy(hipP).applyQuaternion(this.rig.quaternion).add(this.rig.position); // where the hip joint is without the clip
+        this.rig.quaternion.multiply(this.mocapQ);
+        this.rig.position.copy(p0).sub(hipP.applyQuaternion(this.rig.quaternion));
+        this.rig.position.y += (mocapP.bob * MC.pelvisBob + (this.seated ? 0 : MC.pelvisLift)) * trunk;
+      }
+      take(this.upper, MB.SPINE, trunk);
+      const fixK = this.seated || this.mocapSt.slide || this.mocapSt.dance ? 0 : 1; // only the on-foot locomotion needs the posture fix
+      if (trunk > 0.002) this.upper.rotateX(-(MC.leanFix + MC.leanFixRun * mocapP.runShare) * trunk * fixK); // the clips stand a little hunched: stand the chest up
+      // the head: the clip's pose first, the procedural look / idle / emote rotation on top
+      if (trunk > 0.002) {
+        this.mocapQ.set(q[MB.HEAD * 4], q[MB.HEAD * 4 + 1], q[MB.HEAD * 4 + 2], q[MB.HEAD * 4 + 3]);
+        this.mocapQ2.identity().slerp(this.mocapQ, trunk);
+        this.headRoot.quaternion.premultiply(this.mocapQ2);
+        this.headRoot.rotateX(-MC.headFix * trunk * fixK);
+      }
+      const armBones = [[MB.SH_L, MB.EL_L, MB.WR_L], [MB.SH_R, MB.EL_R, MB.WR_R]];
+      this.arms.forEach((arm, i) => {
+        const w = i === 0 ? arm0 : arm1;
+        take(arm.shoulder, armBones[i][0], w);
+        take(arm.elbow, armBones[i][1], w);
+        take(arm.wrist, armBones[i][2], w);
+      });
+      const legBones = [[MB.HIP_L, MB.KNEE_L, MB.ANK_L], [MB.HIP_R, MB.KNEE_R, MB.ANK_R]];
+      this.legs.forEach((leg, i) => {
+        take(leg.hip, legBones[i][0], base);
+        take(leg.knee, legBones[i][1], base);
+        take(leg.ankle, legBones[i][2], base);
+      });
+    }
     this.cupHolder.scale.setScalar(this.seated ? 0.001 : 1); // no drink while driving
     // a held cup stays upright whatever the arm does
     if (this.holdsCup) this.cupHolder.rotation.x = -(A[1].sx + A[1].ex) * 0.95;

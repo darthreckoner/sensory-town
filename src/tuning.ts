@@ -149,6 +149,19 @@ export const tuning = {
     },
   },
 
+  // ── v3.3 real motion: CC0 mocap clips (public/anims/moves.glb) retargeted onto the procedural characters (art/mocap.ts) ──
+  character: {
+    mocap: true,               // false = today's fully procedural motion
+    walkRate: 1.35,            // clip playback speed (the game moves faster than the clips were captured)
+    jogRate: 1.4,
+    sprintRate: 1.2,
+    pelvisLift: 0.02,          // m: our legs are 2 cm longer than the clips' rig, so the pelvis rides a bit higher to keep the soles on the ground
+    pelvisBob: 1.0,            // scale of the clip's vertical pelvis bob
+    leanFix: 0.14,             // rad: stand the chest up (the clips are captured a bit hunched)
+    leanFixRun: 0.2,           // rad: extra chest lift at a jog / sprint
+    headFix: 0.1,              // rad: lift the head the same way (the face looks ahead, not at the ground)
+  },
+
   // ── v3 locker (W2): the Locker's lobby stage, per-slot cameras, face light, reveal card ──
   locker: {
     /** camera distance / look-at height per Locker slot */

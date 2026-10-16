@@ -99,6 +99,7 @@ const EMOTE_META: Record<string, { name: string; icon: string; rarity: Rarity; l
   robot: { name: 'Robo Bop', icon: '🤖', rarity: 'epic', locked: true },
   swing: { name: 'Sit & Swing', icon: '🪑', rarity: 'epic', locked: true },
   sway: { name: 'Glow Stick Sway', icon: '🪄', rarity: 'legendary', locked: true },
+  party: { name: 'Party Dance', icon: '🪩', rarity: 'epic', locked: true }, // real motion (Dance_Loop)
 };
 export const EMOTES: GearItem[] = CHAR_EMOTES.map((e) => {
   const m = EMOTE_META[e.id];

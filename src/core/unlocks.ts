@@ -63,7 +63,7 @@ const LADDER: string[] = [
   'car.trail', 'skin.galaxyGamer', 'bling.jetpack', 'style.neonSkater.2', 'skin.moonlightMixer', 'glider.pizza', 'glider.jellyfish',
   'outfit.wings', 'ride.hoverboard', 'glider.daisy', 'skin.roboRascal', 'emote.shuffle', 'face.sticker.rainbow', 'bling.balloon', 'style.cometCat.2',
   'skin.dinoDash', 'build.pool', 'bling.shell', 'bling.unicorn', 'skin.cosmicCheer', 'face.eyes.4', 'glider.cloud', 'car.chrome',
-  'emote.robot', 'style.galaxyGamer.2', 'skin.dragonDrift', 'glider.shootingstar', 'trail.confetti', 'slime.galaxy', 'bling.angel',
+  'emote.robot', 'emote.party', 'style.galaxyGamer.2', 'skin.dragonDrift', 'glider.shootingstar', 'trail.confetti', 'slime.galaxy', 'bling.angel',
   'skin.auroraSkies', 'glider.dragonfly', 'style.cosmicCheer.2', 'ride.icecream', 'face.makeup.4', 'skin.shadowSprite', 'face.sticker.glitter', 'emote.swing',
   'style.dragonDrift.2', 'wrap.glitter', 'skin.solarSparkle', 'style.auroraSkies.2', 'face.eyecolor.pink', 'wax.glow', 'skin.midnightMirage',
   'bling.rainbowcape', 'bling.dragonwings', 'emote.sway', 'trail.rainbow', 'outfit.crown', 'skin.prismParade',

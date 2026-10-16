@@ -354,7 +354,10 @@ export class Movement {
       w.group.rotation.y = Math.PI - f.heading;
     }
     if (this.mantle.active) {
-      if (this.mantle.started) w.jump();
+      if (this.mantle.started) {
+        w.jump();
+        w.playMantle(tuning.movement3.mantleSeconds); // v3 character: the ClimbUp clip, stretched to the mantle
+      }
       w.setMove(0.45, false);
       w.group.position.set(f.x, f.y, f.z);
       w.group.rotation.y = Math.PI - f.heading;

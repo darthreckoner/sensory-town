@@ -7,6 +7,11 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Ride, RIDE_KINDS, DEFAULT_STYLE, type RideKind } from '../drive/rides';
 import { Character } from '../art/character';
 import { makeProfile } from '../core/model';
+import { loadMocap } from '../art/mocap';
+import { tuning } from '../tuning';
+
+if (new URLSearchParams(location.search).get('mocap') === '0') tuning.character.mocap = false;
+if (tuning.character.mocap) await loadMocap();
 
 const Q = new URLSearchParams(location.search);
 const kind = (Q.get('kind') ?? 'sports') as RideKind;
