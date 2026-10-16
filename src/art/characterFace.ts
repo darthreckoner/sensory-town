@@ -156,6 +156,16 @@ export const eyeCoverage = (shape: number): number => {
   return (2 * s.irisR) / (s.Hu + s.Hl);
 };
 
+/**
+ * The eyes are drawn a little smaller than the old stylized ones (the head is smaller and more realistic now):
+ * every length of a shape is multiplied by this.
+ */
+export const EYE_SCALE = 0.9;
+function shapeSpec(i: number): EyeSpec {
+  const e = EYE_SHAPES[i];
+  const k = EYE_SCALE;
+  return { ...e, A: e.A * k, Hu: e.Hu * k, Hl: e.Hl * k, az: e.az * k, irisR: e.irisR * k, irisY: e.irisY * k, lashR: e.lashR * k, flick: [e.flick[0] * k, e.flick[1] * k, e.flick[2] * k] };
+}
 const hOf = (s: EyeSpec, yp: number) => (yp >= 0 ? s.Hu : s.Hl);
 const domeZ = (s: EyeSpec, x: number, y: number): number => {
   const yp = y - s.tilt * x;
@@ -208,7 +218,7 @@ export function getEyeKit(shape: number): EyeKit {
   const si = Math.min(EYE_SHAPES.length - 1, Math.max(0, shape));
   const hit = kitCache.get(si);
   if (hit) return hit;
-  const s = EYE_SHAPES[si];
+  const s = shapeSpec(si);
   // sclera: soft-shaded white almond dome + a thick upper lash line (+ flick)
   const eye = new GB(true, true);
   const white = new THREE.Color(FACE_COL.sclera), edge = new THREE.Color(FACE_COL.scleraEdge);
@@ -399,7 +409,7 @@ export function getEyeMakeup(preset: number, shape: number): THREE.BufferGeometr
   if (preset !== 3 && preset !== 4) return null;
   const si = Math.min(EYE_SHAPES.length - 1, Math.max(0, shape));
   return cached(`eyemk|${preset}|${si}`, () => {
-    const s = EYE_SHAPES[si];
+    const s = shapeSpec(si);
     const parts: THREE.BufferGeometry[] = [];
     if (preset === 3) {
       // shimmer lids: a soft rose-gold wash hugging the upper lid, with a few gold sparkles

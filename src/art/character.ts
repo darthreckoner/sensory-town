@@ -23,7 +23,7 @@ import type { Outfit } from '../core/model';
 import type { OutfitSlot } from '../core/events';
 import type { Finish } from './materials';
 import { tuning } from '../tuning';
-import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, limbGeo, lipColor, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
+import { B, BROW_AT, EYE, FACE_COL, HAND_KINDS, MIN_ACCENT_GAP, MOUTH_AT, NOSE_AT, SMILE, TAU, TY, TORSO_TABLE, cached, colorGap, contrastColor, facePoint, frameQ, getFaceKit, handGeo, headGeo, lipColor, shinGeo, thighGeo, upperArmGeo, forearmGeo, mouthColor, tint, torsoSpace, warmSkin, type HandKind, type Piece } from './characterKit';
 import { ALL_CATS, NO_RECEIVE, SHADOW_CATS, assembleGeometry, bakeGeo, catOf, getMats, roleColor, type Cat, type Chunk, type ColorCtx } from './characterSkin';
 import { getHair, TAIL_PIVOT } from './characterHair';
 import { eyeTints, faceKey, frecklesGeo, freckleColor, getBrowGeo, getEyeKit, getEyeMakeup, getStickerGeo, lipGlossColor, lipHighlightGeo, resolveFace } from './characterFace';
@@ -204,7 +204,7 @@ type ArmPose = { sx: number; sz: number; ex: number; ez: number; wr: number; wf:
 const PEACE_ROLL = -1;
 const HEART_ROLL = -1;
 const HIPS = { wr: 0, wf: 0, wx: -1.05 }; // wrist angles for hands on hips
-const WING_PIVOT = new THREE.Vector3(0.05, 1.3 - TY, -0.095);
+const WING_PIVOT = new THREE.Vector3(0.05, 1.36 - TY, -0.1);
 
 export class Character {
   /** Height of the pelvis bottom above the group origin — a seated character's butt sits here. */
@@ -540,7 +540,7 @@ export class Character {
     this.group.updateWorldMatrix(true, false);
     const local =
       slot === 'hair' || slot === 'accessory' ? new THREE.Vector3(0, HEAD_Y + this.hairTopY * 0.9 * B.headScale, 0)
-        : slot === 'top' ? new THREE.Vector3(0, 1.2, 0.12)
+        : slot === 'top' ? new THREE.Vector3(0, 1.24, 0.12)
           : slot === 'bottom' ? new THREE.Vector3(0, 0.62, 0.12)
             : slot === 'shoes' ? new THREE.Vector3(0, 0.1, 0.18)
               : new THREE.Vector3(0, 1.1, 0.12);
@@ -980,7 +980,7 @@ export class Character {
             break;
           }
           case 'swing': { // sitting on the ground, kicking the legs, leaning back on the hands
-            rigY = mix(rigY, -0.76);
+            rigY = mix(rigY, -0.8);
             L.forEach((l, i) => {
               const f = Math.sin(t * 5.4 + i * Math.PI);
               l.hx = mix(l.hx, -1.5);
@@ -1357,10 +1357,10 @@ export class Character {
     this.reg(this.accWristL, this.arms[0].wrist);
     this.mounts.accessory.push(this.accBody, this.accBack, this.accHead, this.accHandR, this.accWristL);
     // back-bling mount (upper back, +Z away from the back) and the glider grip anchor
-    this.backMount.position.set(0, 1.31 - TY, -0.11);
+    this.backMount.position.set(0, 1.36 - TY, -0.108);
     this.backMount.rotation.y = Math.PI;
     upper.add(this.backMount);
-    this.gliderAnchor.position.set(0, 1.92 - TY, 0.2);
+    this.gliderAnchor.position.set(0, 2.0 - TY, 0.2);
     upper.add(this.gliderAnchor);
 
     // face bones: eyes and brows are mirrored copies (index 0 = +x)
@@ -1420,12 +1420,12 @@ export class Character {
       this.chunk('body', bone, geo, cat, color, extra, key, bone2);
     add(this.upper, torsoSkinGeo());
     for (const leg of this.legs) {
-      add(leg.hip, limbGeo(0.08, 0.063, B.thighLen));
-      add(leg.knee, limbGeo(0.061, 0.04, B.shinLen));
+      add(leg.hip, thighGeo());
+      add(leg.knee, shinGeo());
     }
     this.arms.forEach((arm, i) => {
-      add(arm.shoulder, limbGeo(0.046, 0.039, B.armUp));
-      add(arm.elbow, limbGeo(0.037, 0.028, B.armLow));
+      add(arm.shoulder, upperArmGeo());
+      add(arm.elbow, forearmGeo());
       for (const k of this.handsBuilt) add(this.handBones[k][i], handGeo(arm.s, k));
     });
     add(this.headBody, headGeo(fo.makeup === 1 ? 1 : fo.makeup === 3 ? 2 : 0));
@@ -1617,7 +1617,7 @@ export class Character {
 function torsoSkinGeo(): THREE.BufferGeometry {
   return cached('torsoSkin', () => {
     const last = TORSO_TABLE.length - 1;
-    const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 8 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 18);
+    const g = new THREE.LatheGeometry(TORSO_TABLE.filter((_, i) => i % 4 === 0 || i === last).map((p) => new THREE.Vector2(p.r, p.y)), 28);
     torsoSpace(g);
     return g;
   });

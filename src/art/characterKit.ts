@@ -11,24 +11,24 @@ export const D2R = Math.PI / 180;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Proportions — Fortnite-style stylized realism: about 1.75 tall, head ≈ 1/6 of the height (feet at y = 0)
+// Proportions — Fortnite-style stylized REALISM: about 1.75 tall, head ≈ 1/7.3 of the height, long legs, a visible neck (feet at y = 0)
 // ═════════════════════════════════════════════════════════════════════════════
 export const B = {
-  hipY: 0.9, // hip joints
-  hipX: 0.085,
-  thighLen: 0.4,
-  shinLen: 0.41, // ankle at 0.09
-  upperY: 0.92, // pivot of the upper body (lean / twist / sway)
-  shoulderY: 1.345,
-  shoulderX: 0.182, // a little broader than v2: an athletic, readable silhouette
-  armUp: 0.27,
-  armLow: 0.245,
-  neckY: 1.43, // neck pivot (head turns around it)
-  headCY: 1.585, // head center (before the head scale lifts it by HY*(headScale-1))
+  hipY: 0.94, // hip joints (long legs: hip at ~54% of the height)
+  hipX: 0.088,
+  thighLen: 0.43,
+  shinLen: 0.42, // ankle at 0.09
+  upperY: 0.96, // pivot of the upper body (lean / twist / sway)
+  shoulderY: 1.388,
+  shoulderX: 0.152, // joint to joint 0.30; with the deltoids the shoulders are ~0.42 wide
+  armUp: 0.29,
+  armLow: 0.255,
+  neckY: 1.465, // neck pivot (head turns around it)
+  headCY: 1.63, // head center (before the head scale shifts it by HY*(headScale-1)): the chin sits at headCY - HY = 1.505
   HX: 0.092, // head half-width
   HY: 0.125, // half-height
   HZ: 0.105, // half-depth
-  headScale: 1.2, // the whole head group (face, hair, hats) is scaled about its chin-side anchor (the chin stays put)
+  headScale: 0.95, // the whole head group (face, hair, hats) is scaled about its chin-side anchor (the chin stays put): head ~0.2375 tall = ~7.3 heads
   seatY: 0.82, // pelvis bottom when seated
 };
 /** Torso is flatter front-to-back than side-to-side. */
@@ -86,6 +86,40 @@ export function limbGeo(r0: number, r1: number, len: number, seg = 8): THREE.Buf
     return new THREE.LatheGeometry(pts, seg);
   });
 }
+/**
+ * An anatomical limb: a lathe whose radius follows a smooth spline through `prof` ([t, r] with t = 0 at the
+ * top joint and 1 at the bottom joint, r in meters). Rounded caps at both ends (the top one blends into the
+ * torso), `zr` squashes the cross-section front-to-back (slightly elliptical limbs), smooth normals.
+ */
+export function limbProfile(key: string, prof: [number, number][], len: number, zr = 0.92, seg = 20): THREE.BufferGeometry {
+  return cached(`limbP|${key}|${len}|${zr}|${seg}`, () => {
+    const curve = new THREE.SplineCurve(prof.map(([t, r]) => new THREE.Vector2(r, -t * len)));
+    const mid = curve.getPoints(11).map((p) => new THREE.Vector2(Math.max(0.001, p.x), p.y));
+    const r0 = mid[0].x, r1 = mid[mid.length - 1].x;
+    const pts: THREE.Vector2[] = [];
+    // bottom cap (pole first so the faces point outward), the swelling profile bottom → top, then the top cap
+    for (let i = 0; i <= 4; i++) {
+      const t = (i / 4) * (Math.PI / 2);
+      pts.push(new THREE.Vector2(Math.max(0.0005, r1 * Math.sin(t)), -len - r1 * 0.9 * Math.cos(t)));
+    }
+    for (let i = mid.length - 1; i >= 0; i--) pts.push(mid[i]);
+    for (let i = 1; i <= 4; i++) {
+      const t = (1 - i / 4) * (Math.PI / 2);
+      pts.push(new THREE.Vector2(Math.max(0.0005, r0 * Math.sin(t)), r0 * 0.62 * Math.cos(t)));
+    }
+    const g = new THREE.LatheGeometry(pts, seg);
+    if (zr !== 1) g.scale(1, 1, zr);
+    return g;
+  });
+}
+export const UPPER_ARM_PROF: [number, number][] = [[0, 0.047], [0.1, 0.055], [0.3, 0.052], [0.52, 0.047], [0.8, 0.041], [1, 0.038]]; // deltoid → biceps → elbow
+export const FOREARM_PROF: [number, number][] = [[0, 0.038], [0.16, 0.043], [0.42, 0.04], [0.78, 0.032], [1, 0.028]]; // forearm swell → wrist
+export const THIGH_PROF: [number, number][] = [[0, 0.083], [0.12, 0.089], [0.4, 0.079], [0.75, 0.063], [1, 0.054]]; // thigh → knee
+export const SHIN_PROF: [number, number][] = [[0, 0.054], [0.22, 0.059], [0.36, 0.058], [0.7, 0.044], [0.92, 0.034], [1, 0.032]]; // calf swell → ankle
+export const upperArmGeo = () => limbProfile('upperArm', UPPER_ARM_PROF, B.armUp, 0.93);
+export const forearmGeo = () => limbProfile('forearm', FOREARM_PROF, B.armLow, 0.9);
+export const thighGeo = () => limbProfile('thigh', THIGH_PROF, B.thighLen, 1.0);
+export const shinGeo = () => limbProfile('shin', SHIN_PROF, B.shinLen, 0.95);
 /** Open tapered tube (sleeve / trouser leg): from yTop (radius rTop) down to yBot (radius rBot). */
 export function tubeGeo(yTop: number, yBot: number, rTop: number, rBot: number, seg = 12): THREE.BufferGeometry {
   return new THREE.LatheGeometry([new THREE.Vector2(rBot, yBot), new THREE.Vector2(rTop, yTop)], seg);
@@ -305,11 +339,11 @@ export function warmSkin(skin: string): string {
 // Torso profile + lathe shells
 // ═════════════════════════════════════════════════════════════════════════════
 const TORSO_PTS: [number, number][] = [
-  [0.0, 0.79], [0.085, 0.8], [0.13, 0.84], [0.145, 0.9], [0.14, 0.96], [0.118, 1.03], [0.122, 1.1],
-  [0.137, 1.18], [0.152, 1.26], [0.167, 1.32], [0.169, 1.345], [0.149, 1.378], [0.114, 1.404], [0.062, 1.428], [0.048, 1.455], [0.0, 1.5],
+  [0.0, 0.8], [0.085, 0.806], [0.135, 0.835], [0.165, 0.88], [0.172, 0.93], [0.158, 0.985], [0.132, 1.04], [0.113, 1.09], // pelvis → waist
+  [0.122, 1.15], [0.14, 1.215], [0.153, 1.275], [0.16, 1.33], [0.165, 1.372], [0.158, 1.398], [0.125, 1.422], [0.082, 1.441], [0.055, 1.452], [0.046, 1.486], [0.0, 1.525], // chest → shoulders → neck
 ];
 export const TORSO_TABLE: { r: number; y: number }[] = new THREE.SplineCurve(TORSO_PTS.map(([r, y]) => new THREE.Vector2(r, y)))
-  .getPoints(120)
+  .getPoints(160)
   .map((p) => ({ r: Math.max(0, p.x), y: p.y }));
 /** X-radius of the skin torso at height y. */
 export function bodyR(y: number): number {
@@ -350,9 +384,16 @@ export function flare(gb: GB, pts: [number, number][], samples = 12, seg = 20, p
   }
   gb.add(g, {}, true);
 }
-/** Torso-space post-process: flatten front-to-back, move pivot to the upper-body origin. */
+/**
+ * The torso's front-to-back centre shifts with height (a gentle S-curve): the glutes sit a little back, the belly
+ * flattens. Shared by the skin torso and `torsoSpace`, so shells and skin move together.
+ */
+export const torsoZ = (y: number): number => -0.013 * Math.exp(-(((y - 0.9) / 0.085) ** 2));
+/** Torso-space post-process: flatten front-to-back, shift for the S-curve, move pivot to the upper-body origin. */
 export const torsoSpace = (g: THREE.BufferGeometry): void => {
   g.scale(1, 1, TZ);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) + torsoZ(p.getY(i)));
   g.translate(0, -TY, 0);
 };
 
@@ -375,7 +416,7 @@ export function headGeo(blush = 0): THREE.BufferGeometry {
   const lv = Math.min(BLUSH.length - 1, Math.max(0, blush));
   return cached(lv === 0 ? 'head' : `head|${lv}`, () => {
     const BL = BLUSH[lv];
-    const g = new THREE.SphereGeometry(1, 32, 22);
+    const g = new THREE.SphereGeometry(1, 42, 30);
     const p = g.attributes.position;
     const col = new Float32Array(p.count * 3);
     const centers = [-1, 1].map((sd) => {
@@ -573,7 +614,7 @@ export function getFaceKit(): FaceKit {
 // the middle joint), 'open' (flat hand for waves), 'grip' (fist around a cup / handle) and
 // 'peace' (a real V: index + middle up, ring + pinky folded, thumb across them).
 // ═════════════════════════════════════════════════════════════════════════════
-export const HAND_S = 1.3;
+export const HAND_S = 1.05; // realistic scale (the stylized v3 hands were 1.3)
 export type HandKind = 'relax' | 'open' | 'grip' | 'peace' | 'heart';
 export const HAND_KINDS: HandKind[] = ['relax', 'open', 'grip', 'peace', 'heart'];
 
