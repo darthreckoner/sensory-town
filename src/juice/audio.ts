@@ -175,6 +175,7 @@ class AudioEngine {
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.loadCrackSamples();
     this.applyVolumes();
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
@@ -637,18 +638,47 @@ class AudioEngine {
     this.tone(o, 'sine', 300 * p, 140 * p, t, 0.002, 0.09, 0.6);
     this.wetClick(o, t + 0.01, p, 0.5);
   }
-  private s_crunch(t: number, p: number, v: number, pan: number) {
-    // crisp wax crack: a fast cluster of tiny bright impulses + snap
-    const o = this.out(0.9 * v, pan, 0.15);
-    this.tone(o, 'triangle', 2600 * p, 1400 * p, t, 0.0005, 0.012, 0.5);
-    const n = 7 + Math.floor(Math.random() * 9);
-    const span = rand(0.05, 0.13);
-    for (let i = 0; i < n; i++) {
-      const tt = t + Math.pow(Math.random(), 1.6) * span;
-      const f = rand(2500, 7000) * p;
-      this.noiseBurst(o, tt, 0.0004, rand(0.004, 0.016), rand(0.25, 0.8), 'highpass', f, f, 0.7);
+  /** Recorded wax cracks (public/sfx/wax-crack-N.wav, cut from the kids' reference video). */
+  private crackSamples: AudioBuffer[] = [];
+  private lastCrack = -1;
+  private loadCrackSamples(): void {
+    const ctx = this.ctx!;
+    for (let i = 1; i <= 6; i++) {
+      fetch(`${import.meta.env.BASE_URL}sfx/wax-crack-${i}.wav`)
+        .then((r) => r.arrayBuffer())
+        .then((b) => ctx.decodeAudioData(b))
+        .then((buf) => void this.crackSamples.push(buf))
+        .catch(() => undefined); // synth fallback below
     }
-    this.noiseBurst(o, t, 0.001, 0.05, 0.25, 'bandpass', 1400 * p, 900 * p, 1.5);
+  }
+  private s_crunch(t: number, p: number, v: number, pan: number) {
+    const ns = this.crackSamples.length;
+    if (ns) {
+      // random clip (never the same one twice in a row), slight pitch spread so repeats stay fresh
+      let k = Math.floor(Math.random() * ns);
+      if (ns > 1 && k === this.lastCrack) k = (k + 1) % ns;
+      this.lastCrack = k;
+      const src = this.ctx!.createBufferSource();
+      src.buffer = this.crackSamples[k];
+      src.playbackRate.value = p * rand(0.92, 1.08);
+      src.connect(this.out(0.85 * v, pan, 0.12));
+      src.start(t);
+      return;
+    }
+    // wax crack: a few distinct, slightly tonal snaps (hard shell ringing) over a woody thock.
+    // Narrow-band pings instead of wide highpassed noise, so it reads as cracking, not static.
+    const o = this.out(0.9 * v, pan, 0.15);
+    this.tone(o, 'sine', 520 * p, 190 * p, t, 0.001, 0.06, 0.55);
+    this.noiseBurst(o, t, 0.0008, 0.03, 0.3, 'bandpass', 900 * p, 500 * p, 3);
+    const n = 3 + Math.floor(Math.random() * 4);
+    const span = rand(0.06, 0.14);
+    for (let i = 0; i < n; i++) {
+      const tt = t + (i === 0 ? 0 : Math.pow(Math.random(), 1.3) * span);
+      const f = rand(1300, 3200) * p;
+      const pk = (i === 0 ? 0.8 : rand(0.35, 0.65));
+      this.noiseBurst(o, tt, 0.0005, rand(0.012, 0.025), pk, 'bandpass', f, f * 0.85, 10);
+      this.tone(o, 'sine', f, f * 0.9, tt, 0.0005, 0.018, pk * 0.25);
+    }
   }
   private s_flake(t: number, p: number, v: number, pan: number) {
     const o = this.out(1.1 * v, pan, 0.2);
